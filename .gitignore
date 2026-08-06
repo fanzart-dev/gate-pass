@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+storage/
+debug/
+
+# Real supplier invoices — a supplier GSTIN, IRN hashes and named customers.
+# Kept out of the repo; tests that need them skip cleanly when absent.
+tests/sample_invoices/*.pdf

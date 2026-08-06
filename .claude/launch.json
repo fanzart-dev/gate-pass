@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gate-pass",
+      "runtimeExecutable": "/home/fanzart/gate-pass/.venv/bin/python3",
+      "runtimeArgs": ["/home/fanzart/gate-pass/app.py"],
+      "port": 8090
+    }
+  ]
+}
