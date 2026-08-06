@@ -173,8 +173,10 @@ table.items-table thead th {
   white-space: nowrap;   /* a wrapped heading would undo the tighter height */
 }
 
-/* The item column is centred, heading and rows alike — see .col-item below.
-   It used to be left-aligned; nothing else needs to know that. */
+/* The item column is the odd one out: the HEADING is centred like the others,
+   but the names underneath are left-aligned and indented, so a column of
+   product names reads down the page as a list instead of a ragged zigzag.
+   Set on .col-item (heading) and overridden on td.col-item (cells) below. */
 
 /* Roomier item rows.
    `height` here is a FLOOR, not the row height: the table is `flex: 1` inside a
@@ -220,6 +222,22 @@ table.items-table td.col-qty,
 table.items-table td.col-ctn {
   padding-left: 2mm;
   padding-right: 2mm;
+}
+
+/* The names themselves read left-aligned, indented off the column divider,
+   while the heading above them stays centred. 3mm rather than the 12px asked
+   for: this stylesheet is in millimetres because px in print depends on the
+   rendering DPI, and 3mm is 11.3px — the same indent, stated in the unit the
+   rest of the page geometry is measured in. padding-left only, never the
+   shorthand, or these cells lose the vertical padding they inherit. */
+table.items-table td.col-item {
+  text-align: left;
+  /* !important is not decoration here: the tbody rule above sets
+     `padding: 1mm 2mm !important`, and an ordinary padding-left loses to it
+     however specific this selector is. Without it the indent measures 2mm and
+     silently does nothing. (The numeric-column rule above has the same problem
+     and gets away with it only because it asks for the 2mm it already has.) */
+  padding-left: 3mm !important;
 }
 
 /* Any optional totals on the left, the authoriser's signature rule on the

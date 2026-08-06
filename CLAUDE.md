@@ -233,9 +233,19 @@ Must match the Fanzart gate pass form exactly:
   draws 6 rows at 6.27mm with 106.75mm of clear space above a footer still
   pinned 6.88mm from the bottom; a 26-item pass draws 26 at 5.30mm with zero
   overflow; a 32-item pass splits 26 + 6 with Sl No. running 1–26 then 27–32.
-- The item column is headed **`Item Name`** and is **centred**, heading and
-  cells alike (`.col-item { text-align: center }`).
-- Columns are **locked at `Sl No.` 8% / `Item Name` 68% / `Quantity` 12% /
+- The item column is the odd one out: headed **`Item Names`** and **centred**,
+  but the names underneath are **left-aligned and indented 3mm**, so they read
+  down the page as a list rather than a ragged zigzag. Centring is on
+  `.col-item`, the override on `table.items-table td.col-item`.
+
+  **That indent needs `!important`.** The `tbody td` rule sets
+  `padding: 1mm 2mm !important`, which beats an ordinary `padding-left`
+  however specific the selector is — it measures 2mm and silently does
+  nothing. (The numeric-column rule has the same flaw and gets away with it
+  only because it asks for the 2mm it already has.) 3mm rather than the 12px
+  originally specified: this stylesheet is in millimetres because px in print
+  depends on rendering DPI, and 3mm is 11.3px.
+- Columns are **locked at `Sl No.` 8% / `Item Names` 68% / `Quantity` 12% /
   `No.of Cartons` 12%**, and there is a test asserting those exact numbers.
   Item at 68% keeps names like
   `ERECTION COMMISSIONING AND INSTALLATION SERVICES` (48 characters) on one line.
