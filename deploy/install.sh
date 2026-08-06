@@ -56,6 +56,19 @@ fi
 # storage/ holds the book. Created if absent, never touched if present.
 mkdir -p "$APP_DIR/storage/invoices" "$APP_DIR/storage/backups"
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+
+# Two different permissions on purpose.
+#
+# The app directory must be traversable by nginx's worker (www-data), which
+# serves static/ directly. `adduser --system` creates a home directory as 0750,
+# so without this every stylesheet and the logo return 403 and the app renders
+# as unstyled HTML -- it looks broken rather than unauthorised, which is a
+# confusing way to find out. The code here is public on GitHub, so there is
+# nothing to protect by keeping it closed.
+chmod 755 "$APP_DIR"
+# The book is a different matter: the database, the password hashes and the
+# session signing key. 0750 means only the service account can read it -- not
+# nginx, and not any other user on this machine.
 chmod 750 "$APP_DIR/storage"
 
 say "Python environment"
@@ -208,6 +221,15 @@ if curl -sf --max-time 10 -o /dev/null -w '%{http_code}' http://127.0.0.1/login 
 else
     die "nginx is up but the app did not answer on port 80 — check: journalctl -u gate-pass -n 30"
 fi
+# The page returning 200 is not the same as the page being usable. nginx serves
+# static/ itself, so a permissions mistake shows up as an unstyled page rather
+# than an error, and the install would otherwise report success.
+for asset in /static/css/style.css /static/img/fanzart-logo.png; do
+    code=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1$asset")
+    [ "$code" = "200" ] || die "$asset returned $code — nginx cannot read $APP_DIR/static
+       (check the directory is traversable: ls -ld $APP_DIR)"
+done
+note "stylesheets and logo load"
 
 IP=$(hostname -I | awk '{print $1}')
 HOST=$(hostname)
