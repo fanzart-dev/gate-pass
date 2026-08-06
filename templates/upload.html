@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}New Gate Pass{% endblock %}
+{% block content %}
+  {% with step = 1 %}{% include "_steps.html" %}{% endwith %}
+
+  <div class="page-head">
+    <h1>New Gate Pass</h1>
+    <p class="hint">Upload one invoice or a whole batch. The invoice number, date, parties and
+      items are read from each PDF &mdash; you check them on the next screen. No gate pass
+      number is used until you issue them.</p>
+  </div>
+
+  <form method="post" enctype="multipart/form-data" id="upload-form">
+    <label class="dropzone" id="dropzone" for="invoice">
+      <div class="dropzone-icon">📄</div>
+      <div class="dropzone-title">Drop invoice PDFs here</div>
+      <div class="dropzone-sub">or click to choose &mdash; one file or a whole batch</div>
+      <input type="file" id="invoice" name="invoice" accept="application/pdf" multiple required>
+    </label>
+
+    <div id="file-panel" hidden>
+      <div class="file-panel-head">
+        <span id="file-count" class="file-count"></span>
+        <button type="button" id="clear-files" class="link-button">Clear</button>
+      </div>
+      <ul class="file-list" id="file-list"></ul>
+    </div>
+
+    <div class="progress-wrap" id="progress-wrap" hidden>
+      <div class="progress-track">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+      <div class="progress-labels">
+        <span id="progress-text">Starting…</span>
+        <span id="progress-percent">0%</span>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="primary" id="submit-btn">Read Invoices</button>
+      <span class="hint" id="pick-error" hidden>Choose at least one PDF first.</span>
+      <span class="hint" id="pick-hint">Anything that can't be read waits on the next screen
+        instead of taking a number.</span>
+    </div>
+  </form>
+
+  <script>
+    const zone = document.getElementById("dropzone");
+    const input = document.getElementById("invoice");
+    const panel = document.getElementById("file-panel");
+    const list = document.getElementById("file-list");
+    const countEl = document.getElementById("file-count");
+    const submitBtn = document.getElementById("submit-btn");
+    const progressWrap = document.getElementById("progress-wrap");
+    const progressBar = document.getElementById("progress-bar");
+    const progressText = document.getElementById("progress-text");
+    const progressPercent = document.getElementById("progress-percent");
+
+    // Kept separately from the input so files dropped in more than one go add up
+    // instead of replacing each other.
+    let chosen = [];
+
+    function humanSize(bytes) {
+      if (bytes < 1024) return bytes + " B";
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " KB";
+      return (bytes / 1024 / 1024).toFixed(1) + " MB";
+    }
+
+    function render() {
+      panel.hidden = chosen.length === 0;
+      countEl.textContent = chosen.length === 1
+        ? "1 file selected"
+        : `${chosen.length} files selected`;
+      list.innerHTML = "";
+      chosen.forEach((file, i) => {
+        const li = document.createElement("li");
+        li.className = "file-row";
+        li.dataset.index = i;
+        li.innerHTML = `
+          <span class="file-state" data-state="waiting">•</span>
+          <span class="file-name"></span>
+          <span class="file-size">${humanSize(file.size)}</span>`;
+        li.querySelector(".file-name").textContent = file.name;
+        list.appendChild(li);
+      });
+      submitBtn.textContent = chosen.length > 1
+        ? `Read ${chosen.length} Invoices` : "Read Invoice";
+    }
+
+    function addFiles(fileList) {
+      for (const file of fileList) {
+        const duplicate = chosen.some(
+          (f) => f.name === file.name && f.size === file.size);
+        if (!duplicate) chosen.push(file);
+      }
+      if (chosen.length) {
+        document.getElementById("pick-error").hidden = true;
+        document.getElementById("pick-hint").hidden = false;
+      }
+      render();
+    }
+
+    input.addEventListener("change", () => {
+      addFiles(input.files);
+      input.value = "";   // so re-picking the same file still registers
+    });
+
+    document.getElementById("clear-files").addEventListener("click", () => {
+      chosen = [];
+      render();
+    });
+
+    ["dragenter", "dragover"].forEach((evt) =>
+      zone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        zone.classList.add("dragover");
+      }));
+
+    ["dragleave", "drop"].forEach((evt) =>
+      zone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        zone.classList.remove("dragover");
+      }));
+
+    zone.addEventListener("drop", (e) => {
+      if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+    });
+
+    function setProgress(done, total) {
+      const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+      progressBar.style.width = pct + "%";
+      progressPercent.textContent = pct + "%";
+      progressText.textContent = `Reading invoice ${Math.min(done + 1, total)} of ${total}`;
+    }
+
+    function markRow(i, state, title) {
+      const row = list.querySelector(`[data-index="${i}"]`);
+      if (!row) return;
+      const badge = row.querySelector(".file-state");
+      badge.dataset.state = state;
+      badge.textContent = state === "done" ? "✓" : state === "attention" ? "!" : "×";
+      if (title) row.title = title;
+    }
+
+    // The chosen files live in `chosen`, not in the input — the input is cleared
+    // after every pick so re-selecting the same file still fires a change. That
+    // leaves the input empty, so the browser's own `required` check would block
+    // submit with "Please select one or more files" even though files ARE
+    // selected. JavaScript does the checking from here on; the `required`
+    // attribute stays in the markup for the no-JS path, where the input really
+    // does hold the files.
+    const form = document.getElementById("upload-form");
+    form.noValidate = true;
+
+    // Files are sent one at a time so the bar tracks work actually finished,
+    // not bytes in flight. Without JS the form still posts them all at once.
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!chosen.length) {
+        document.getElementById("pick-error").hidden = false;
+        document.getElementById("pick-hint").hidden = true;
+        return;
+      }
+      document.getElementById("pick-error").hidden = true;
+
+      submitBtn.disabled = true;
+      progressWrap.hidden = false;
+      setProgress(0, chosen.length);
+
+      let failures = 0;
+      for (let i = 0; i < chosen.length; i++) {
+        const body = new FormData();
+        body.append("invoice", chosen[i]);
+        try {
+          const res = await fetch("{{ url_for('upload_one') }}", { method: "POST", body });
+          const data = await res.json();
+          if (!data.ok) {
+            markRow(i, "failed", data.error || "could not be read");
+            failures++;
+          } else {
+            markRow(i, data.problem ? "attention" : "done", data.problem || "");
+          }
+        } catch (err) {
+          markRow(i, "failed", String(err));
+          failures++;
+        }
+        setProgress(i + 1, chosen.length);
+      }
+
+      progressText.textContent = failures
+        ? `Finished — ${failures} could not be read`
+        : "Finished";
+      window.location = "{{ url_for('drafts') }}";
+    });
+
+    render();
+  </script>
+{% endblock %}

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ gate_pass.serial_no }} · Gate Pass</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/print.css') }}">
+  <style>
+    /* margin: 0 on purpose. The browser prints its own header and footer —
+       document title, URL, page number, timestamp — into the page margin, so
+       leaving one there put four lines of chrome on every gate pass. With no
+       margin there is nowhere for them to go; the 7mm is padding inside
+       .sheet instead, so the printed geometry is unchanged. */
+    @page { size: {{ 'A5' if settings.paper_mode == 'a5' else 'A4 landscape' }}; margin: 0; }
+  </style>
+</head>
+{% from "_pass_card.html" import pass_card with context %}
+<body data-paper="{{ settings.paper_mode }}">
+  <div class="no-print toolbar">
+    <button class="tb-primary" onclick="window.print()">Print</button>
+    <span class="tb-serial">{{ gate_pass.serial_no }}</span>
+    <span class="tb-sep">·</span>
+    <span class="tb-meta">{{ gate_pass.customer_name }} — {{ gate_pass.invoice_no }}</span>
+    <span class="tb-spacer"></span>
+    <a href="{{ url_for('register') }}">Register</a>
+    <a href="{{ url_for('upload') }}">New Gate Pass</a>
+  </div>
+
+
+  {# One sheet per page. On A4 each sheet still carries two identical copies
+     side by side to be cut apart, so a 2-page pass prints 2 sheets = 2 copies
+     of each page. #}
+  {% for page_items in pages %}
+    <div class="sheet {{ 'single' if settings.paper_mode == 'a5' else 'double' }}">
+      {{ pass_card(gate_pass, page_items, loop.index, pages|length) }}
+      {% if settings.paper_mode != 'a5' %}
+        <div class="cut-line"></div>
+        {{ pass_card(gate_pass, page_items, loop.index, pages|length) }}
+      {% endif %}
+    </div>
+  {% endfor %}
+</body>
+</html>

@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}People{% endblock %}
+{# Five columns of account detail need more than the reading width. #}
+{% block container_class %}container-wide{% endblock %}
+
+{% macro status_form(user, status, label, style='') %}
+  <form method="post" action="{{ url_for('admin_set_status', user_id=user.id) }}" style="display:inline">
+    <input type="hidden" name="status" value="{{ status }}">
+    <button type="submit" class="{{ style }}">{{ label }}</button>
+  </form>
+{% endmacro %}
+
+{% block content %}
+  <div class="page-head">
+    <h1>People</h1>
+    <p class="hint">Accounts are created here and nowhere else &mdash; there is no self-signup.
+      Everyone draws from the same gate pass run. Accounts are never deleted: switching
+      someone off keeps their name on the passes they already prepared.</p>
+  </div>
+
+  {% if pending %}
+    <h2 class="section-title">
+      Waiting for approval <span class="count-badge">{{ pending|length }}</span>
+    </h2>
+    <p class="hint" style="margin-bottom:10px">Left over from before accounts became
+      admin-created. Approve or turn down.</p>
+    <div class="table-wrap">
+      <table class="list">
+        <thead>
+          <tr><th>Name</th><th>Username</th><th>Requested</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for u in pending %}
+          <tr>
+            <td><strong>{{ u.display_name }}</strong></td>
+            <td class="mono-cell">{{ u.username }}</td>
+            <td class="muted-cell">{{ u.created_at }}</td>
+            <td class="actions-cell">
+              {{ status_form(u, 'approved', 'Approve', 'primary') }}
+              {{ status_form(u, 'rejected', 'Turn down', 'danger') }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+
+  <h2 class="section-title">Accounts</h2>
+  <div class="table-wrap">
+    <table class="list people-table">
+      <thead>
+        <tr>
+          <th class="ppl-name">Name</th>
+          <th class="ppl-username">Username</th>
+          <th class="ppl-perms">Permissions</th>
+          <th class="ppl-status">Status</th>
+          <th class="ppl-actions"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in others %}
+        <tr>
+          <td class="ppl-name">
+            <strong>{{ u.display_name }}</strong>
+            {% if u.id == current_user.id %}<span class="you-tag">you</span>{% endif %}
+          </td>
+          <td class="mono-cell ppl-username">{{ u.username }}</td>
+          <td class="ppl-perms">
+            {% set held = u.permissions.values()|select|list|length %}
+            {% if held == permission_labels|length %}
+              <span class="pill admin">Full access</span>
+            {% elif held %}
+              <span class="pill approved">{{ held }} of {{ permission_labels|length }}</span>
+              <div class="perm-chips">
+                {% for key, label in permission_labels.items() %}
+                  {% if u.permissions[key] %}<span class="chip">{{ label }}</span>{% endif %}
+                {% endfor %}
+              </div>
+            {% else %}
+              <span class="muted-cell">Basic access only</span>
+            {% endif %}
+          </td>
+          <td class="ppl-status"><span class="pill {{ u.status }}">{{ u.status }}</span></td>
+          <td class="ppl-actions">
+            <div class="user-actions-cell">
+            {% if u.status == 'approved' %}
+              <button type="button" class="btn-action-sm edit-perms" data-id="{{ u.id }}"
+                      data-name="{{ u.display_name }}"
+                      data-perms="{{ u.permissions|tojson|forceescape }}">Permissions</button>
+              <button type="button" class="btn-action-sm reset-pw" data-id="{{ u.id }}"
+                      data-name="{{ u.display_name }}">Password</button>
+              {{ status_form(u, 'disabled', 'Disable', 'btn-action-sm danger') }}
+            {% else %}
+              {{ status_form(u, 'approved', 'Allow access', 'btn-action-sm primary') }}
+            {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <details class="add-person card" {% if not others %}open{% endif %}>
+    <summary class="add-person-summary">
+      <span>+ Add someone</span>
+      <span class="hint">Creates an account they can sign in with straight away</span>
+    </summary>
+    <form method="post" action="{{ url_for('add_person') }}">
+    <div class="filter-row">
+      <div class="grow">
+        <label for="display_name">Full name</label>
+        <input type="text" id="display_name" name="display_name"
+               placeholder="Printed as 'Prepared by'" required>
+      </div>
+      <div class="grow">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" autocapitalize="none" required>
+      </div>
+    </div>
+    <div class="filter-row">
+      <div class="grow">
+        <label for="password">Initial password</label>
+        <input type="password" id="password" name="password" minlength="8"
+               autocomplete="new-password" required>
+      </div>
+      <div class="grow">
+        <label for="confirm_password">Repeat password</label>
+        <input type="password" id="confirm_password" name="confirm_password"
+               minlength="8" autocomplete="new-password" required>
+      </div>
+    </div>
+
+    <details class="perm-block">
+      <summary>Feature permissions <span class="hint">— none by default</span></summary>
+      <div class="perm-grid">
+        {% for key, label in permission_labels.items() %}
+          <label class="checkbox perm-item">
+            <input type="checkbox" name="{{ key }}" value="1">
+            <span>{{ label }}</span>
+          </label>
+        {% endfor %}
+      </div>
+      <p class="hint">A new account can sign in, upload invoices, issue passes and
+        read the register with no permissions at all. Everything here is extra.</p>
+    </details>
+    <div class="form-actions">
+      <button type="submit" class="primary">Create Account</button>
+      <span class="hint">They can sign in straight away. Hand them the password
+        yourself &mdash; it is stored only as a hash and cannot be read back.</span>
+    </div>
+    </form>
+  </details>
+
+  {# Setting a password needs two matching entries, so it gets a small form of
+     its own rather than a prompt() that would show the password in clear. #}
+  <dialog id="pw-dialog" class="pw-dialog">
+    <form method="post" id="pw-form">
+      <h2 class="section-title" style="margin-top:0">New password for <span id="pw-who"></span></h2>
+      <div class="field">
+        <label for="new_password">Password</label>
+        <input type="password" id="new_password" name="password" minlength="8"
+               autocomplete="new-password" required>
+      </div>
+      <div class="field">
+        <label for="new_confirm">Repeat password</label>
+        <input type="password" id="new_confirm" name="confirm_password" minlength="8"
+               autocomplete="new-password" required>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="primary">Set Password</button>
+        <button type="button" id="pw-cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="perm-dialog" class="pw-dialog">
+    <form method="post" id="perm-form">
+      <h2 class="section-title" style="margin-top:0">
+        Permissions for <span id="perm-who"></span>
+      </h2>
+      <div class="perm-grid">
+        {% for key, label in permission_labels.items() %}
+          <label class="checkbox perm-item">
+            <input type="checkbox" name="{{ key }}" value="1" data-perm="{{ key }}">
+            <span>{{ label }}</span>
+          </label>
+        {% endfor %}
+      </div>
+      <p class="hint">Everyone can upload invoices, issue passes and read the
+        register. These are the extras. Changes take effect on their next click.</p>
+      <div class="form-actions">
+        <button type="submit" class="primary">Save Permissions</button>
+        <button type="button" id="perm-cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+    const permDialog = document.getElementById("perm-dialog");
+    const permForm = document.getElementById("perm-form");
+    document.querySelectorAll(".edit-perms").forEach((button) => {
+      button.addEventListener("click", () => {
+        const held = JSON.parse(button.dataset.perms);
+        permForm.action = `/people/${button.dataset.id}/permissions`;
+        document.getElementById("perm-who").textContent = button.dataset.name;
+        permForm.querySelectorAll("input[data-perm]").forEach((box) => {
+          box.checked = Boolean(held[box.dataset.perm]);
+        });
+        permDialog.showModal();
+      });
+    });
+    document.getElementById("perm-cancel").addEventListener("click", () => permDialog.close());
+
+    const dialog = document.getElementById("pw-dialog");
+    const pwForm = document.getElementById("pw-form");
+    document.querySelectorAll(".reset-pw").forEach((button) => {
+      button.addEventListener("click", () => {
+        pwForm.action = `/people/${button.dataset.id}/password`;
+        document.getElementById("pw-who").textContent = button.dataset.name;
+        pwForm.reset();
+        dialog.showModal();
+      });
+    });
+    document.getElementById("pw-cancel").addEventListener("click", () => dialog.close());
+  </script>
+{% endblock %}

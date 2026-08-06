@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ passes|length }} Gate Passes · Batch Print</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/print.css') }}">
+  <style>
+    /* margin: 0 on purpose. The browser prints its own header and footer —
+       document title, URL, page number, timestamp — into the page margin, so
+       leaving one there put four lines of chrome on every gate pass. With no
+       margin there is nowhere for them to go; the 7mm is padding inside
+       .sheet instead, so the printed geometry is unchanged. */
+    @page { size: {{ 'A5' if settings.paper_mode == 'a5' else 'A4 landscape' }}; margin: 0; }
+  </style>
+</head>
+{% from "_pass_card.html" import pass_card with context %}
+<body data-paper="{{ settings.paper_mode }}">
+  <div class="no-print toolbar">
+    <button class="tb-primary" onclick="window.print()">Print</button>
+    <span class="tb-serial">{{ passes|length }} passes</span>
+    <span class="tb-sep">·</span>
+    <span class="tb-meta">{{ passes[0].serial_no }}{% if passes|length > 1 %}
+      to {{ passes[-1].serial_no }}{% endif %} · {{ sheet_count }} sheet(s)</span>
+    <span class="tb-spacer"></span>
+    <a href="{{ url_for('register') }}">Back to Register</a>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {# Screen only: anything here must never reach the printed sheets. #}
+      <ul class="no-print batch-messages">
+        {% for category, message in messages %}<li class="{{ category }}">{{ message }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+  {% endwith %}
+
+  {# Every selected pass, one after another. A pass that runs to several pages
+     contributes several sheets; the page break between sheets is the same rule
+     the single-pass page uses, so a batch prints exactly as the passes would
+     have printed one at a time. #}
+  {% for gate_pass in passes %}
+    {% for page_items in gate_pass.pages %}
+      <div class="sheet {{ 'single' if settings.paper_mode == 'a5' else 'double' }}">
+        {{ pass_card(gate_pass, page_items, loop.index, gate_pass.pages|length) }}
+        {% if settings.paper_mode != 'a5' %}
+          <div class="cut-line"></div>
+          {{ pass_card(gate_pass, page_items, loop.index, gate_pass.pages|length) }}
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% endfor %}
+
+  <script>
+    // Straight to the print dialog — nothing is written to disk, the sheets go
+    // from here to the printer. Waiting for `load` rather than DOMContentLoaded
+    // so the logo is in place before the dialog snapshots the page.
+    window.addEventListener("load", () => window.print());
+  </script>
+</body>
+</html>

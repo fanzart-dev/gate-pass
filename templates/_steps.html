@@ -1,0 +1,14 @@
+{# Where the operator is in the flow. `step` is 1 (upload), 2 (review) or 3 (print). #}
+<div class="steps">
+  <span class="step {{ 'current' if step == 1 else 'done' }}">
+    <span class="step-num">{{ '✓' if step > 1 else '1' }}</span> Upload invoice
+  </span>
+  <span class="step-sep">──</span>
+  <span class="step {{ 'current' if step == 2 else ('done' if step > 2 else '') }}">
+    <span class="step-num">{{ '✓' if step > 2 else '2' }}</span> Check &amp; add cartons
+  </span>
+  <span class="step-sep">──</span>
+  <span class="step {{ 'current' if step == 3 else '' }}">
+    <span class="step-num">3</span> Issue &amp; print
+  </span>
+</div>
