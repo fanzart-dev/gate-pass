@@ -1,0 +1,1176 @@
+/* Fanzart Gate Pass — screen styles for the app.
+   The printed pass has its own tuned geometry in print.css; nothing here
+   touches it. */
+
+:root {
+  --ink: #17171a;
+  --ink-2: #45454e;
+  --muted: #7b7b88;
+  --line: #e4e1db;
+  --line-soft: #efedE8;
+  --paper: #f6f5f2;
+  --card: #ffffff;
+  --brand: #17171a;
+  --accent: #8a6a3a;          /* brass, from the Fanzart wordmark */
+  --accent-soft: #f5efe4;
+  --ok: #1c7048;
+  --ok-bg: #e9f5ef;
+  --warn: #855200;
+  --warn-bg: #fdf4e3;
+  --danger: #a02730;
+  --danger-bg: #fcecee;
+  --radius: 10px;
+  --radius-sm: 7px;
+  --shadow: 0 1px 2px rgba(20, 20, 26, .04), 0 6px 18px rgba(20, 20, 26, .05);
+  --shadow-lift: 0 2px 6px rgba(20, 20, 26, .07), 0 12px 28px rgba(20, 20, 26, .08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #ece9e3;
+    --ink-2: #b9b6b0;
+    --muted: #8d8a85;
+    --line: #33322f;
+    --line-soft: #292826;
+    --paper: #131312;
+    --card: #1c1c1a;
+    --brand: #ece9e3;
+    --accent: #c9a367;
+    --accent-soft: #2a2419;
+    --ok: #6cc394;
+    --ok-bg: #16281f;
+    --warn: #e0b062;
+    --warn-bg: #2b2114;
+    --danger: #e8848d;
+    --danger-bg: #2e1a1c;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 18px rgba(0, 0, 0, .35);
+    --shadow-lift: 0 2px 6px rgba(0, 0, 0, .4), 0 12px 28px rgba(0, 0, 0, .45);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto,
+               Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------------------------------------------------------------- top bar */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 24px;
+  height: 60px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.05;
+  text-decoration: none;
+  color: var(--brand);
+}
+
+/* The Fanzart lockup is solid black artwork, so in dark mode it is inverted
+   rather than sitting in a white box. */
+.brand-logo {
+  width: 118px;
+  height: auto;
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  .brand-logo { filter: invert(1); }
+}
+:root[data-theme="light"] .brand-logo { filter: none; }
+:root[data-theme="dark"] .brand-logo { filter: invert(1); }
+
+.brand-sub {
+  font-size: 8.5px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.topbar nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.topbar nav a {
+  padding: 7px 13px;
+  border-radius: 999px;
+  font-size: 14px;
+  text-decoration: none;
+  color: var(--ink-2);
+  white-space: nowrap;
+  transition: background .15s, color .15s;
+}
+
+.topbar nav a:hover { background: var(--line-soft); color: var(--ink); }
+
+.topbar nav a.active {
+  background: var(--brand);
+  color: var(--card);
+}
+
+.nav-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+  margin: 0 6px;
+}
+
+.who {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  padding-left: 2px;
+}
+
+.logout-form { display: inline; margin-left: 10px; }
+
+/* ------------------------------------------------------------ login page */
+
+body.login-page {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.login-shell { width: 100%; max-width: 370px; }
+
+.login-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.05;
+  margin-bottom: 24px;
+}
+.login-brand .brand-logo { width: 190px; }
+.login-brand .brand-sub { font-size: 10px; }
+
+.login-submit { width: 100%; margin-top: 6px; }
+
+input[type="password"] {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 14.5px;
+  color: var(--ink);
+  background: var(--card);
+}
+input[type="password"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.login-foot {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.login-page code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: rgba(0, 0, 0, .06);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ----------------------------------------------------------------- layout */
+
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 28px 24px 80px;
+}
+
+.page-head { margin-bottom: 20px; }
+
+h1 {
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -.02em;
+  margin: 0 0 6px;
+}
+
+.hint { color: var(--muted); font-size: 13.5px; margin: 0; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 22px;
+}
+
+/* -------------------------------------------------------------- steps bar */
+
+.steps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 22px;
+  font-size: 13px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.step-num {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--card);
+}
+
+.step.current { color: var(--ink); font-weight: 600; }
+.step.current .step-num {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--card);
+}
+
+.step.done .step-num {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.step-sep { color: var(--line); }
+
+/* --------------------------------------------------------------- messages */
+
+.flashes { list-style: none; padding: 0; margin: 0 0 18px; }
+
+.flashes li {
+  display: flex;
+  gap: 9px;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  font-size: 13.5px;
+  border: 1px solid;
+  background: var(--accent-soft);
+  border-color: var(--line);
+  color: var(--ink-2);
+}
+
+.flashes li.error { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
+.flashes li.warn  { background: var(--warn-bg);   border-color: var(--warn);   color: var(--warn); }
+.flashes li.ok    { background: var(--ok-bg);     border-color: var(--ok);     color: var(--ok); }
+
+.notice {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  margin: 0 0 18px;
+}
+
+.notice-icon { flex: none; font-size: 15px; line-height: 1.3; }
+
+/* ------------------------------------------------------------------ forms */
+
+label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+
+input[type="text"],
+input[type="file"],
+select {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 14.5px;
+  color: var(--ink);
+  background: var(--card);
+  transition: border-color .15s, box-shadow .15s;
+}
+
+input[type="text"]:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.field { margin-bottom: 16px; }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0 20px;
+}
+
+fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  margin: 0 0 18px;
+  padding: 14px 16px;
+}
+
+legend {
+  padding: 0 7px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.radio, .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font: inherit;
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--ink);
+  margin: 9px 0;
+  cursor: pointer;
+}
+
+.radio input, .checkbox input { width: auto; margin: 0; accent-color: var(--accent); }
+
+/* ---------------------------------------------------------------- buttons */
+
+button, .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 9px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  text-decoration: none;
+  transition: background .15s, border-color .15s, transform .05s;
+}
+
+button:hover, .button:hover { background: var(--line-soft); }
+button:active, .button:active { transform: translateY(1px); }
+
+button.primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--card);
+  font-weight: 600;
+}
+button.primary:hover { opacity: .88; background: var(--brand); }
+
+button.danger { color: var(--danger); border-color: var(--line); }
+button.danger:hover { background: var(--danger-bg); border-color: var(--danger); }
+
+button.link-button {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+button.link-button:hover { background: none; color: var(--danger); }
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.form-actions .spacer { flex: 1; }
+
+/* ------------------------------------------------------------ upload zone */
+
+.dropzone {
+  display: block;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 46px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+
+.dropzone:hover, .dropzone.dragover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.dropzone input[type="file"] {
+  position: absolute;
+  width: 1px; height: 1px;
+  opacity: 0; pointer-events: none;
+}
+
+.dropzone-icon { font-size: 30px; line-height: 1; }
+
+.dropzone-title {
+  margin-top: 12px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.dropzone-sub { margin-top: 4px; font-size: 13px; color: var(--muted); }
+
+.dropzone-file {
+  margin-top: 14px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--accent);
+  word-break: break-all;
+}
+
+/* ------------------------------------------------------------ item editor */
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+}
+
+table.items-editor, table.list {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+table.items-editor th, table.list th {
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--line-soft);
+  padding: 9px 12px;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+}
+
+table.items-editor td, table.list td {
+  padding: 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+table.list td { padding: 11px 12px; vertical-align: middle; }
+table.items-editor tbody tr:last-child td,
+table.list tbody tr:last-child td { border-bottom: none; }
+
+table.items-editor input {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+table.items-editor input:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+  background: var(--card);
+}
+
+table.items-editor .sl-no {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  width: 54px;
+}
+
+.col-qty-cell { width: 110px; }
+.col-ctn-cell { width: 150px; }
+.col-act-cell { width: 46px; }
+
+table.items-editor input[name="quantity"],
+table.items-editor input[name="cartons"] {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Cartons depend on how the goods are actually packed — one fan can be two
+   cartons, several spares can share a box — so the operator always types them.
+   Tinted to read as their column, never as something the app filled. */
+table.items-editor input[name="cartons"] { background: var(--accent-soft); }
+table.items-editor input[name="cartons"]:focus { background: var(--card); }
+
+.col-note {
+  display: block;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: .06em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.remove-row {
+  width: 26px; height: 26px;
+  padding: 0;
+  margin: 0 auto;
+  border: none;
+  background: none;
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+}
+.remove-row:hover { background: var(--danger-bg); color: var(--danger); }
+
+.item-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+#row-count { font-size: 13px; color: var(--muted); }
+#row-count.over-limit { color: var(--danger); font-weight: 600; }
+
+/* ------------------------------------------------------------ lists/table */
+
+table.list tbody tr:hover { background: var(--line-soft); }
+table.list tr.cancelled td:not(.actions-cell) { color: var(--muted); }
+table.list tr.cancelled .serial-cell { text-decoration: line-through; }
+
+.serial-cell {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pill {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+.pill.issued, .pill.approved { background: var(--ok-bg); color: var(--ok); }
+.pill.cancelled, .pill.rejected { background: var(--danger-bg); color: var(--danger); }
+.pill.pending { background: var(--warn-bg); color: var(--warn); }
+.pill.disabled { background: var(--line-soft); color: var(--muted); }
+.pill.admin { background: var(--accent-soft); color: var(--accent); }
+
+.section-title {
+  font-size: 15px;
+  font-weight: 650;
+  margin: 28px 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section-title:first-of-type { margin-top: 18px; }
+
+.count-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.topbar nav a.active .count-badge { background: var(--card); color: var(--brand); }
+
+.mono-cell {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+.you-tag {
+  margin-left: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.empty.compact { padding: 22px; }
+
+.actions-cell button { padding: 6px 12px; font-size: 13px; }
+.actions-cell form + form { margin-left: 8px; }
+
+.actions-cell a { color: var(--ink-2); font-size: 13.5px; text-decoration: underline; text-underline-offset: 2px; }
+.actions-cell a:hover { color: var(--accent); }
+.actions-cell > * + * { margin-left: 12px; }
+
+.filters {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.filters input { flex: 1; min-width: 200px; }
+.filters select { width: auto; min-width: 130px; }
+
+.muted-cell { color: var(--muted); font-size: 13px; white-space: nowrap; }
+
+/* ------------------------------------------------------------ empty state */
+
+.empty {
+  text-align: center;
+  padding: 52px 24px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.empty-icon { font-size: 28px; }
+.empty-title { margin-top: 10px; font-weight: 600; }
+.empty-sub { margin-top: 4px; font-size: 13.5px; color: var(--muted); }
+.empty .button { margin-top: 18px; }
+
+@media (max-width: 640px) {
+  .topbar { padding: 0 14px; height: auto; flex-wrap: wrap; gap: 8px; padding-bottom: 10px; }
+  .topbar nav { width: 100%; overflow-x: auto; }
+  .container { padding: 20px 14px 60px; }
+  .card { padding: 16px; }
+}
+
+/* Batch draft list */
+.tick-cell { width: 38px; text-align: center; }
+.tick-cell input { width: auto; accent-color: var(--accent); }
+table.list tr.needs-attention { background: var(--warn-bg); }
+table.list tr.needs-attention:hover { background: var(--warn-bg); }
+button[disabled] { opacity: .5; cursor: not-allowed; }
+
+/* ------------------------------------------------- batch file picker */
+
+.file-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16px 0 8px;
+}
+
+.file-count { font-size: 14px; font-weight: 600; }
+
+.file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  font-size: 13.5px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.file-row:last-child { border-bottom: none; }
+
+.file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-size { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+.file-state {
+  flex: none;
+  width: 18px; height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--line-soft);
+}
+.file-state[data-state="done"]      { background: var(--ok-bg);     color: var(--ok); }
+.file-state[data-state="attention"] { background: var(--warn-bg);   color: var(--warn); }
+.file-state[data-state="failed"]    { background: var(--danger-bg); color: var(--danger); }
+
+/* --------------------------------------------------------- progress */
+
+.progress-wrap { margin-top: 16px; }
+
+.progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width .2s ease;
+}
+
+.progress-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+#progress-percent { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink); }
+
+/* ----------------------------------------------------- date filters */
+
+.filter-bar {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+
+.quick-ranges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.quick-range {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 13px;
+  text-decoration: none;
+  color: var(--ink-2);
+  background: var(--card);
+  white-space: nowrap;
+}
+.quick-range:hover { background: var(--line-soft); }
+.quick-range.on {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--card);
+  font-weight: 600;
+}
+
+.filter-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.filter-row .grow { flex: 1; min-width: 190px; }
+.filter-row label { margin-bottom: 4px; }
+.filter-row input[type="date"] {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--card);
+}
+
+.export-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* ------------------------------------------- register toolbar + filter panel */
+
+.toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.toolbar-search {
+  flex: 1;
+  min-width: 220px;
+}
+
+.filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.filter-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.filter-toggle .count-badge { background: var(--accent); }
+
+.filter-panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+.filter-panel[hidden] { display: none; }
+
+/* ------------------------------------------------------------ reports page */
+
+.quick-ranges label.quick-range { cursor: pointer; user-select: none; }
+
+button.big { padding: 11px 22px; font-size: 15px; }
+button.secondary { background: var(--card); }
+
+#match-count { margin-left: auto; }
+
+/* A long invoice is information, not a failure — it still becomes one gate
+   pass, just printed over more pages. */
+.notice.info {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Setting a password needs two matching entries, so it gets a small dialog
+   rather than a prompt(), which would show the password in clear. */
+.pw-dialog {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 22px;
+  max-width: 380px;
+  width: 90%;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow-lift);
+}
+.pw-dialog::backdrop { background: rgba(20, 20, 26, .45); }
+
+/* Feature permissions — a collapsible block on the create form, and the same
+   grid inside the edit dialog. */
+.perm-block {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.perm-block summary { cursor: pointer; font-size: 14px; font-weight: 600; }
+.perm-block summary .hint { font-weight: 400; }
+
+.perm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 4px 16px;
+  margin: 10px 0;
+}
+.perm-item { margin: 4px 0; font-size: 13.5px; }
+
+/* Bulk selection bar — floats above the register once something is ticked. */
+.bulk-bar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  box-shadow: var(--shadow-lift);
+}
+.bulk-bar[hidden] { display: none; }
+.bulk-count { font-size: 14px; font-weight: 600; }
+.bulk-count.over-limit { color: var(--danger); }
+.bulk-spacer { flex: 1; }
+
+/* --------------------------------------------------- register table layout */
+
+/* The register is nine columns wide; the reading width the other pages use
+   squeezes the last one until "Cancel" has nowhere to go. */
+.container.container-wide { max-width: 1300px; }
+
+/* Fixed layout so the columns keep their proportions whatever the data says.
+   With `auto`, one long customer name takes the space the actions column needs
+   and the buttons get pushed off the edge. */
+table.list {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+/* Text columns wrap rather than being cut off — a register is for reading, so a
+   long customer name should take a second line, not disappear behind an
+   ellipsis. */
+table.list td {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.reg-tick     { width: 4%;  text-align: center; }
+.reg-serial   { width: 10%; }
+.reg-issued   { width: 14%; }
+.reg-by       { width: 11%; }
+.reg-from     { width: 14%; }
+.reg-customer { width: 18%; }
+.reg-invoice  { width: 11%; }
+.reg-status   { width: 7%;  }
+/* 11%, not 8%: "Print" + "Cancel" plus the cell padding measures about 130px,
+   which is 10.6% of the table. At 8% they would overflow the cell — the very
+   clipping this layout is meant to prevent. */
+.reg-actions  { width: 11%; }
+
+/* Keep the two actions on one line, hard against the right edge.
+   The flex row is the inner div: putting display:flex on the <td> itself takes
+   it out of the table layout, and `table-layout: fixed` then cannot give the
+   column its width — measured, it collapsed from 11% to 1.9%. */
+td.actions-cell { white-space: nowrap; }
+.actions-inner {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+  white-space: nowrap;
+}
+.actions-inner > * + * { margin-left: 0; }
+.actions-inner form { display: inline-flex; margin: 0; }
+
+/* Nothing between the table and the page may clip the last column. The wrapper
+   scrolls rather than hides, so on a narrow screen the column is still
+   reachable instead of being cut off. */
+.table-wrap { overflow-x: auto; overflow-y: visible; }
+
+/* ------------------------------------------------------------ people page */
+
+.add-person { padding: 0; }
+.add-person > summary { list-style: none; }
+.add-person > summary::-webkit-details-marker { display: none; }
+
+.add-person-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 16px 22px;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: var(--radius);
+}
+.add-person-summary:hover { background: var(--line-soft); }
+.add-person[open] > .add-person-summary {
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.add-person > form { padding: 20px 22px 22px; }
+
+/* What someone can actually do, spelled out rather than left as a count. */
+.perm-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+.chip {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--line-soft);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------- settings page */
+
+/* Restarting the numbering is not an everyday setting; it should not look like
+   one sitting next to "show totals". */
+.danger-zone { border-color: var(--danger); }
+.danger-zone-head {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--danger);
+  margin-bottom: 10px;
+}
+
+/* ------------------------------------------------- people accounts table */
+
+table.people-table { table-layout: fixed; }
+
+table.people-table td,
+table.people-table th { padding: 10px 12px !important; }
+
+.ppl-name     { width: 22%; }
+.ppl-username { width: 16%; }
+.ppl-perms    { width: 26%; }
+.ppl-status   { width: 12%; }
+.ppl-actions  { width: 24%; text-align: right; }
+
+/* One tidy row of small buttons, hard against the right edge. Labels are kept
+   short on purpose — "Edit permissions / New password / Switch off" measured
+   312px against the 300px this column gives, so they wrapped onto a second
+   line. Shortening them was cheaper than widening the column or hiding the
+   actions behind a menu. */
+.user-actions-cell {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.user-actions-cell form { display: inline-flex; margin: 0; }
+
+.btn-action-sm {
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-action-sm:hover { background: var(--line-soft); }
+.btn-action-sm.danger { color: var(--danger); }
+.btn-action-sm.danger:hover { background: var(--danger-bg); border-color: var(--danger); }
+.btn-action-sm.primary {
+  background: var(--brand); border-color: var(--brand); color: var(--card); font-weight: 600;
+}
+
+/* Badges sit tight against the top of their cell rather than floating in it. */
+.ppl-status, .ppl-perms { vertical-align: middle; }
+.ppl-perms .pill { margin-bottom: 2px; }
+
+/* ----------------------------------------------------- reports page panel */
+
+/* Every control reads down the left edge: label above input, rows wrapping
+   left to right, nothing centred and nothing stretched to the full width. */
+.report-panel { text-align: left; }
+
+.control-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+  margin-bottom: 4px;
+}
+
+.control { display: flex; flex-direction: column; }
+.control input,
+.control select { width: 190px; }
+.control-wide input { width: 240px; }
+.control-note { padding-bottom: 9px; }
+
+.option-set {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px 12px;
+  margin: 0;
+  min-width: 260px;
+}
+.option-set legend {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.option-set .checkbox { margin: 6px 0; font-size: 13.5px; }
+
+.report-actions {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* A count beside a heading, not a status badge — it should not read as a
+   warning the way the pending-approvals badge does. */
+.count-badge.neutral {
+  background: var(--line-soft);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
