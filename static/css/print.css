@@ -1,0 +1,295 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  color: #000;
+  background: #ccc;
+}
+
+/* Screen-only chrome above the sheet. Hidden by @media print, so none of this
+   affects the printed geometry below. */
+.toolbar {
+  padding: 11px 18px;
+  background: #fff;
+  border-bottom: 1px solid #e4e1db;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  color: #45454e;
+}
+
+.toolbar .tb-primary {
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  padding: 8px 18px;
+  border-radius: 7px;
+  border: 1px solid #17171a;
+  background: #17171a;
+  color: #fff;
+}
+.toolbar .tb-primary:hover { opacity: .88; }
+
+.toolbar .tb-serial {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600;
+  color: #17171a;
+}
+
+.toolbar .tb-sep, .toolbar .tb-meta { color: #7b7b88; font-size: 13px; }
+.toolbar .tb-spacer { flex: 1; }
+
+.toolbar a {
+  color: #45454e;
+  font-size: 13.5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.toolbar a:hover { color: #8a6a3a; }
+
+/* Full paper size with the margin as padding — see the @page note on the print
+   pages. box-sizing: border-box keeps the content box at 283x196mm, which is
+   what every measurement in this file assumes. */
+.sheet {
+  width: 297mm;
+  height: 210mm;
+  padding: 7mm;
+  margin: 10mm auto;
+  background: #fff;
+  display: flex;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.25);
+}
+
+.sheet.single {
+  width: 148mm;   /* A5 portrait; 134mm of content once the 7mm padding is off */
+}
+
+.pass {
+  width: 50%;
+  height: 100%;
+  padding: 4mm 5mm;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sheet.single .pass {
+  width: 100%;
+}
+
+.cut-line {
+  border-left: 1px dashed #999;
+  margin: 4mm 0;
+}
+
+.pass-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 2mm;
+}
+
+/* The real Fanzart lockup. Sized by width so the "LUXURY DESIGNER FANS" and
+   "SINCE 2012" lines below the wordmark stay legible on an A5 half. */
+.logo {
+  width: 30mm;
+  height: auto;
+  flex: none;
+  align-self: flex-start;
+}
+
+.pass-head h1 {
+  font-size: 11pt;
+  text-decoration: underline;
+  margin: 0;
+  align-self: center;
+}
+
+.serial {
+  font-size: 7.5pt;
+  text-align: right;
+  white-space: nowrap;
+}
+
+table.meta-box {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1.2mm;
+  font-size: 7.5pt;
+}
+
+table.meta-box td {
+  border: 1px solid #000;
+  padding: 1mm 2mm;
+  width: 50%;
+  vertical-align: top;
+}
+
+/* The item table is rigid on purpose.
+   It used to be `flex: 1`, which let the browser share the leftover page height
+   out across the rows. That meant the SAME gate pass printed with different row
+   heights on different machines — a shorter printable page (Letter paper, wider
+   margins, "fit to page") squeezed the rows, a taller one stretched them to
+   nearly 8.5mm, warping the table. Measured: 5.60mm at a 170mm page vs 8.47mm
+   at 230mm, a 51% swing on identical HTML.
+   Now the height of a row is computed on the server from a fixed body height
+   and written into the page as `--row-h`, so a row is exactly as tall as it is
+   meant to be whatever the paper is doing. Do not put `flex` back on it. */
+table.items-table {
+  width: 100% !important;
+  border-collapse: collapse !important;
+  border: 1px solid #000;
+  font-size: 7pt;
+  flex: none !important;
+  table-layout: fixed !important;
+}
+
+table.items-table th,
+table.items-table td {
+  padding: 0 1.5mm;
+  border-left: 1px solid #000;
+}
+
+table.items-table th:first-child,
+table.items-table td:first-child {
+  border-left: none;
+}
+
+table.items-table thead th {
+  border-bottom: 1px solid #000;
+  padding: 0.8mm !important;
+  vertical-align: middle !important;
+  box-sizing: border-box !important;
+  /* 6.2pt, not 7pt: "No.of Cartons" is the longest heading and has to fit
+     inside a 12% column (15.7mm). At 6.5pt it needed 16.1mm and spilled past
+     its border — headings are nowrap, so they overflow rather than wrap. */
+  font-size: 6.2pt;
+  line-height: 1.1;
+  font-weight: 700;
+  text-align: center;
+  white-space: nowrap;   /* a wrapped heading would undo the tighter height */
+}
+
+table.items-table thead th.col-item { text-align: left; }
+
+/* Roomier item rows.
+   `height` here is a FLOOR, not the row height: the table is `flex: 1` inside a
+   fixed-height pass, so the spare space in the box is shared out across however
+   many rows are drawn. That is what makes the rows breathe — with the usual
+   15-20 items, 20 rows are drawn and each comes out around 7.3mm (~27px); a
+   full 26-item pass draws 26 and they settle back to about 5.6mm so the pass
+   still prints on one sheet.
+   Do NOT raise this to the comfortable height. Setting `height: 7mm` here made
+   a 26-item pass 233mm tall inside a 196mm sheet — the table cannot shrink a
+   row below its stated height, so the last items fell off the page. */
+/* Fixed, not elastic. `--row-h` comes from the server (db.print_row_height_mm)
+   and is the same for every row on the page; `max-height` plus `overflow` mean
+   an unusually long value can never push its row taller than the others. */
+table.items-table tbody td {
+  height: var(--row-h, 5.49mm) !important;
+  max-height: var(--row-h, 5.49mm) !important;
+  overflow: hidden !important;
+  padding: 1mm 2mm !important;      /* ~4px 8px: keeps text off the borders */
+  line-height: 1.2 !important;
+  vertical-align: middle !important;
+  box-sizing: border-box !important;
+}
+
+/* The number columns are shrink-to-fit: their width is set by the heading text
+   ("No.of Cartons" is the widest thing that ever appears in that column, not
+   the digits underneath), so the padding and heading size above are what let
+   them be this narrow. Everything freed up goes to Item, which carries names
+   like "ERECTION COMMISSIONING AND INSTALLATION SERVICES" and must not wrap.
+   Narrow these further and a heading wraps to two lines, which makes the header
+   taller — the opposite of what is wanted. */
+.col-sl { width: 8%; text-align: center; }
+.col-item { width: 68%; }
+.col-qty { width: 12%; text-align: center; }
+.col-ctn { width: 12%; text-align: center; }
+
+/* Numeric cells hug their column horizontally. Only the side padding is set
+   here — using the `padding` shorthand would silently reset the vertical
+   padding these cells inherit from the tbody rule above, and this selector is
+   more specific, so the rows would quietly lose their breathing room. */
+table.items-table td.col-sl,
+table.items-table td.col-qty,
+table.items-table td.col-ctn {
+  padding-left: 2mm;
+  padding-right: 2mm;
+}
+
+/* Any optional totals on the left, the authoriser's signature rule on the
+   right. Only the authoriser signs, so only they get a rule. */
+.pass-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 3mm;
+  margin-top: 1.5mm;
+  font-size: 7.5pt;
+  min-height: 8mm;
+}
+
+.foot-side { text-align: center; flex: none; }
+
+.foot-middle {
+  flex: 1;
+  align-self: flex-end;
+  font-size: 7pt;
+  padding-bottom: 1mm;
+}
+.foot-middle > div { margin-bottom: .8mm; }
+
+.sign-line {
+  border-top: 1px solid #000;
+  width: 35mm;
+  margin-bottom: 1mm;
+}
+
+/* Who generated the pass. Deliberately quiet — it is a record of provenance,
+   not a signature, so it must not compete with "Authorised by" above it. */
+.prepared-by {
+  margin-top: 0.5mm;
+  font-size: 5.5pt;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #888888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.batch-messages {
+  list-style: none;
+  margin: 0;
+  padding: 10px 18px;
+  background: #fdf4e3;
+  border-bottom: 1px solid #e4e1db;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  color: #855200;
+}
+
+@media print {
+  body { background: #fff; }
+  .no-print { display: none !important; }
+  .sheet { box-shadow: none; margin: 0; }
+}
+
+/* Page indicator, shown only when a pass runs to more than one page. */
+.page-of {
+  font-size: 6pt;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin-top: 0.4mm;
+}
+
+/* One sheet per printed page. Without this every page after the first would
+   run on into the previous one instead of starting a new sheet. */
+@media print {
+  .sheet { page-break-after: always; break-after: page; }
+  .sheet:last-of-type { page-break-after: auto; break-after: auto; }
+}
