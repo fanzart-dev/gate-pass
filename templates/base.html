@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Gate Pass{% endblock %} · Fanzart Gate Pass</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎫</text></svg>">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{{ url_for('upload') }}">
+      <img class="brand-logo" src="{{ url_for('static', filename='img/fanzart-logo.png') }}"
+           alt="Fanzart">
+      <span class="brand-sub">gate pass</span>
+    </a>
+    <nav>
+      <a href="{{ url_for('upload') }}" {% if active == 'upload' %}class="active"{% endif %}>New Gate Pass</a>
+      <a href="{{ url_for('drafts') }}" {% if active == 'drafts' %}class="active"{% endif %}>Drafts</a>
+      <a href="{{ url_for('register') }}" {% if active == 'register' %}class="active"{% endif %}>Register</a>
+      {# Each link follows its own permission; the routes enforce the same thing,
+         so hiding a link is a courtesy rather than the control. #}
+      {% if can('can_export_reports') %}
+        <a href="{{ url_for('reports') }}" {% if active == 'reports' %}class="active"{% endif %}>Reports</a>
+      {% endif %}
+      {% if can('can_access_settings') %}
+        <a href="{{ url_for('settings') }}" {% if active == 'settings' %}class="active"{% endif %}>Settings</a>
+      {% endif %}
+      {% if can('can_manage_people') %}
+        <a href="{{ url_for('people') }}" {% if active == 'people' %}class="active"{% endif %}>
+          People{% if pending_count %}<span class="count-badge">{{ pending_count }}</span>{% endif %}
+        </a>
+      {% endif %}
+      {% if current_user %}
+        <span class="nav-divider"></span>
+        <span class="who" title="Printed as 'Prepared by' on passes you issue">
+          {{ current_user.display_name }}
+        </span>
+        <form method="post" action="{{ url_for('logout') }}" class="logout-form">
+          <button type="submit" class="link-button">Sign out</button>
+        </form>
+      {% endif %}
+    </nav>
+  </header>
+
+  <main class="container {% block container_class %}{% endblock %}">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul class="flashes">
+          {% for category, message in messages %}
+            <li class="{{ category }}">{{ message }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

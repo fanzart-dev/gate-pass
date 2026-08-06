@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>Settings</h1>
+    <p class="hint">How the printed gate pass looks. These apply to every pass, including ones
+      already issued &mdash; reprinting an old pass uses the current setting.</p>
+  </div>
+
+  <form method="post" class="card">
+    <div class="field">
+      <label for="company_name">Company name on the pass</label>
+      <input type="text" id="company_name" name="company_name" value="{{ settings.company_name }}">
+    </div>
+
+    <fieldset>
+      <legend>Paper</legend>
+      <label class="radio">
+        <input type="radio" name="paper_mode" value="a4x2" {% if settings.paper_mode == 'a4x2' %}checked{% endif %}>
+        <span>A4 landscape &mdash; two A5 passes side by side, cut down the middle <em>(default)</em></span>
+      </label>
+      <label class="radio">
+        <input type="radio" name="paper_mode" value="a5" {% if settings.paper_mode == 'a5' %}checked{% endif %}>
+        <span>A5 stock &mdash; one pass per sheet</span>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Below the item table</legend>
+      <label class="checkbox">
+        <input type="checkbox" name="show_totals" {% if settings.show_totals == '1' %}checked{% endif %}>
+        <span>Show total quantity and cartons</span>
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" name="show_vehicle" {% if settings.show_vehicle == '1' %}checked{% endif %}>
+        <span>Show vehicle number</span>
+      </label>
+    </fieldset>
+
+    <div class="form-actions">
+      <button type="submit" class="primary">Save Settings</button>
+    </div>
+  </form>
+
+  <h2 class="section-title">Numbering</h2>
+  <div class="card danger-zone">
+    <p class="hint" style="margin-bottom:14px">
+      The next gate pass will be <strong class="serial-cell">{{ next_serial }}</strong>.
+      Numbers run on continuously &mdash; they do not reset by themselves at the
+      year end.
+    </p>
+
+    {% if current_user.is_admin %}
+      <form method="post" action="{{ url_for('new_serial_run') }}">
+        <div class="danger-zone-head">Restarting the numbering</div>
+        <div class="field">
+          <label for="prefix">Start numbering again from 00001, using this prefix</label>
+          <input type="text" id="prefix" name="prefix" placeholder="e.g. FZ27"
+                 maxlength="10" autocapitalize="characters">
+        </div>
+        <p class="hint">
+          A new run has to use a prefix that has never been used before. If it
+          reused <strong>{{ settings.serial_prefix }}</strong>, the count would
+          go back to {{ settings.serial_prefix }}-00001 and you would end up with
+          two different gate passes carrying the same number.
+          <strong>Nothing is deleted</strong> &mdash; every pass already issued keeps its
+          number and stays in the register.
+        </p>
+        <label class="checkbox" style="margin-top:12px">
+          <input type="checkbox" name="confirm" value="yes">
+          <span>I want to restart the numbering</span>
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="danger">Start New Run</button>
+        </div>
+      </form>
+    {% else %}
+      <p class="hint">Only an admin can restart the numbering.</p>
+    {% endif %}
+  </div>
+{% endblock %}

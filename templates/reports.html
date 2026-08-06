@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block container_class %}container-wide{% endblock %}
+
+{% macro preset(key, label) %}
+  <label class="quick-range {{ 'on' if quick == key else '' }}">
+    <input type="radio" name="range" value="{{ key }}" {% if quick == key %}checked{% endif %}
+           hidden>{{ label }}
+  </label>
+{% endmacro %}
+
+{% block content %}
+  <div class="page-head">
+    <h1>Reports</h1>
+    <p class="hint">Set the filters, check the passes they catch, then export. Dates are the
+      day each pass was <strong>issued</strong>, not the supplier's invoice date, so a report
+      covers exactly what left the gate in that period.</p>
+  </div>
+
+  {# One form, two destinations: Apply Filters reloads this page with the
+     preview, Export sends the same fields to the download route. #}
+  <form method="get" action="{{ url_for('reports') }}" class="card report-panel" id="report-form">
+
+    <h2 class="section-title" style="margin-top:0">1 &nbsp;Date range</h2>
+    <div class="quick-ranges" id="presets">
+      {{ preset('', 'Custom') }}
+      {{ preset('today', 'Today') }}
+      {{ preset('week', 'This week') }}
+      {{ preset('month', 'This month') }}
+      {{ preset('year', 'This year') }}
+    </div>
+    <div class="control-row">
+      <div class="control">
+        <label for="from">From</label>
+        <input type="date" id="from" name="from" value="{{ date_from }}" max="{{ today }}">
+      </div>
+      <div class="control">
+        <label for="to">To</label>
+        <input type="date" id="to" name="to" value="{{ date_to }}" max="{{ today }}">
+      </div>
+      <p class="hint control-note">Leave both empty to cover the whole book.</p>
+    </div>
+
+    <h2 class="section-title">2 &nbsp;Narrow it down</h2>
+    <div class="control-row">
+      <div class="control">
+        <label for="status">Status</label>
+        <select id="status" name="status">
+          <option value="" {% if not status %}selected{% endif %}>All</option>
+          <option value="issued" {% if status == 'issued' %}selected{% endif %}>Issued</option>
+          <option value="cancelled" {% if status == 'cancelled' %}selected{% endif %}>Cancelled</option>
+        </select>
+      </div>
+      <div class="control control-wide">
+        <label for="supplier">Issued from</label>
+        <input type="text" id="supplier" name="supplier" value="{{ supplier }}"
+               list="supplier-list" placeholder="Any supplier">
+        <datalist id="supplier-list">
+          {% for name in suppliers %}<option value="{{ name }}"></option>{% endfor %}
+        </datalist>
+      </div>
+      <div class="control control-wide">
+        <label for="customer">Customer</label>
+        <input type="text" id="customer" name="customer" value="{{ customer }}"
+               list="customer-list" placeholder="Any customer">
+        <datalist id="customer-list">
+          {% for name in customers %}<option value="{{ name }}"></option>{% endfor %}
+        </datalist>
+      </div>
+    </div>
+
+    <h2 class="section-title">3 &nbsp;What to export</h2>
+    <div class="control-row">
+      <fieldset class="option-set">
+        <legend>Rows</legend>
+        <label class="checkbox">
+          <input type="radio" name="detail" value="" {% if detail != '1' %}checked{% endif %}>
+          <span>Summary &mdash; one row per gate pass</span>
+        </label>
+        <label class="checkbox">
+          <input type="radio" name="detail" value="1" {% if detail == '1' %}checked{% endif %}>
+          <span>Detailed &mdash; one row per line item</span>
+        </label>
+      </fieldset>
+      <fieldset class="option-set">
+        <legend>File</legend>
+        <label class="checkbox">
+          <input type="radio" name="format" value="csv" {% if fmt != 'xlsx' %}checked{% endif %}>
+          <span>CSV (.csv) &mdash; opens anywhere</span>
+        </label>
+        <label class="checkbox">
+          <input type="radio" name="format" value="xlsx" {% if fmt == 'xlsx' %}checked{% endif %}>
+          <span>Excel (.xlsx) &mdash; a real workbook</span>
+        </label>
+      </fieldset>
+    </div>
+
+    <div class="report-actions">
+      <button type="submit" class="primary">Apply Filters</button>
+      <button type="submit" class="primary" formaction="{{ url_for('export_report') }}">
+        Export Report
+      </button>
+      <a class="button" href="{{ url_for('reports') }}">Reset</a>
+    </div>
+  </form>
+
+  {# Nothing is listed until Apply Filters has been pressed: the page opens as a
+     form to fill in, not as a view of the whole book. #}
+  {% if not applied %}
+    <div class="empty compact">
+      <div class="empty-sub">Set your filters above, then press
+        <strong>Apply Filters</strong> to see which gate passes they catch.</div>
+    </div>
+  {% else %}
+  <h2 class="section-title">
+    Matching gate passes
+    <span class="count-badge neutral">{{ matching }}</span>
+  </h2>
+
+  {% if not preview %}
+    <div class="empty compact">
+      <div class="empty-sub">Nothing matches these filters. Widen the dates or clear a field.</div>
+    </div>
+  {% else %}
+    {% if matching > preview|length %}
+      <p class="hint" style="margin-bottom:10px">
+        Showing the first {{ preview|length }} of {{ matching }}. The export contains all
+        {{ matching }}.
+      </p>
+    {% endif %}
+    <div class="table-wrap">
+      <table class="list">
+        <thead>
+          <tr>
+            <th>Sl. No.</th><th>Issued</th><th>Prepared by</th><th>From</th>
+            <th>Customer</th><th>Invoice No</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for gp in preview %}
+          <tr class="{{ 'cancelled' if gp.status == 'cancelled' else '' }}">
+            <td class="serial-cell">{{ gp.serial_no }}</td>
+            <td class="muted-cell">{{ gp.issued_at }}</td>
+            <td>{{ gp.prepared_by or '—' }}</td>
+            <td>{{ gp.supplier_name }}</td>
+            <td>{{ gp.customer_name }}</td>
+            <td>{{ gp.invoice_no }}</td>
+            <td><span class="pill {{ gp.status }}">{{ gp.status }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+  {% endif %}
+
+  <script>
+    // Choosing a preset clears the custom dates, and typing a custom date drops
+    // back to Custom — otherwise the two would silently fight each other.
+    const presets = document.getElementById("presets");
+    const from = document.getElementById("from");
+    const to = document.getElementById("to");
+
+    presets.addEventListener("change", (e) => {
+      presets.querySelectorAll(".quick-range").forEach((l) =>
+        l.classList.toggle("on", l.contains(e.target)));
+      if (e.target.value) { from.value = ""; to.value = ""; }
+    });
+
+    [from, to].forEach((input) => input.addEventListener("change", () => {
+      const custom = presets.querySelector('input[value=""]');
+      custom.checked = true;
+      presets.querySelectorAll(".quick-range").forEach((l) =>
+        l.classList.toggle("on", l.contains(custom)));
+    }));
+  </script>
+{% endblock %}

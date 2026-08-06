@@ -1,0 +1,86 @@
+{# One printed page of one gate pass, shared by the single and batch print
+   pages so the two can never drift apart. Everything it needs is passed in;
+   `with context` at the import site gives it url_for and settings. #}
+  {# One card = one printed page of one gate pass. A long invoice prints as
+     several pages, all carrying the SAME serial number — it is one gate pass,
+     not two, so the number is never suffixed or split. #}
+  {% macro pass_card(gate_pass, page_items, page_no, page_total) %}
+    <div class="pass">
+      <div class="pass-head">
+        <img class="logo" src="{{ url_for('static', filename='img/fanzart-logo.png') }}"
+             alt="{{ settings.company_name }}">
+        <h1>Gate Pass</h1>
+        <div class="serial">
+          Sl. No. : <strong>{{ gate_pass.serial_no }}</strong>
+          {% if page_total > 1 %}
+            <div class="page-of">Page {{ page_no }} of {{ page_total }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <table class="meta-box">
+        <tr>
+          <td class="meta-label">From :<br><strong>{{ gate_pass.supplier_name }}</strong></td>
+          <td class="meta-label">Customer :<br><strong>{{ gate_pass.customer_name }}</strong></td>
+        </tr>
+      </table>
+      <table class="meta-box">
+        <tr>
+          <td>Invoice No : <strong>{{ gate_pass.invoice_no }}</strong></td>
+          <td>Date : <strong>{{ gate_pass.invoice_date }}</strong></td>
+        </tr>
+      </table>
+
+      {# The row height is written in here rather than left to the layout to
+         work out. A flex-stretched table re-divides its rows whenever the
+         printable page height changes — a different paper size, margins or a
+         "fit to page" setting — which is what made the same pass print with
+         tall warped rows on one machine and correct ones on another. #}
+      {% set rows = page_rows(page_items|length) %}
+      <table class="items-table" style="--row-h: {{ row_height_mm(rows) }}mm">
+        <thead>
+          <tr>
+            <th class="col-sl">Sl No.</th>
+            <th class="col-item">Item</th>
+            <th class="col-qty">Quantity</th>
+            <th class="col-ctn">No.of Cartons</th>
+          </tr>
+        </thead>
+        <tbody>
+          {# Sl No. runs straight through the pass: page 2 of a 32-item pass
+             starts at 27, not back at 1. #}
+          {% for r in range(1, rows + 1) %}
+            {% set entry = page_items[r - 1] if r - 1 < page_items|length else None %}
+            <tr>
+              <td class="col-sl">{{ entry[0] if entry else '' }}</td>
+              <td class="col-item">{{ entry[1].item_name if entry else '' }}</td>
+              <td class="col-qty">{{ entry[1].quantity if entry else '' }}</td>
+              <td class="col-ctn">{{ entry[1].cartons if entry else '' }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div class="pass-foot">
+        <div class="foot-middle">
+          {% if settings.show_totals == '1' and page_no == page_total %}
+            {# Cartons are usually written by hand, so only total them if some were typed. #}
+            <div>Total qty : {{ gate_pass.total_qty }}{% if gate_pass.total_cartons != '' %}
+              &middot; Boxes : {{ gate_pass.total_cartons }}{% endif %}</div>
+          {% endif %}
+          {% if settings.show_vehicle == '1' %}
+            <div>Vehicle : {{ gate_pass.vehicle_no }}</div>
+          {% endif %}
+        </div>
+        {# Only the authoriser signs, so only they get a rule. #}
+        <div class="foot-side foot-right">
+          <div class="sign-line"></div>
+          <div>Authorised by</div>
+        </div>
+      </div>
+
+      {# Who generated the pass is a record, not a signature — a quiet line in
+         the bottom corner rather than a second signature block. #}
+      <div class="prepared-by">Prepared by: {{ gate_pass.prepared_by }}</div>
+    </div>
+  {% endmacro %}

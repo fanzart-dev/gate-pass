@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Drafts{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>Drafts</h1>
+    <p class="hint">Invoices uploaded but not yet issued. None of these holds a gate pass
+      number &mdash; discarding one, or failing to read one, costs nothing.
+      The next number to be handed out is <strong class="serial-cell">{{ next_serial }}</strong>.</p>
+  </div>
+
+  {% if not drafts %}
+    <div class="empty">
+      <div class="empty-icon">🗂</div>
+      <div class="empty-title">No drafts waiting</div>
+      <div class="empty-sub">Upload one or more invoices to start.</div>
+      <a class="button" href="{{ url_for('upload') }}">New Gate Pass</a>
+    </div>
+  {% else %}
+    <form method="post" action="{{ url_for('issue_drafts') }}">
+      <div class="table-wrap">
+        <table class="list">
+          <thead>
+            <tr>
+              <th class="tick-cell"><input type="checkbox" id="select-all" title="Select all ready"></th>
+              <th>Uploaded</th><th>From</th><th>Customer</th><th>Invoice No</th>
+              <th>Items</th><th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for d in drafts %}
+            <tr class="{{ 'needs-attention' if d.problem else '' }}">
+              <td class="tick-cell">
+                {% if not d.problem %}
+                  <input type="checkbox" name="draft_id" value="{{ d.id }}" class="draft-tick" checked>
+                {% endif %}
+              </td>
+              <td class="muted-cell">{{ d.created_at }}</td>
+              <td>{{ d.supplier_name or '—' }}</td>
+              <td>{{ d.customer_name or '—' }}</td>
+              <td>{{ d.invoice_no or '—' }}</td>
+              <td class="muted-cell">{{ d.item_count }}</td>
+              <td>
+                {% if d.problem %}
+                  <span class="pill pending">Needs attention</span>
+                  <div class="hint" style="margin-top:3px">{{ d.problem }}</div>
+                {% else %}
+                  <span class="pill approved">Ready</span>
+                {% endif %}
+              </td>
+              <td class="actions-cell">
+                <a href="{{ url_for('review', draft_id=d.id) }}">Open</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" class="primary" {% if not ready_count %}disabled{% endif %}>
+          Issue Selected
+        </button>
+        <span class="hint">
+          {{ ready_count }} of {{ drafts|length }} ready.
+          They are numbered in one unbroken block; if any one of them fails, none are
+          issued and no numbers are used.
+        </span>
+      </div>
+    </form>
+  {% endif %}
+
+  <script>
+    const selectAll = document.getElementById("select-all");
+    if (selectAll) {
+      const ticks = [...document.querySelectorAll(".draft-tick")];
+      selectAll.checked = ticks.length > 0 && ticks.every((t) => t.checked);
+      selectAll.addEventListener("change", () => {
+        ticks.forEach((t) => { t.checked = selectAll.checked; });
+      });
+    }
+  </script>
+{% endblock %}

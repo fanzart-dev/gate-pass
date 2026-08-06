@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Fanzart Gate Pass</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎫</text></svg>">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <div class="login-brand">
+      <img class="brand-logo" src="{{ url_for('static', filename='img/fanzart-logo.png') }}"
+           alt="Fanzart">
+      <span class="brand-sub">gate pass</span>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul class="flashes">
+          {% for category, message in messages %}
+            <li class="{{ category }}">{{ message }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+
+    {% if no_users %}
+      <div class="notice">
+        <span class="notice-icon">⚠</span>
+        <span>No accounts exist yet. Create the first one on the office server with
+          <code>python3 manage_users.py add</code> — it becomes the admin, and every
+          account after that is created by an admin under People.</span>
+      </div>
+    {% endif %}
+
+    <form method="post" class="card">
+      <div class="field">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" value="{{ username }}"
+               autocomplete="username" autocapitalize="none" autofocus required>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password"
+               autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="primary login-submit">Sign in</button>
+    </form>
+
+
+  </main>
+</body>
+</html>

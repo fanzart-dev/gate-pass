@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}Register{% endblock %}
+{# Nine columns need more than the reading width the other pages use. #}
+{% block container_class %}container-wide{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>Gate Pass Register</h1>
+    <p class="hint">Every gate pass ever issued, in an unbroken run. Cancelled passes keep their
+      number so the run stays continuous &mdash; nothing is ever deleted.</p>
+  </div>
+
+  {# Search and filter are separate permissions, so someone may have one, both
+     or neither. The routes ignore the query string for whichever they lack —
+     hiding a control here is a courtesy, not the control itself. #}
+  {% if may_search or may_filter %}
+    <form method="get" id="register-filters">
+      <div class="toolbar">
+        {% if may_search %}
+          <input type="text" name="q" value="{{ search }}" class="toolbar-search"
+                 placeholder="Search serial, invoice no, customer or supplier"
+                 aria-label="Search the register">
+          <button type="submit" class="primary">Search</button>
+        {% endif %}
+        {% if may_filter %}
+          <button type="button" id="filter-toggle" class="filter-toggle"
+                  aria-expanded="{{ 'true' if active_filters else 'false' }}"
+                  aria-controls="filter-panel">
+            Filter{% if active_filters %}<span class="count-badge">{{ active_filters }}</span>{% endif %}
+          </button>
+        {% endif %}
+      </div>
+
+      {% if may_filter %}
+        <div class="filter-panel" id="filter-panel" {% if not active_filters %}hidden{% endif %}>
+          <div class="filter-row">
+            <div>
+              <label for="from">Issued from</label>
+              <input type="date" id="from" name="from" value="{{ date_from }}" max="{{ today }}">
+            </div>
+            <div>
+              <label for="to">To</label>
+              <input type="date" id="to" name="to" value="{{ date_to }}" max="{{ today }}">
+            </div>
+            <div>
+              <label for="status">Status</label>
+              <select id="status" name="status">
+                <option value="" {% if not status %}selected{% endif %}>All</option>
+                <option value="issued" {% if status == 'issued' %}selected{% endif %}>Issued</option>
+                <option value="cancelled" {% if status == 'cancelled' %}selected{% endif %}>Cancelled</option>
+              </select>
+            </div>
+            <button type="submit" class="primary">Apply</button>
+            <a class="button" href="{{ url_for('register') }}">Reset</a>
+          </div>
+        </div>
+      {% endif %}
+    </form>
+  {% endif %}
+
+  {% if not gate_passes %}
+    <div class="empty">
+      <div class="empty-icon">📋</div>
+      <div class="empty-title">
+        {% if search or status %}Nothing matches that search{% else %}No gate passes issued yet{% endif %}
+      </div>
+      <div class="empty-sub">
+        {% if search or status %}Try a different serial, invoice number or customer.
+        {% else %}The first one you issue will appear here.{% endif %}
+      </div>
+      {% if not search and not status %}
+        <a class="button" href="{{ url_for('upload') }}">New Gate Pass</a>
+      {% endif %}
+    </div>
+  {% else %}
+    {% if total > gate_passes|length %}
+      <p class="hint" style="margin-bottom:10px">
+        Showing the {{ gate_passes|length }} most recent of {{ total }} matching passes.
+        Search by serial, invoice number or customer to narrow it down.
+      </p>
+    {% endif %}
+    <div class="table-wrap">
+      <table class="list">
+        <thead>
+          <tr>
+            {% if may_batch_print %}
+              <th class="reg-tick">
+                <input type="checkbox" id="select-all" title="Select all on this page"
+                       aria-label="Select all passes on this page">
+              </th>
+            {% endif %}
+            <th class="reg-serial">Sl. No.</th>
+            <th class="reg-issued">Issued</th>
+            <th class="reg-by">Prepared by</th>
+            <th class="reg-from">From</th>
+            <th class="reg-customer">Customer</th>
+            <th class="reg-invoice">Invoice No</th>
+            <th class="reg-status">Status</th>
+            <th class="reg-actions"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for gp in gate_passes %}
+          <tr class="{{ 'cancelled' if gp.status == 'cancelled' else '' }}">
+            {% if may_batch_print %}
+              <td class="reg-tick">
+                {# A cancelled pass is not reprinted, so it cannot be selected. #}
+                {% if gp.status == 'issued' %}
+                  <input type="checkbox" class="pass-tick" value="{{ gp.id }}"
+                         aria-label="Select {{ gp.serial_no }}">
+                {% endif %}
+              </td>
+            {% endif %}
+            <td class="serial-cell reg-serial">{{ gp.serial_no }}</td>
+            <td class="muted-cell reg-issued">{{ gp.issued_at }}</td>
+            <td class="reg-by">{{ gp.prepared_by or '—' }}</td>
+            <td class="reg-from">{{ gp.supplier_name }}</td>
+            <td class="reg-customer">{{ gp.customer_name }}</td>
+            <td class="reg-invoice">{{ gp.invoice_no }}</td>
+            <td class="reg-status"><span class="pill {{ gp.status }}">{{ gp.status }}</span></td>
+            <td class="actions-cell reg-actions">
+              {# The flex row lives on this inner div, not on the td: a td with
+                 display:flex stops being a table-cell, and table-layout:fixed
+                 then cannot give the column its width — it collapsed to 24px. #}
+              <div class="actions-inner">
+                <a href="{{ url_for('print_gate_pass', gate_pass_id=gp.id) }}">Print</a>
+                {% if gp.status == 'issued' and may_cancel %}
+                  <form method="post" action="{{ url_for('cancel_gate_pass', gate_pass_id=gp.id) }}"
+                        onsubmit="return promptCancel(this);">
+                    <input type="hidden" name="reason" class="cancel-reason">
+                    <button type="submit" class="link-button">Cancel</button>
+                  </form>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+
+  {% if may_batch_print %}
+    {# Appears only once something is ticked. #}
+    <div class="bulk-bar" id="bulk-bar" hidden>
+      <span class="bulk-count" id="bulk-count"></span>
+      <span class="bulk-spacer"></span>
+      <button type="button" id="bulk-clear">Clear</button>
+      <button type="button" class="primary" id="bulk-print">Print Selected Passes</button>
+    </div>
+  {% endif %}
+
+  <script>
+    const bulkBar = document.getElementById("bulk-bar");
+    if (bulkBar) {
+      const ticks = [...document.querySelectorAll(".pass-tick")];
+      const selectAll = document.getElementById("select-all");
+      const countLabel = document.getElementById("bulk-count");
+      const MAX_BATCH = {{ max_batch }};
+
+      function selected() {
+        return ticks.filter((t) => t.checked).map((t) => t.value);
+      }
+
+      function refresh() {
+        const chosen = selected();
+        bulkBar.hidden = chosen.length === 0;
+        countLabel.textContent = chosen.length === 1
+          ? "1 pass selected"
+          : `${chosen.length} passes selected`;
+        const tooMany = chosen.length > MAX_BATCH;
+        countLabel.classList.toggle("over-limit", tooMany);
+        if (tooMany) {
+          countLabel.textContent += ` — ${MAX_BATCH} is the most that can print at once`;
+        }
+        document.getElementById("bulk-print").disabled = tooMany;
+        if (selectAll) {
+          selectAll.checked = ticks.length > 0 && chosen.length === ticks.length;
+          selectAll.indeterminate = chosen.length > 0 && chosen.length < ticks.length;
+        }
+      }
+
+      ticks.forEach((tick) => tick.addEventListener("change", refresh));
+      if (selectAll) {
+        selectAll.addEventListener("change", () => {
+          ticks.forEach((t) => { t.checked = selectAll.checked; });
+          refresh();
+        });
+      }
+      document.getElementById("bulk-clear").addEventListener("click", () => {
+        ticks.forEach((t) => { t.checked = false; });
+        refresh();
+      });
+
+      // Straight to the printable page, which raises the print dialog itself.
+      // Nothing is downloaded.
+      document.getElementById("bulk-print").addEventListener("click", () => {
+        const chosen = selected();
+        if (chosen.length) {
+          window.location = "{{ url_for('print_batch') }}?ids=" + chosen.join(",");
+        }
+      });
+
+      refresh();
+    }
+
+    // The filter controls only exist for admins.
+    const toggle = document.getElementById("filter-toggle");
+    const panel = document.getElementById("filter-panel");
+    if (toggle) toggle.addEventListener("click", () => {
+      const open = !panel.hidden;
+      panel.hidden = open;
+      toggle.setAttribute("aria-expanded", String(!open));
+      if (!open) panel.querySelector("input, select")?.focus();
+    });
+
+    function promptCancel(form) {
+      const reason = window.prompt(
+        "Why is this gate pass being cancelled?\n\nThe number stays reserved so the register keeps its unbroken run.");
+      if (!reason) return false;
+      form.querySelector(".cancel-reason").value = reason;
+      return true;
+    }
+  </script>
+{% endblock %}
