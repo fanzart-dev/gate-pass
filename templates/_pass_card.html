@@ -41,21 +41,30 @@
         <thead>
           <tr>
             <th class="col-sl">Sl No.</th>
-            <th class="col-item">Item</th>
+            <th class="col-item">Item Name</th>
             <th class="col-qty">Quantity</th>
             <th class="col-ctn">No.of Cartons</th>
           </tr>
         </thead>
         <tbody>
-          {# Sl No. runs straight through the pass: page 2 of a 32-item pass
+          {# Only rows that carry an item are drawn, so the ruled box closes
+             straight after the last one instead of running blank column
+             dividers down to the foot of the page.
+
+             `rows` is still what sets the row HEIGHT (--row-h above): it is the
+             number of rows this page is budgeted for, so a 3-item pass gets the
+             same roomy 6.27mm rows as a 20-item one and a full 26-item pass
+             tightens to 5.30mm and still fits. Height budget and rows drawn are
+             two different things; do not collapse them.
+
+             Sl No. runs straight through the pass: page 2 of a 32-item pass
              starts at 27, not back at 1. #}
-          {% for r in range(1, rows + 1) %}
-            {% set entry = page_items[r - 1] if r - 1 < page_items|length else None %}
+          {% for entry in page_items %}
             <tr>
-              <td class="col-sl">{{ entry[0] if entry else '' }}</td>
-              <td class="col-item">{{ entry[1].item_name if entry else '' }}</td>
-              <td class="col-qty">{{ entry[1].quantity if entry else '' }}</td>
-              <td class="col-ctn">{{ entry[1].cartons if entry else '' }}</td>
+              <td class="col-sl">{{ entry[0] }}</td>
+              <td class="col-item">{{ entry[1].item_name }}</td>
+              <td class="col-qty">{{ entry[1].quantity }}</td>
+              <td class="col-ctn">{{ entry[1].cartons }}</td>
             </tr>
           {% endfor %}
         </tbody>

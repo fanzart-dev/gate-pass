@@ -42,6 +42,8 @@ BILL_TO_NAME_RE = re.compile(r"Name\s*:?\s*(?:M/S\s*)?(.+?)(?=\s+Name\s*:|\n|$)"
 NAME_HEADERS = ("model", "item")
 QTY_HEADERS = ("qty", "quantity")
 SL_HEADERS = ("s.no", "sl", "sno")
+# "Model No" is a code column, never the name -- see _name_column_index.
+NUMBER_HEADING_RE = re.compile(r"\bno\.?\b|\bcode\b|\bnumber\b")
 
 # Text that marks the end of the item area, whichever appears first.
 ITEM_AREA_END_MARKERS = ("total amount in words", "taxable amount", "bank details")
@@ -148,7 +150,52 @@ def extract_items(words, edges):
         return []
 
     bounds = _column_bounds(edges, header_bottom, fallback=(name_col, qty_col, sl_col))
-    return _assemble_items(body, bounds)
+    header_words = [w for w in words
+                    if abs(w["top"] - name_col["top"]) <= LINE_TOLERANCE]
+    name_idx = _name_column_index(header_words, bounds, name_col)
+    return _assemble_items(body, bounds, name_idx)
+
+
+def _name_column_index(header_words, bounds, name_word):
+    """Which column holds the item name, read from the column headings.
+
+    Suppliers lay the table out differently. One invoice is headed
+
+        S.no | Model | HSN | Description | Qty | Unit Price | Total
+
+    and another, from the same supplier under a different series, is
+
+        S.no | Model No | Model Name | HSN | Description | Batch_no | Qty | ...
+
+    so the name is not reliably "the column after S.no". Assuming it was is
+    what made a BI invoice come through with items called `0003 B` and `0006`
+    -- the model numbers -- instead of `HAWK BLACK` and `BUDDY`.
+
+    Reading it from the heading text means a new column appearing to the left
+    of the name shifts nothing, and a column headed with a number is never
+    mistaken for the name.
+    """
+    headings = {}
+    for w in header_words:
+        headings.setdefault(_column_index(w, bounds), []).append(w)
+    texts = {
+        idx: " ".join(w["text"] for w in sorted(ws, key=lambda w: w["x0"])).strip().lower()
+        for idx, ws in headings.items()
+    }
+
+    # "Model Name" wins outright where both it and "Model No" are present.
+    for idx, text in sorted(texts.items()):
+        if "name" in text and any(h in text for h in NAME_HEADERS):
+            return idx
+    # Otherwise a column headed exactly "Model" or "Item".
+    for idx, text in sorted(texts.items()):
+        if text.rstrip(".") in NAME_HEADERS:
+            return idx
+    # Last resort: something name-ish that is explicitly not a number column.
+    for idx, text in sorted(texts.items()):
+        if any(h in text for h in NAME_HEADERS) and not NUMBER_HEADING_RE.search(text):
+            return idx
+    return _column_index(name_word, bounds)
 
 
 def _find_header(words):
@@ -279,13 +326,13 @@ def _column_index(word, bounds):
     return len(bounds) - 2
 
 
-def _assemble_items(body_words, bounds):
+def _assemble_items(body_words, bounds, name_idx=None):
     """Turn positioned words into items, joining wrapped name lines.
 
-    Column layout in this format is  S.no | Model | HSN | Description | Qty | ...
-    so the name is column 1 and the quantity is the first column after the
-    Description one that holds a bare number. We find the quantity column by
-    looking at which column the numbers land in, rather than hard-coding it.
+    Neither column position is hard-coded: `name_idx` comes from the heading
+    text (see _name_column_index) and the quantity column is found by looking
+    at which column the bare numbers actually land in. Both used to be fixed
+    positions, which broke the moment a supplier added a column.
     """
     rows = []
     for _top, line_words in _group_lines(body_words):
@@ -298,7 +345,8 @@ def _assemble_items(body_words, bounds):
     if not rows:
         return []
 
-    name_idx = 1 if len(bounds) > 2 else 0
+    if name_idx is None:
+        name_idx = 1 if len(bounds) > 2 else 0
     qty_idx = _detect_qty_column(rows, name_idx)
 
     items = []
