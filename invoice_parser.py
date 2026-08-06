@@ -153,7 +153,14 @@ def extract_items(words, edges):
     header_words = [w for w in words
                     if abs(w["top"] - name_col["top"]) <= LINE_TOLERANCE]
     name_idx = _name_column_index(header_words, bounds, name_col)
-    return _assemble_items(body, bounds, name_idx)
+
+    # The code column, used only when a row has no name at all. It is whatever
+    # sits between the Sl No. column and the name — on a BI invoice that is
+    # "Model No", and on an FR invoice there is nothing there, so no fallback.
+    sl_idx = _column_index(sl_col, bounds) if sl_col else 0
+    code_idx = name_idx - 1 if name_idx - 1 > sl_idx else None
+
+    return _assemble_items(body, bounds, name_idx, code_idx)
 
 
 def _name_column_index(header_words, bounds, name_word):
@@ -326,7 +333,7 @@ def _column_index(word, bounds):
     return len(bounds) - 2
 
 
-def _assemble_items(body_words, bounds, name_idx=None):
+def _assemble_items(body_words, bounds, name_idx=None, code_idx=None):
     """Turn positioned words into items, joining wrapped name lines.
 
     Neither column position is hard-coded: `name_idx` comes from the heading
@@ -352,6 +359,12 @@ def _assemble_items(body_words, bounds, name_idx=None):
     items = []
     for cells in rows:
         name = cells.get(name_idx, "").strip()
+        # A row with a quantity but no name would otherwise reach the operator
+        # blank, and a pass cannot be issued without an item name. The code is
+        # a poor label but it is one the warehouse can match against the
+        # invoice, which beats an empty line.
+        if not name and code_idx is not None:
+            name = cells.get(code_idx, "").strip()
         qty = cells.get(qty_idx, "").strip() if qty_idx is not None else ""
         if not name and not qty:
             continue

@@ -449,6 +449,27 @@ def test_name_column_is_found_by_its_heading():
     check("a code column is never mistaken for the name",
           invoice_parser._name_column_index(words, bounds, words[0]) == 2)
 
+    # A row with a quantity but no name would reach the operator blank, and a
+    # pass cannot be issued without an item name. The code is a poor label but
+    # one the warehouse can match against the invoice.
+    bounds = [0, 100, 200, 300, 400, 500]
+    row = [
+        {"text": "1", "x0": 5, "x1": 20, "top": 10, "bottom": 18},          # Sl No.
+        {"text": "0007", "x0": 105, "x1": 140, "top": 10, "bottom": 18},    # Model No
+        # the Model Name cell is deliberately empty
+        {"text": "2", "x0": 405, "x1": 420, "top": 10, "bottom": 18},       # Qty
+    ]
+    fell_back = invoice_parser._assemble_items(row, bounds, name_idx=2, code_idx=1)
+    check("an empty name falls back to the model code",
+          fell_back and fell_back[0]["item_name"] == "0007")
+    check("and the quantity still comes through",
+          fell_back and fell_back[0]["quantity"] == "2")
+    # The fallback must not fire when there is a name; that would undo the fix.
+    row.append({"text": "BUDDY", "x0": 205, "x1": 250, "top": 10, "bottom": 18})
+    named = invoice_parser._assemble_items(row, bounds, name_idx=2, code_idx=1)
+    check("the code is never used when a name is present",
+          named and named[0]["item_name"] == "BUDDY")
+
 
 @needs_fixtures
 def test_bi_series_invoice():
@@ -928,8 +949,8 @@ def test_print_layout_rules(tmpdir):
     css = (ROOT / "static" / "css" / "print.css").read_text()
     card = (ROOT / "templates" / "_pass_card.html").read_text()
 
-    check("the item column is headed 'Item Name'",
-          '<th class="col-item">Item Name</th>' in card)
+    check("the item column is headed 'Item Names'",
+          '<th class="col-item">Item Names</th>' in card)
     # The loop walks the items themselves. Iterating a fixed row count and
     # emitting blanks is what drew filler rows down to the foot of the page.
     check("the table iterates the items, not a fixed row count",
@@ -1004,11 +1025,26 @@ def test_print_layout_rules(tmpdir):
     check("border-box keeps the content box at 283x196mm",
           "* { box-sizing: border-box; }" in css)
 
-    # The item column is centred, heading and cells alike.
-    check("the item column is centred",
+    # The item column is the odd one out: heading centred like the others, but
+    # the names underneath left-aligned and indented so they read as a list.
+    check("the item heading is centred",
           re.search(r"\.col-item \{[^}]*text-align: center", css) is not None)
-    check("nothing left-aligns the item heading again",
-          "thead th.col-item { text-align: left" not in css)
+    item_cell = re.search(r"table\.items-table td\.col-item \{[^}]*\}", css)
+    check("the item names are left-aligned",
+          item_cell is not None and "text-align: left" in item_cell.group())
+    # !important is required: the tbody rule sets `padding: 1mm 2mm !important`
+    # and an ordinary padding-left loses to it, measuring 2mm and doing nothing.
+    check("and indented off the column divider",
+          item_cell is not None and "padding-left: 3mm !important" in item_cell.group())
+    # Comments stripped first: this rule's own comment quotes the shorthand it
+    # is warning about, and matching that would fail on the explanation rather
+    # than on the code.
+    item_decls = re.sub(r"/\*.*?\*/", "", item_cell.group(), flags=re.S) if item_cell else ""
+    check("the indent does not reset the vertical padding",
+          re.search(r"\bpadding:\s", item_decls) is None)
+    for column in ("col-sl", "col-qty", "col-ctn"):
+        check(f"{column} stays centred",
+              re.search(rf"\.{column} \{{[^}}]*text-align: center", css) is not None)
     # The table no longer fills the page, so the signature block has to be
     # pushed down explicitly or it signs halfway up a short pass.
     foot = re.search(r"\.pass-foot \{[^}]*\}", css).group()
