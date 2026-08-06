@@ -1,0 +1,33 @@
+[Unit]
+Description=Fanzart Gate Pass
+After=network.target
+
+[Service]
+Type=notify
+User=fanzart
+Group=fanzart
+WorkingDirectory=/home/fanzart/gate-pass
+Environment="PATH=/home/fanzart/gate-pass/.venv/bin"
+# The signing key lives in storage/secret_key (mode 600) and is generated on
+# first run, so nothing secret is set here. Set GATE_PASS_HTTPS=1 only once the
+# site is actually served over TLS — it makes the session cookie HTTPS-only,
+# and setting it on a plain-HTTP site logs everyone out at the door.
+# Environment="GATE_PASS_HTTPS=1"
+ExecStart=/home/fanzart/gate-pass/.venv/bin/gunicorn -c deploy/gunicorn.conf.py app:app
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=always
+RestartSec=3
+
+# The service needs to write exactly one directory. Everything else is read-only
+# to it, so a bug or a bad upload cannot touch the rest of the machine.
+ReadWritePaths=/home/fanzart/gate-pass/storage
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
