@@ -173,7 +173,8 @@ table.items-table thead th {
   white-space: nowrap;   /* a wrapped heading would undo the tighter height */
 }
 
-table.items-table thead th.col-item { text-align: left; }
+/* The item column is centred, heading and rows alike — see .col-item below.
+   It used to be left-aligned; nothing else needs to know that. */
 
 /* Roomier item rows.
    `height` here is a FLOOR, not the row height: the table is `flex: 1` inside a
@@ -206,7 +207,7 @@ table.items-table tbody td {
    Narrow these further and a heading wraps to two lines, which makes the header
    taller — the opposite of what is wanted. */
 .col-sl { width: 8%; text-align: center; }
-.col-item { width: 68%; }
+.col-item { width: 68%; text-align: center; }
 .col-qty { width: 12%; text-align: center; }
 .col-ctn { width: 12%; text-align: center; }
 
@@ -223,12 +224,18 @@ table.items-table td.col-ctn {
 
 /* Any optional totals on the left, the authoriser's signature rule on the
    right. Only the authoriser signs, so only they get a rule. */
+/* `margin-top: auto` pins the signature block to the foot of the pass.
+   It became load-bearing when the items table stopped drawing blank filler
+   rows: the table now ends after the last item, so on a 3-item pass everything
+   below it would otherwise ride up under the table and sign halfway down an
+   empty page. The auto margin takes the slack instead. */
 .pass-foot {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
   gap: 3mm;
-  margin-top: 1.5mm;
+  margin-top: auto;
+  padding-top: 1.5mm;
   font-size: 7.5pt;
   min-height: 8mm;
 }

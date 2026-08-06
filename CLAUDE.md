@@ -148,6 +148,22 @@ header — the first is the one under the column headings. The text markers in
 `ITEM_AREA_END_MARKERS` remain as a second opinion; whichever ends the box
 higher wins.
 
+**Which column holds the item name is read from the heading text**, never from
+its position. The supplier issues at least two layouts:
+
+```
+FR series:  S.no | Model            | HSN | Description | Qty | Unit Price | Total
+BI series:  S.no | Model No | Model Name | HSN | Description | Batch_no | Qty | ...
+```
+
+`_name_column_index()` buckets the heading words into the same columns as the
+data, then prefers a heading containing "name", falls back to one that is
+exactly `Model`/`Item`, and never accepts one matching `NUMBER_HEADING_RE`
+(`No`, `Code`, `Number`). Taking "the column after S.no" is what put model
+*numbers* on a BI gate pass — items came through as `0003 B` and `0006` instead
+of `HAWK BLACK` and `BUDDY`. The quantity column was already found from the
+data this way; the name column now matches.
+
 `_is_quantity()` accepts bare integers of at most four digits only. That is
 deliberate: it rejects the 8-digit HSN code and the decimal prices that sit in
 the same row. A supplier using fractional quantities falls through to manual
@@ -199,7 +215,27 @@ Must match the Fanzart gate pass form exactly:
   Sized by width, never by height, so the strapline stays legible.
 - Item area is **one open box** — outer border and column dividers only, no
   rules between rows.
-- Columns are **locked at `Sl No.` 8% / `Item` 68% / `Quantity` 12% /
+- **Only rows carrying an item are drawn.** The box closes straight after the
+  last item rather than running blank column dividers to the foot of the page.
+  The template iterates `page_items`; it used to iterate `range(1, rows + 1)`
+  and emit empty cells, which is what drew the filler rows.
+
+  **`rows` is still the height budget, and that is a different thing from the
+  number of rows drawn.** `print_row_count()` (min 22, capped at 26) is what
+  divides `ITEM_BODY_MM` into `--row-h`, so a 3-item pass gets the same roomy
+  6.27mm rows as a 20-item one, and a full 26-item pass tightens to 5.30mm and
+  still fits. Do not collapse the two — using the item count as the budget
+  would make a 2-item pass draw two 69mm-tall rows.
+
+  Because the table no longer fills the page, `.pass-foot` carries
+  `margin-top: auto`. Without it the signature block rides up under the table
+  and signs halfway down an empty pass. Measured after the change: 6-item pass
+  draws 6 rows at 6.27mm with 106.75mm of clear space above a footer still
+  pinned 6.88mm from the bottom; a 26-item pass draws 26 at 5.30mm with zero
+  overflow; a 32-item pass splits 26 + 6 with Sl No. running 1–26 then 27–32.
+- The item column is headed **`Item Name`** and is **centred**, heading and
+  cells alike (`.col-item { text-align: center }`).
+- Columns are **locked at `Sl No.` 8% / `Item Name` 68% / `Quantity` 12% /
   `No.of Cartons` 12%**, and there is a test asserting those exact numbers.
   Item at 68% keeps names like
   `ERECTION COMMISSIONING AND INSTALLATION SERVICES` (48 characters) on one line.

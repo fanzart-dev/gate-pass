@@ -15,6 +15,7 @@ To run the parser tests in full, put these files here:
 | `golden_touch_sample.pdf` | The plain case: one item, one page |
 | `golden_touch_two_page.pdf` | 13 items over two pages, no "Total Amount in words" line |
 | `golden_touch_service_line.pdf` | A customer who is a person, a service line, a two-digit quantity |
+| `golden_touch_bi_series.pdf` | The BI layout: two extra columns before the name |
 | `mangaldeep_scan.pdf` | A scan with no text layer at all |
 
 Each one is here because it broke the parser once. The two-page invoice is the

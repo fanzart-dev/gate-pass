@@ -37,7 +37,9 @@ SERVICE_LINE_INVOICE = Path(__file__).parent / "sample_invoices" / "golden_touch
 # carry a supplier's GSTIN and named customers. Tests that need them are skipped
 # rather than failed on a fresh clone, and everything else still runs. Put the
 # real PDFs in tests/sample_invoices/ to run the parser tests in full.
-FIXTURES = (SAMPLE_INVOICE, SCANNED_INVOICE, TWO_PAGE_INVOICE, SERVICE_LINE_INVOICE)
+BI_INVOICE = Path(__file__).parent / "sample_invoices" / "golden_touch_bi_series.pdf"
+FIXTURES = (SAMPLE_INVOICE, SCANNED_INVOICE, TWO_PAGE_INVOICE, SERVICE_LINE_INVOICE,
+            BI_INVOICE)
 HAVE_FIXTURES = all(p.exists() for p in FIXTURES)
 
 RESULTS = []
@@ -411,6 +413,67 @@ def test_two_page_invoice():
     # them at all, not even one copied from the quantity.
     check("the parser never returns a carton count",
           all("cartons" not in i for i in items))
+
+
+def test_name_column_is_found_by_its_heading():
+    """The item name is whichever column is *headed* as the name.
+
+    No PDF needed: this is the column-picking logic on its own, so it runs on a
+    clone that has no sample invoices. It is the part that actually broke.
+    """
+    def header(labels, width=100):
+        """Fake a heading row: one label per column, evenly spaced."""
+        words, bounds = [], [i * width for i in range(len(labels) + 1)]
+        for i, label in enumerate(labels):
+            x = i * width + 5
+            for part in label.split():
+                words.append({"text": part, "x0": x, "x1": x + 20, "top": 10, "bottom": 18})
+                x += 25
+        return words, bounds
+
+    # The layout that was being misread: Model No sits where Model used to.
+    words, bounds = header(["S.no", "Model No", "Model Name", "HSN", "Description", "Qty"])
+    check("'Model Name' is picked over 'Model No'",
+          invoice_parser._name_column_index(words, bounds, words[0]) == 2)
+
+    # The original layout must still resolve to the same column as before.
+    words, bounds = header(["S.no", "Model", "HSN", "Description", "Qty"])
+    check("a plain 'Model' column is still the name",
+          invoice_parser._name_column_index(words, bounds, words[0]) == 1)
+
+    words, bounds = header(["Sl", "Item Name", "Qty"])
+    check("'Item Name' is recognised too",
+          invoice_parser._name_column_index(words, bounds, words[0]) == 1)
+
+    words, bounds = header(["S.no", "Item Code", "Item", "Qty"])
+    check("a code column is never mistaken for the name",
+          invoice_parser._name_column_index(words, bounds, words[0]) == 2)
+
+
+@needs_fixtures
+def test_bi_series_invoice():
+    """A BI-series invoice has two extra columns before the name.
+
+    Its layout is  S.no | Model No | Model Name | HSN | Description | Batch_no |
+    Qty | ...  where the older FR invoices are  S.no | Model | HSN | ... .
+    Assuming the name was always the column after S.no put the model *number*
+    on the gate pass: items came through as '0003 B' and '0006' instead of
+    'HAWK BLACK' and 'BUDDY'.
+    """
+    result = invoice_parser.parse_invoice(BI_INVOICE)
+    items = result["items"]
+
+    check("BI invoice parses without notes", result["notes"] == [])
+    check("reads the BI invoice number", result["invoice_no"].startswith("BI "))
+    check("reads both items", len(items) == 2)
+    check("reads the model NAME, not the model number",
+          items and items[0]["item_name"] == "HAWK BLACK")
+    check("second item name is right too",
+          len(items) > 1 and items[1]["item_name"] == "BUDDY")
+    check("no item name is a bare model number",
+          all(not re.fullmatch(r"[\d ]+[A-Z]?", i["item_name"]) for i in items))
+    check("quantities still read correctly",
+          [i["quantity"] for i in items] == ["1", "1"])
 
 
 @needs_fixtures
@@ -863,6 +926,15 @@ def test_print_layout_rules(tmpdir):
     number without re-rendering, not a substitute for looking at it.
     """
     css = (ROOT / "static" / "css" / "print.css").read_text()
+    card = (ROOT / "templates" / "_pass_card.html").read_text()
+
+    check("the item column is headed 'Item Name'",
+          '<th class="col-item">Item Name</th>' in card)
+    # The loop walks the items themselves. Iterating a fixed row count and
+    # emitting blanks is what drew filler rows down to the foot of the page.
+    check("the table iterates the items, not a fixed row count",
+          "{% for entry in page_items %}" in card
+          and "range(1, rows + 1)" not in card)
 
     def width_of(selector):
         match = re.search(rf"\.{selector} \{{[^}}]*width: ([\d.]+)%", css)
@@ -931,6 +1003,17 @@ def test_print_layout_rules(tmpdir):
           "width: 148mm" in re.search(r"\.sheet\.single \{[^}]*\}", css).group())
     check("border-box keeps the content box at 283x196mm",
           "* { box-sizing: border-box; }" in css)
+
+    # The item column is centred, heading and cells alike.
+    check("the item column is centred",
+          re.search(r"\.col-item \{[^}]*text-align: center", css) is not None)
+    check("nothing left-aligns the item heading again",
+          "thead th.col-item { text-align: left" not in css)
+    # The table no longer fills the page, so the signature block has to be
+    # pushed down explicitly or it signs halfway up a short pass.
+    foot = re.search(r"\.pass-foot \{[^}]*\}", css).group()
+    check("the signature block is pinned to the foot of the pass",
+          "margin-top: auto" in foot)
 
     prepared = re.search(r"\.prepared-by \{[^}]*\}", css).group()
     check("Prepared by is small", "font-size: 5.5pt" in prepared)
@@ -2296,9 +2379,11 @@ def test_prepared_by_is_recorded_and_printed(tmpdir):
     check("the printed pass still carries Authorised by", b"Authorised by" in printed)
     check("both labels appear on each of the two passes",
           printed.count(b"Prepared by") == 2 and printed.count(b"Authorised by") == 2)
-    rows_drawn = db.print_row_count(1)
+    # One blank cartons cell per item per pass, and no more: the table draws
+    # only rows that carry an item, so a 1-item pass has exactly 1 row on each
+    # of the two halves rather than being padded out to PRINT_MIN_ROWS.
     check("the cartons column prints empty when nothing was typed",
-          printed.count(b'<td class="col-ctn"></td>') == rows_drawn * 2)
+          printed.count(b'<td class="col-ctn"></td>') == 1 * 2)
 
     # With cartons blank there is no box count to total, so the label is dropped
     # rather than printed with nothing after it.
@@ -2535,15 +2620,25 @@ def test_full_app_flow(tmpdir):
     check("print page shows the serial number", gp["serial_no"].encode() in print_resp.data)
     check("print page shows the item", b"MICRON MODREN OAK" in print_resp.data)
 
+    # Only rows carrying an item are drawn, so the ruled box closes after the
+    # last one instead of running blank dividers to the foot of the page.
     printed_rows = print_resp.data.count(b'<td class="col-sl">')
-    check("print page draws the same number of rows on each of the two passes",
-          printed_rows == db.print_row_count(1) * 2)
-    check("a short pass is padded out to the comfortable row count",
+    check("only the items are drawn, the same on each of the two passes",
+          printed_rows == 1 * 2)
+    check("no blank filler row is drawn",
+          print_resp.data.count(b'<td class="col-sl"></td>') == 0)
+    # print_row_count is now the height BUDGET, not the number of rows drawn:
+    # it is what divides ITEM_BODY_MM into --row-h, so a short pass still gets
+    # roomy rows and a full one tightens enough to fit.
+    check("a short pass is budgeted the comfortable row count",
           db.print_row_count(1) == db.PRINT_MIN_ROWS)
-    check("a fuller pass draws a row per item instead",
+    check("a fuller pass is budgeted a row per item instead",
           db.print_row_count(24) == 24)
-    check("no pass ever draws more rows than the form holds",
+    check("no pass is ever budgeted more rows than the form holds",
           db.print_row_count(99) == db.ITEMS_PER_PAGE)
+    check("a 1-item pass still gets roomy rows despite drawing one row",
+          db.print_row_height_mm(db.print_row_count(1))
+          > db.print_row_height_mm(db.print_row_count(26)))
     check("print page shows two passes on an A4 sheet", b"cut-line" in print_resp.data)
     check("totals are off by default", b"Total qty" not in print_resp.data)
     check("vehicle is off by default", b"Vehicle :" not in print_resp.data)
@@ -2683,6 +2778,8 @@ def main():
         test_multi_item_and_wrapped_names(tmpdir)
         test_two_page_invoice()
         test_service_line_invoice()
+        test_name_column_is_found_by_its_heading()
+        test_bi_series_invoice()
         test_cartons_are_never_prefilled(tmpdir)
         test_sequence_derives_from_the_book(tmpdir)
         test_batch_issue_keeps_the_run_unbroken(tmpdir)
