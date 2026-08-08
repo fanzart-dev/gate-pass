@@ -92,6 +92,38 @@ def create_app(db_path=None, storage_dir=None):
         if conn is not None:
             db.close(conn)
 
+    @app.template_global()
+    def static_url(filename):
+        """`url_for('static', ...)` with the file's modification time on the end.
+
+        Without this the browser keeps serving the stylesheet it already has.
+        That produces the most confusing possible failure: template changes
+        appear immediately — they are rendered fresh every request — while CSS
+        changes do not, so a layout looks half-applied and the code looks wrong
+        when it is correct. It cost real time more than once before this
+        existed. The stamp changes only when the file does, so caching still
+        works normally between edits.
+        """
+        try:
+            stamp = int((Path(app.static_folder) / filename).stat().st_mtime)
+        except OSError:
+            stamp = 0
+        return url_for("static", filename=filename, v=stamp)
+
+    @app.template_filter("as_day_month_year")
+    def as_day_month_year(value):
+        """'2026-08-07 12:34:56' -> '07-08-2026'.
+
+        Timestamps are stored as 'YYYY-MM-DD HH:MM:SS' (local time, see _now)
+        because that sorts and compares as plain text. The printed pass wants
+        the way the office writes a date, which is the way the invoices do.
+        """
+        text = str(value or "").strip()
+        if len(text) < 10:
+            return text
+        year, month, day = text[:10].split("-")
+        return f"{day}-{month}-{year}"
+
     @app.context_processor
     def inject_user():
         user = g.get("user")
@@ -207,6 +239,7 @@ def register_routes(app):
             pending=[u for u in users if u["status"] == db.PENDING],
             others=[u for u in users if u["status"] != db.PENDING],
             permission_labels=db.PERMISSIONS,
+            permission_hints=db.PERMISSION_HINTS,
         )
 
     @app.route("/people/add", methods=["POST"])
@@ -361,6 +394,11 @@ def register_routes(app):
         if not draft_ids:
             return redirect(url_for("upload"))
 
+        # Without the reviewing permission there is no draft step: the pass is
+        # numbered, issued and put on screen ready to print in one go.
+        if not db.user_can(g.user, "can_review_drafts"):
+            return _issue_immediately(app, draft_ids)
+
         # One file behaves exactly as before: straight to its review screen.
         if len(draft_ids) == 1 and not rejected:
             if unreadable:
@@ -382,18 +420,32 @@ def register_routes(app):
         if draft is None:
             abort(404)
 
+        may_edit = db.user_can(g.user, "can_edit_parsed_details")
+
         if request.method == "GET":
             return render_template("review.html", draft=draft,
                                     items_per_page=db.ITEMS_PER_PAGE,
+                                    may_edit=may_edit,
                                     active="drafts")
 
         action = request.form.get("action", "save")
-        supplier_name = request.form.get("supplier_name", "").strip()
-        customer_name = request.form.get("customer_name", "").strip()
-        invoice_no = request.form.get("invoice_no", "").strip()
-        invoice_date = request.form.get("invoice_date", "").strip()
-        vehicle_no = request.form.get("vehicle_no", "").strip()
-        items = _items_from_form(request.form)
+        if may_edit:
+            supplier_name = request.form.get("supplier_name", "").strip()
+            customer_name = request.form.get("customer_name", "").strip()
+            invoice_no = request.form.get("invoice_no", "").strip()
+            invoice_date = request.form.get("invoice_date", "").strip()
+            vehicle_no = request.form.get("vehicle_no", "").strip()
+            items = _items_from_form(request.form)
+        else:
+            # Enforced here, not merely in the template: a readonly attribute is
+            # a courtesy to the person typing, not a control. Anyone can post
+            # whatever they like to this route.
+            fields, items = _fill_blanks_only(draft, request.form)
+            supplier_name = fields["supplier_name"]
+            customer_name = fields["customer_name"]
+            invoice_no = fields["invoice_no"]
+            invoice_date = fields["invoice_date"]
+            vehicle_no = fields["vehicle_no"]
 
         db.update_draft(g.db, draft_id, supplier_name, customer_name, invoice_no,
                          invoice_date, vehicle_no, items)
@@ -419,7 +471,7 @@ def register_routes(app):
         return redirect(url_for("review", draft_id=draft_id))
 
     @app.route("/drafts")
-    @login_required
+    @requires("can_review_drafts")
     def drafts():
         rows = db.list_drafts(g.db)
         for draft in rows:
@@ -430,6 +482,75 @@ def register_routes(app):
                                 ready_count=sum(1 for d in rows if not d["problem"]),
                                 next_serial=db.next_serial_preview(g.db))
 
+    def _back_to_drafts(draft_ids):
+        """Where to land after a drafts action.
+
+        The Drafts list is behind `can_review_drafts`, so someone who reached a
+        draft by being redirected to its review screen must not be bounced to a
+        page they cannot open — that would show them a 403 for finishing the
+        job they were sent to do. They go back to Upload instead.
+        """
+        if db.user_can(g.user, "can_review_drafts"):
+            return url_for("drafts")
+        remaining = [d for d in (draft_ids or []) if db.get_draft(g.db, d) is not None]
+        if remaining:
+            return url_for("review", draft_id=remaining[0])
+        return url_for("upload")
+
+    def _issue_immediately(app, draft_ids):
+        """Parse straight through to a printed pass, with no draft step.
+
+        For staff without `can_review_drafts`. The draft row still exists for a
+        moment — it is what `create_gate_passes_batch` reads and deletes inside
+        the transaction — but it is never a screen anyone sees, and it never
+        holds a serial number.
+
+        A pass cannot be issued without a supplier, customer, document number,
+        date and at least one item with a quantity, so a PDF that could not be
+        read has nowhere to go but the review screen. That fallback is not
+        optional: the alternative is issuing a numbered pass with no items on
+        it. The register would then carry a permanent gap in meaning that
+        cancelling cannot undo, because a cancelled pass keeps its number.
+        """
+        uploads = {}
+        for draft_id in draft_ids:
+            draft = db.get_draft(g.db, draft_id)
+            if draft is not None:
+                uploads[draft_id] = draft["invoice_pdf_path"]
+
+        try:
+            issued, skipped = db.create_gate_passes_batch(
+                g.db, draft_ids,
+                prepared_by=g.user["display_name"], prepared_by_user_id=g.user["id"])
+        except Exception as exc:  # noqa: BLE001 - surfaced to the operator
+            flash(f"Nothing was issued — the batch was rolled back: {exc}", "error")
+            return redirect(url_for("upload"))
+
+        held_back = {draft_id for draft_id, _reason in skipped}
+        for draft_id, relpath in uploads.items():
+            if draft_id not in held_back:
+                _discard_invoice_file(app, relpath)
+
+        if issued:
+            first, last = issued[0]["serial_no"], issued[-1]["serial_no"]
+            span = first if len(issued) == 1 else f"{first} to {last}"
+            flash(f"Issued {len(issued)} gate pass(es): {span}.", "ok")
+
+        # Anything that could not be read goes to its review screen so the
+        # operator can finish it by hand. That screen is per-draft and needs no
+        # permission, so it is reachable even without the Drafts list.
+        if skipped:
+            for _draft_id, reason in skipped:
+                flash(f"Not issued — {reason}. No number was used.", "warn")
+            return redirect(url_for("review", draft_id=skipped[0][0]))
+
+        if len(issued) == 1:
+            return redirect(url_for("print_gate_pass", gate_pass_id=issued[0]["id"]))
+        if issued and db.user_can(g.user, "can_batch_print"):
+            return redirect(url_for("print_batch",
+                                     ids=",".join(str(p["id"]) for p in issued)))
+        return redirect(url_for("register"))
+
     @app.route("/drafts/issue", methods=["POST"])
     @login_required
     def issue_drafts():
@@ -438,7 +559,7 @@ def register_routes(app):
         draft_ids = [int(i) for i in request.form.getlist("draft_id") if i.isdigit()]
         if not draft_ids:
             flash("Select at least one invoice to issue.", "error")
-            return redirect(url_for("drafts"))
+            return redirect(_back_to_drafts(draft_ids))
 
         # Noted before the transaction, because the drafts are deleted by it.
         uploads = {}
@@ -453,7 +574,7 @@ def register_routes(app):
                 prepared_by=g.user["display_name"], prepared_by_user_id=g.user["id"])
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             flash(f"Nothing was issued — the batch was rolled back: {exc}", "error")
-            return redirect(url_for("drafts"))
+            return redirect(_back_to_drafts(draft_ids))
 
         # Only the uploads whose draft actually became a gate pass. A skipped
         # draft keeps its PDF, because it is still waiting to be fixed and
@@ -474,7 +595,7 @@ def register_routes(app):
             return redirect(url_for("print_gate_pass", gate_pass_id=issued[0]["id"]))
         if issued:
             return redirect(url_for("register"))
-        return redirect(url_for("drafts"))
+        return redirect(_back_to_drafts(draft_ids))
 
     @app.route("/drafts/<int:draft_id>/delete", methods=["POST"])
     @login_required
@@ -485,7 +606,7 @@ def register_routes(app):
         db.delete_draft(g.db, draft_id)
         _discard_invoice_file(app, draft["invoice_pdf_path"])
         flash("Draft discarded. No gate pass number was used.", "ok")
-        return redirect(url_for("drafts"))
+        return redirect(_back_to_drafts([]))
 
     @app.route("/print/<int:gate_pass_id>")
     @login_required
@@ -553,8 +674,9 @@ def register_routes(app):
         # Search and filter are separate permissions, enforced here rather than
         # merely hidden in the template — otherwise anyone could filter by
         # editing the query string.
-        may_search = db.user_can(g.user, "can_search_register")
-        may_filter = db.user_can(g.user, "can_filter_register")
+        # One permission covers both: nobody ever wanted to search a register
+        # they could not narrow, or narrow one they could not search.
+        may_search = may_filter = db.user_can(g.user, "can_search_register")
         requested = _register_args()
         filters = {
             "search": requested["search"] if may_search else None,
@@ -850,6 +972,51 @@ def _timestamped_filename(original):
     stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     safe = secure_filename(original) or "invoice.pdf"
     return f"{stamp}_{safe}"
+
+
+PARSED_FIELDS = ("supplier_name", "customer_name", "invoice_no", "invoice_date",
+                  "vehicle_no")
+
+
+def _fill_blanks_only(draft, form):
+    """What someone without `can_edit_parsed_details` is allowed to submit.
+
+    The rule: **the parser's output is the record.** A value the invoice
+    actually yielded is kept exactly as read; only what came back blank is
+    taken from the form. So a scan with no text layer can still be typed in and
+    issued, and an invoice that parsed cleanly cannot be quietly restated as
+    saying something else.
+
+    Applied per field and per item cell rather than all-or-nothing, because a
+    half-read invoice is the common case — the supplier and date come through
+    and one quantity does not, and that one gap is what needs filling.
+
+    `vehicle_no` never comes from the parser, so it is always blank here and
+    always editable. Cartons likewise: rule 5 means the parser never returns
+    them, so they can always be typed.
+    """
+    fields = {}
+    for key in PARSED_FIELDS:
+        stored = str(draft.get(key) or "").strip()
+        fields[key] = stored or form.get(key, "").strip()
+
+    submitted = _items_from_form(form)
+    stored_items = draft.get("items") or []
+    if not stored_items:
+        # The parser found no item table at all, so every row is theirs to type.
+        return fields, submitted
+
+    # It found items: the list is fixed. Rows cannot be added or removed, and
+    # each cell keeps what was read, taking the form's value only where blank.
+    items = []
+    for index, stored_item in enumerate(stored_items):
+        offered = submitted[index] if index < len(submitted) else {}
+        merged = {"sl_no": index + 1}
+        for key in ("item_name", "quantity", "cartons"):
+            was_read = str(stored_item.get(key) or "").strip()
+            merged[key] = was_read or str(offered.get(key) or "").strip()
+        items.append(merged)
+    return fields, items
 
 
 def _items_from_form(form):

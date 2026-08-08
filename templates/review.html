@@ -18,32 +18,39 @@
     </div>
   {% endif %}
 
+  {# A field the invoice actually yielded is shown as text, not as a locked
+     input: a greyed-out box invites people to try to type in it. Only what the
+     parser could not read is offered as a box to fill. Enforced server-side in
+     _fill_blanks_only() — this macro is the courtesy, not the control. #}
+  {% macro field(name, label, value, placeholder="", required=False, note="") %}
+    <div class="field">
+      <label for="{{ name }}">{{ label }}{% if note %}
+        <span style="text-transform:none;letter-spacing:0">{{ note }}</span>{% endif %}</label>
+      {% if value and not may_edit %}
+        <p class="read-field" title="Read from the invoice">{{ value }}</p>
+      {% else %}
+        <input type="text" id="{{ name }}" name="{{ name }}" value="{{ value }}"
+               placeholder="{{ placeholder }}" {% if required %}required{% endif %}>
+      {% endif %}
+    </div>
+  {% endmacro %}
+
   <form method="post" id="review-form" class="card">
+    {% if not may_edit %}
+      <p class="hint" style="margin-top:0">
+        What the invoice was read as saying is fixed. Anything it could not be
+        read for is yours to fill in below, then issue.
+      </p>
+    {% endif %}
     <div class="grid-2">
-      <div class="field">
-        <label for="supplier_name">From</label>
-        <input type="text" id="supplier_name" name="supplier_name" value="{{ draft.supplier_name }}"
-               placeholder="Supplier name" required>
-      </div>
-      <div class="field">
-        <label for="customer_name">Customer</label>
-        <input type="text" id="customer_name" name="customer_name" value="{{ draft.customer_name }}"
-               placeholder="Who the goods are going to" required>
-      </div>
-      <div class="field">
-        <label for="invoice_no">Invoice No</label>
-        <input type="text" id="invoice_no" name="invoice_no" value="{{ draft.invoice_no }}" required>
-      </div>
-      <div class="field">
-        <label for="invoice_date">Date</label>
-        <input type="text" id="invoice_date" name="invoice_date" value="{{ draft.invoice_date }}"
-               placeholder="DD-MM-YYYY" required>
-      </div>
-      <div class="field">
-        <label for="vehicle_no">Vehicle No <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
-        <input type="text" id="vehicle_no" name="vehicle_no" value="{{ draft.vehicle_no }}"
-               placeholder="KA 01 AB 1234">
-      </div>
+      {{ field("supplier_name", "From", draft.supplier_name, "Supplier name", True) }}
+      {{ field("customer_name", "Customer", draft.customer_name,
+               "Who the goods are going to", True) }}
+      {{ field("invoice_no", "Document No", draft.invoice_no, "", True) }}
+      {{ field("invoice_date", "Date", draft.invoice_date, "DD-MM-YYYY", True) }}
+      {# Never parsed, so always a box. #}
+      {{ field("vehicle_no", "Vehicle No", draft.vehicle_no, "KA 01 AB 1234",
+               False, "(optional)") }}
     </div>
 
     <div class="table-wrap">
@@ -60,14 +67,30 @@
         <tbody>
           {# Nothing parsed (a scan, or an unknown supplier format) still gets one
              empty row, so the operator can start typing without hunting for a button. #}
+          {# Same rule as the fields above, per cell: a name or quantity the
+             invoice yielded is shown as text, a blank one as a box to fill.
+             Rows can only be added or removed where the parser found no items
+             at all — otherwise the list IS the invoice's list. #}
           {% for item in draft['items'] or [{'item_name': '', 'quantity': '', 'cartons': ''}] %}
           <tr>
             <td class="sl-no">{{ loop.index }}</td>
-            <td><input type="text" name="item_name" value="{{ item.item_name }}" placeholder="Item name"></td>
-            <td class="col-qty-cell"><input type="text" name="quantity" value="{{ item.quantity }}"></td>
-            <td class="col-ctn-cell"><input type="text" name="cartons" value="{{ item.cartons }}"></td>
+            {% for cell, placeholder in (('item_name', 'Item name'), ('quantity', ''), ('cartons', '')) %}
+              <td class="{{ {'quantity': 'col-qty-cell', 'cartons': 'col-ctn-cell'}.get(cell, '') }}">
+                {% if item[cell] and not may_edit %}
+                  <span class="read-cell" title="Read from the invoice">{{ item[cell] }}</span>
+                  {# Posted anyway so the row keeps its shape; the server takes
+                     the stored value regardless of what arrives. #}
+                  <input type="hidden" name="{{ cell }}" value="{{ item[cell] }}">
+                {% else %}
+                  <input type="text" name="{{ cell }}" value="{{ item[cell] }}"
+                         placeholder="{{ placeholder }}">
+                {% endif %}
+              </td>
+            {% endfor %}
             <td class="col-act-cell">
-              <button type="button" class="remove-row" title="Remove row" aria-label="Remove row">&times;</button>
+              {% if may_edit or not draft['items'] %}
+                <button type="button" class="remove-row" title="Remove row" aria-label="Remove row">&times;</button>
+              {% endif %}
             </td>
           </tr>
           {% endfor %}
@@ -76,7 +99,9 @@
     </div>
 
     <div class="item-actions">
-      <button type="button" id="add-row">+ Add item</button>
+      {% if may_edit or not draft['items'] %}
+        <button type="button" id="add-row">+ Add item</button>
+      {% endif %}
       <span class="hint" id="row-count"></span>
       <span class="hint">Cartons can be left blank — the column prints empty to be filled in by hand.</span>
     </div>
@@ -122,7 +147,9 @@
       }
     }
 
-    document.getElementById("add-row").addEventListener("click", () => {
+    // Not rendered when the invoice's own item list is fixed.
+    const addRow = document.getElementById("add-row");
+    if (addRow) addRow.addEventListener("click", () => {
       const row = document.createElement("tr");
       row.innerHTML = `
         <td class="sl-no"></td>

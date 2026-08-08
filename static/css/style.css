@@ -1174,3 +1174,85 @@ table.people-table th { padding: 10px 12px !important; }
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
+
+
+/* A value read off the invoice, on the review screen. Shown as text rather
+   than a disabled input: a greyed-out box invites people to click into it and
+   wonder why it will not take. This reads as "this is what the document says",
+   which is what it is. The dotted underline marks it as a value, not a label. */
+.read-field {
+  margin: 0;
+  padding: 9px 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #17171a;
+  border-bottom: 1px dotted #d9d5cd;
+}
+
+.read-cell {
+  display: inline-block;
+  padding: 6px 2px;
+  font-size: 14px;
+  color: #17171a;
+}
+
+
+/* Accounts heading with its action on the right. */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 26px 0 12px;
+}
+
+/* Creating an account: four fields, then the permission grid. Wider than the
+   password dialog because a two-column tick list needs the room. */
+.add-dialog { max-width: 640px; }
+
+.dialog-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+  margin-bottom: 20px;
+}
+
+.perm-heading {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: #45454e;
+}
+
+/* Two columns of tick boxes, each with its line of explanation underneath. */
+.perm-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 20px;
+}
+
+.perm-grid-2 .perm-item { align-items: flex-start; }
+
+.perm-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.35;
+  color: #7b7b88;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid #e9e5dd;
+}
+
+@media (max-width: 640px) {
+  .dialog-grid, .perm-grid-2 { grid-template-columns: 1fr; }
+}

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Gate Pass{% endblock %} · Fanzart Gate Pass</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="{{ static_url('css/style.css') }}">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎫</text></svg>">
   {% block head %}{% endblock %}
 </head>
@@ -17,7 +17,11 @@
     </a>
     <nav>
       <a href="{{ url_for('upload') }}" {% if active == 'upload' %}class="active"{% endif %}>New Gate Pass</a>
-      <a href="{{ url_for('drafts') }}" {% if active == 'drafts' %}class="active"{% endif %}>Drafts</a>
+      {# Drafts is optional. Without the permission an upload goes straight to a
+         printed pass, so there is no draft list to show. #}
+      {% if can('can_review_drafts') %}
+        <a href="{{ url_for('drafts') }}" {% if active == 'drafts' %}class="active"{% endif %}>Drafts</a>
+      {% endif %}
       <a href="{{ url_for('register') }}" {% if active == 'register' %}class="active"{% endif %}>Register</a>
       {# Each link follows its own permission; the routes enforce the same thing,
          so hiding a link is a courtesy rather than the control. #}
@@ -29,7 +33,7 @@
       {% endif %}
       {% if can('can_manage_people') %}
         <a href="{{ url_for('people') }}" {% if active == 'people' %}class="active"{% endif %}>
-          People{% if pending_count %}<span class="count-badge">{{ pending_count }}</span>{% endif %}
+          User{% if pending_count %}<span class="count-badge">{{ pending_count }}</span>{% endif %}
         </a>
       {% endif %}
       {% if current_user %}
