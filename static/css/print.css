@@ -40,6 +40,33 @@ body {
 }
 
 .toolbar .tb-sep, .toolbar .tb-meta { color: #7b7b88; font-size: 13px; }
+
+/* The onward step. A button, not a link in the corner: after printing there IS
+   a next thing to do, and the operator should not have to hunt for it. */
+.toolbar .tb-next {
+  padding: 7px 15px;
+  border: 1px solid #d5d0c6;
+  border-radius: 7px;
+  font-weight: 600;
+  text-decoration: none;
+  color: #17171a;
+}
+.toolbar .tb-next:hover { background: #f4f1ea; color: #17171a; }
+
+/* Once the sheet has gone to the printer. */
+.toolbar .tb-next.ready {
+  border-color: #17171a;
+  background: #17171a;
+  color: #fff;
+}
+
+.toolbar .tb-done {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #2f7a43;
+}
 .toolbar .tb-spacer { flex: 1; }
 
 .toolbar a {
@@ -67,10 +94,16 @@ body {
   width: 148mm;   /* A5 portrait; 134mm of content once the 7mm padding is off */
 }
 
+/* The left padding is a punch margin, and BOTH halves need one.
+   The sheet is cut down the middle, so the right-hand pass's left edge is the
+   cut line, not the paper edge — filing it needs the same clear strip as its
+   neighbour. 15mm clears a standard two-hole punch (holes centred 12mm in).
+   It is padding on the pass rather than a gap on the sheet, because a gap
+   would only separate the two halves and leave the outer edges bare. */
 .pass {
   width: 50%;
   height: 100%;
-  padding: 4mm 5mm;
+  padding: 4mm 5mm 4mm 15mm;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -101,17 +134,65 @@ body {
   align-self: flex-start;
 }
 
+/* The document title. Uppercase, tracked and heavy, the way an official form
+   is set.
+
+   The font stack is deliberate: Inter, Roboto and Montserrat are used IF the
+   machine has them, and it falls back through the system UI faces to Arial.
+   They are not fetched from a CDN. A print stylesheet cannot afford a webfont
+   that may or may not arrive — the office server has no guaranteed route to
+   the internet, and a font swapping in mid-print changes the width of the
+   title, which is centred between the logo and the serial number.
+
+   No rule under it. It carried `text-decoration: underline` to match the old
+   paper form, which read as cramped once the title was tracked and set in
+   caps — the weight and letter-spacing already mark it as the title, and a
+   line under it only competes with the boxed rows below.
+
+   `margin-right: -0.18em` cancels the trailing letter-space. letter-spacing
+   adds a gap after the FINAL letter too, so the text box is wider than the
+   glyphs and a centred title sits visibly left of centre. */
 .pass-head h1 {
+  font-family: "Inter", "Roboto", "Montserrat", "Segoe UI", "Helvetica Neue",
+               Arial, sans-serif;
   font-size: 11pt;
-  text-decoration: underline;
-  margin: 0;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  margin-right: -0.18em;
+  line-height: 1.25;
+  margin-top: 0;
+  margin-bottom: 0;
+  margin-left: 0;
   align-self: center;
+  white-space: nowrap;   /* "GATE PASS" must never break across two lines */
 }
 
+/* Left-aligned inside, but still flush right on the page: .pass-head is a
+   flex row with space-between, so this block sits at the right edge whatever
+   its contents do. It has to be left-aligned internally or the fixed-width
+   labels below cannot line their colons up — right-aligning each line would
+   put the colons wherever the values happen to end. */
 .serial {
   font-size: 7.5pt;
-  text-align: right;
+  text-align: left;
   white-space: nowrap;
+}
+
+/* A fixed-width label, so the colon after it always lands at the same offset.
+   Two widths because the two blocks have different longest labels, and each is
+   set to its own longest plus a little air — one shared width would leave a
+   gap under the shorter block's label for no reason.
+
+   `min-width`, not `width`: if a label ever outgrows the figure the colon
+   moves right rather than the text overlapping it. */
+.key {
+  display: inline-block;
+  min-width: 17mm;      /* "Document No" */
+}
+
+.key-serial {
+  min-width: 15.5mm;    /* "Issue Date" */
 }
 
 table.meta-box {
@@ -127,6 +208,21 @@ table.meta-box td {
   width: 50%;
   vertical-align: top;
 }
+
+/* Document No and Date stacked on the left, Remarks matching it on the right.
+   The two cells are the same height because they are cells of one row — the
+   Remarks box is empty, so its height comes entirely from its neighbour, and
+   min-height keeps it worth writing in even if the left side is ever shorter. */
+table.meta-box-tall td {
+  min-height: 10mm;
+  padding-top: 1.4mm;
+  padding-bottom: 1.4mm;
+  line-height: 1.45;
+}
+
+/* Nothing is printed in it: remarks are added by hand at the gate, like the
+   cartons column. The label sits at the top so the space below is clear. */
+.remarks-cell { vertical-align: top; }
 
 /* The item table is rigid on purpose.
    It used to be `flex: 1`, which let the browser share the leftover page height
@@ -195,10 +291,29 @@ table.items-table tbody td {
   height: var(--row-h, 5.49mm) !important;
   max-height: var(--row-h, 5.49mm) !important;
   overflow: hidden !important;
-  padding: 1mm 2mm !important;      /* ~4px 8px: keeps text off the borders */
+  /* 0.85mm vertical, not 1mm. This is the row's HARD FLOOR — a row cannot be
+     shorter than its padding plus its line box, whatever --row-h asks for. At
+     1mm the floor was 5.22mm, and 26 of those no longer fit once the header
+     grew a line, so a full pass overflowed by 1.06mm with nothing able to give.
+     The 2mm sides are untouched; they are what keeps text off the borders. */
+  padding: 0.85mm 2mm !important;
   line-height: 1.2 !important;
   vertical-align: middle !important;
   box-sizing: border-box !important;
+}
+
+/* Horizontal rules are drawn per row, not on the table, so they appear only
+   where there is something to rule off. Every budgeted row is rendered — that
+   is what carries the column dividers (border-left on the cells) down the full
+   height of the box, matching the printed form — but only the rows that carry
+   an item get `item-row`, so the blank ones below the list keep the vertical
+   lines and draw no horizontal one.
+   Doing this with a fixed-height container and background-image gradients was
+   the other option; it was rejected because the gradient stops would restate
+   the 8/68/12/12 column widths in a second place, and any change to a column
+   would silently slide the painted lines off the real cell edges. */
+table.items-table tbody tr.item-row td {
+  border-bottom: 1px solid #000;
 }
 
 /* The number columns are shrink-to-fit: their width is set by the heading text
@@ -208,10 +323,10 @@ table.items-table tbody td {
    like "ERECTION COMMISSIONING AND INSTALLATION SERVICES" and must not wrap.
    Narrow these further and a heading wraps to two lines, which makes the header
    taller — the opposite of what is wanted. */
-.col-sl { width: 8%; text-align: center; }
-.col-item { width: 68%; text-align: center; }
-.col-qty { width: 12%; text-align: center; }
-.col-ctn { width: 12%; text-align: center; }
+.col-sl { width: 7%; text-align: center; }
+.col-item { width: 66%; text-align: center; }
+.col-qty { width: 13%; text-align: center; }
+.col-ctn { width: 14%; text-align: center; }
 
 /* Numeric cells hug their column horizontally. Only the side padding is set
    here — using the `padding` shorthand would silently reset the vertical
@@ -232,21 +347,46 @@ table.items-table td.col-ctn {
    shorthand, or these cells lose the vertical padding they inherit. */
 table.items-table td.col-item {
   text-align: left;
+  /* A name is never allowed to wrap, and this is load-bearing, not cosmetic.
+     `max-height` does NOT constrain a table cell: a name that wraps to two
+     lines makes its row taller, and enough of those push the last item off the
+     bottom of the page — silently, because the pass is `overflow: hidden`.
+     That is exactly what the punch margin caused before this line existed.
+     With nowrap the row height is fixed by construction, and a name too long
+     for its column is visibly cut with an ellipsis instead. A truncated name
+     an operator can see beats a missing row nobody notices. */
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* 2mm, not 3mm. The punch margin took 10mm out of every pass, and on A5 —
+     the narrower of the two layouts — that left the item cell's content box at
+     69.88mm against the 70.76mm the longest real product name needs. It wrapped
+     to two lines, and a wrapped name makes the ROW taller: `max-height` does
+     not constrain a table cell, so the whole page grew and overflowed by
+     6.35mm. The millimetre came back off the indent. */
   /* !important is not decoration here: the tbody rule above sets
      `padding: 1mm 2mm !important`, and an ordinary padding-left loses to it
      however specific this selector is. Without it the indent measures 2mm and
      silently does nothing. (The numeric-column rule above has the same problem
      and gets away with it only because it asks for the 2mm it already has.) */
-  padding-left: 3mm !important;
+  padding-left: 2mm !important;
 }
 
 /* Any optional totals on the left, the authoriser's signature rule on the
    right. Only the authoriser signs, so only they get a rule. */
-/* `margin-top: auto` pins the signature block to the foot of the pass.
-   It became load-bearing when the items table stopped drawing blank filler
-   rows: the table now ends after the last item, so on a 3-item pass everything
-   below it would otherwise ride up under the table and sign halfway down an
-   empty page. The auto margin takes the slack instead. */
+/* Both names sit in here, so "Prepared by" and "Authorised by" share a
+   baseline across the foot of the pass — `align-items: flex-end` is what does
+   that, and `justify-content: space-between` pushes them to opposite corners.
+   "Prepared by" used to be a separate line below this block, 2.88mm lower than
+   "Authorised by" and eating a row of the space the authoriser signs in.
+
+   `min-height` is the signing room. Everything inside is bottom-aligned, so
+   the height above the rule is empty space to write in: at 15mm the gap
+   between the table and the rule measures ~14mm, against 10.38mm before.
+   Raising it further starts to squeeze a full 26-item table, which has first
+   claim on the page — check `pass.scrollHeight` against `clientHeight` on
+   /print/2 after changing it.
+
+   `margin-top: auto` pins the whole block to the foot of the pass. */
 .pass-foot {
   display: flex;
   justify-content: space-between;
@@ -255,7 +395,7 @@ table.items-table td.col-item {
   margin-top: auto;
   padding-top: 1.5mm;
   font-size: 7.5pt;
-  min-height: 8mm;
+  min-height: 15mm;
 }
 
 .foot-side { text-align: center; flex: none; }
@@ -276,8 +416,13 @@ table.items-table td.col-item {
 
 /* Who generated the pass. Deliberately quiet — it is a record of provenance,
    not a signature, so it must not compete with "Authorised by" above it. */
+/* A flex item in .pass-foot now, sharing its baseline with "Authorised by".
+   No margin-top: that would push it off the shared baseline, which is the one
+   thing this block exists to hold. `flex: none` keeps a long name from
+   squeezing the signature block on the right. */
 .prepared-by {
-  margin-top: 0.5mm;
+  flex: none;
+  max-width: 45%;
   font-size: 5.5pt;
   letter-spacing: 0.08em;
   text-transform: uppercase;

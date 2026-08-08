@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>{{ passes|length }} Gate Passes · Batch Print</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/print.css') }}">
+  <link rel="stylesheet" href="{{ static_url('css/print.css') }}">
   <style>
     /* margin: 0 on purpose. The browser prints its own header and footer —
        document title, URL, page number, timestamp — into the page margin, so
