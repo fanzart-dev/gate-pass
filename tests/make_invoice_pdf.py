@@ -111,3 +111,95 @@ MANGALDEEP_ITEMS = [
     (["VIENNA (52) (DC) (ABS) BRUSH", "NICKEL"], "84145120", "Ceiling Fan", "1", "8470.34", "8470.34"),
     (["VIENNA (52) (DC) (ABS) ANTIQUE", "BRASS"], "84145120", "Ceiling Fan", "1", "8470.34", "8470.34"),
 ]
+
+
+def build_stock_transfer(path, to_no="FR 262700512", date="01-08-2026",
+                          to_address=("B1 - Unit A,4Th Floor, Plot No 183 -187,",
+                                      "Indospace Logistics Complex Bommasandra,",
+                                      "BENGALURU 560105"),
+                          from_address=("15 Krishnanagar Ind Area,",
+                                        "Off Hosur Main Road",
+                                        "Bangalore 560029"),
+                          items=()):
+    """A STOCK TRANSFER MEMO, laid out like the real WEBPOS ones.
+
+    Traced from DOC63/DOC66/DOC69_WEBPOS_TO.pdf, so the tests exercise the
+    layout that actually exists rather than an assumed one. What matters:
+
+      * NO drawn rules anywhere. The separators are runs of hyphen characters,
+        so page.edges is empty and columns are held by alignment alone.
+      * Columns are Sl.No | HSN | Model Name | Description | Quantity | Value,
+        with HSN BEFORE the name.
+      * The two addresses are printed side by side, so extract_text()
+        interleaves them into single lines.
+      * The heading "Model Name" is narrow over names up to three times its
+        width, which is what makes column boundaries delicate.
+
+    items: sequence of (model_name, description, qty).
+    """
+    # x positions measured off the real documents.
+    X_SL, X_HSN, X_NAME, X_DESC, X_QTY, X_VALUE = 21.3, 58.5, 113.8, 271.6, 440.9, 519.5
+    X_FROM, X_TO = 19.0, 296.8
+    # Long enough to span the page, as the real separators do. A short rule is
+    # one very wide word whose midpoint lands inside a data column.
+    RULE = "-" * 280
+
+    c = ""
+    c += _text(X_FROM, 30.0, "STOCK TRANSFER MEMO", size=9)
+    c += _text(X_FROM, 45.0, "TRANSFER OUT", size=9)
+    c += _text(31.0, 74.8, f"TO NO: {to_no}")
+    c += _text(447.8, 74.8, f"Date: {date}")
+
+    c += _text(X_FROM, 95.9, "FROM ADDRESS :")
+    c += _text(X_TO, 95.9, "TO ADDRESS :")
+    c += _text(X_FROM, 108.9, "Golden Touch Exports")
+    c += _text(300.0, 108.9, "Golden Touch Exports")
+    for i, line in enumerate(from_address):
+        c += _text(X_FROM, 121.9 + i * 12.5, line)
+    for i, line in enumerate(to_address):
+        c += _text(300.0, 121.9 + i * 12.5, line)
+    # A dummy GSTIN in the documented format, not the supplier's real one.
+    c += _text(X_FROM, 200.0, "GST No: 29AAAAA0000A1Z5")
+    c += _text(300.0, 200.0, "GST No: 29AAAAA0000A1Z5")
+
+    c += _text(X_SL, 212.0, RULE, size=6)
+    for x, label in ((X_SL, "Sl.No"), (62.3, "HSN"), (110.6, "Model Name"),
+                     (276.2, "Description"), (415.0, "Quantity"),
+                     (479.5, "Value (In Rupees)")):
+        c += _text(x, 223.3, label)
+    c += _text(X_SL, 236.0, RULE, size=6)
+
+    top = 252.9
+    total_qty = 0
+    for i, (name, description, qty) in enumerate(items, start=1):
+        c += _text(X_SL, top, str(i))
+        c += _text(X_HSN, top, "84145120")
+        # size 7: this generator's Helvetica runs wider than the real
+        # document's font, and at size 8 "GRANDMASTER MATTE BLACK 70 INCHES"
+        # spills past the Description boundary. 7 reproduces the real width
+        # (the name ends around x=252, clear of the 266.2 column edge).
+        c += _text(X_NAME, top, name, size=7)
+        c += _text(X_DESC, top, description)
+        c += _text(X_QTY, top, qty)
+        c += _text(X_VALUE, top, "130449.13")
+        total_qty += int(qty)
+        top += 12.0
+
+    c += _text(X_SL, top + 6.0, RULE, size=6)
+    c += _text(215.5, top + 20.0, "TOTAL")
+    c += _text(X_QTY, top + 20.0, str(total_qty))
+    c += _text(X_VALUE, top + 20.0, "186355.90")
+    c += _text(X_SL, top + 34.0, "Amount in words: Rupees One Lakh Only")
+    c += _text(X_SL, top + 48.0, "THIS DOCUMENT IS FOR STOCK TRANSFER FROM ONE PREMISES TO ANOTHER")
+    c += _text(X_SL, top + 62.0, "Authorised Signatory:")
+
+    _write_pdf(path, c)
+
+
+# A long name that overruns its narrow heading, which is what broke the first
+# attempt at column boundaries.
+TRANSFER_ITEMS = [
+    ("GRANDMASTER MATTE BLACK 70 INCHES", "Industrial Fan", "1"),
+    ("HUGGER 52 - MUD BROWN", "Ceiling Fan", "2"),
+    ("DRIFT DARK COFFEE", "Ceiling Fan", "5"),
+]

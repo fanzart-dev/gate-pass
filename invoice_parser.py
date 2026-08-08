@@ -34,6 +34,12 @@ import re
 
 import pdfplumber
 
+# Imported at the bottom of the module's own imports on purpose: the transfer
+# parser imports this one back, for the shared column logic and letterhead
+# reading. Python resolves the cycle because neither uses the other at import
+# time, only inside functions.
+import stock_transfer_parser
+
 INVOICE_NO_RE = re.compile(r"Invoice\s*No\s*:?\s*([^\n]+)", re.IGNORECASE)
 INVOICE_DATE_RE = re.compile(r"Invoice\s*Date\s*:?\s*([0-9]{1,2}-[0-9]{1,2}-[0-9]{2,4})", re.IGNORECASE)
 BILL_TO_NAME_RE = re.compile(r"Name\s*:?\s*(?:M/S\s*)?(.+?)(?=\s+Name\s*:|\n|$)", re.IGNORECASE)
@@ -44,6 +50,14 @@ QTY_HEADERS = ("qty", "quantity")
 SL_HEADERS = ("s.no", "sl", "sno")
 # "Model No" is a code column, never the name -- see _name_column_index.
 NUMBER_HEADING_RE = re.compile(r"\bno\.?\b|\bcode\b|\bnumber\b")
+
+# Set as the only note when one of our own printed passes is uploaded. db.py
+# matches on it so the operator is told what is actually wrong, rather than
+# being sent to fix a missing customer name that was never going to be there.
+GATE_PASS_UPLOADED_NOTE = (
+    "this is a printed gate pass, not a supplier invoice — upload the "
+    "supplier's tax invoice instead"
+)
 
 # Text that marks the end of the item area, whichever appears first.
 ITEM_AREA_END_MARKERS = ("total amount in words", "taxable amount", "bank details")
@@ -82,6 +96,30 @@ def parse_invoice(pdf_path):
         return result
 
     text = pages[0]["text"]
+
+    # A gate pass this app printed earlier, fed back into the uploader. It
+    # happens: the printed pass and the supplier invoice sit in the same folder
+    # and look alike at a glance.
+    #
+    # Left to run, the parser produces confident nonsense rather than failing:
+    # the two A5 halves of an A4 sheet are read as one line of text, so every
+    # field comes out doubled ("FR 262702140 Date : 31-07-2026 Invoice No : FR
+    # 262702140 ..."), the supplier reads as "Sl. No. : FZ-00057 Sl. No. :
+    # FZ-00057", and the item count doubles. The operator was then told only
+    # "no customer — could not be read from the PDF", which points at the wrong
+    # problem entirely.
+    if _looks_like_a_gate_pass(text):
+        result["notes"].append(GATE_PASS_UPLOADED_NOTE)
+        return result
+
+    # A stock transfer memo moves goods between branches rather than selling
+    # them. It still leaves the gate, so it still needs a pass, but its TO
+    # number is not an invoice number and its destination is a branch rather
+    # than a customer. Routed to its own module so that tightening one document
+    # type cannot quietly shift the other.
+    if stock_transfer_parser.looks_like_stock_transfer(text):
+        return stock_transfer_parser.parse_stock_transfer(pages)
+
     _parse_supplier(text, result)
     _parse_field(INVOICE_NO_RE, text, result, "invoice_no", "invoice number")
     _parse_field(INVOICE_DATE_RE, text, result, "invoice_date", "invoice date")
@@ -105,6 +143,18 @@ def parse_invoice(pdf_path):
         result["notes"].append("could not find an item table, add items manually")
 
     return result
+
+
+def _looks_like_a_gate_pass(text):
+    """Is this one of our own printed passes rather than a supplier invoice?
+
+    Both markers are required, and a supplier invoice carries neither: a tax
+    invoice has no signature block and never calls itself a gate pass. Asking
+    for both keeps an invoice that merely mentions a gate pass in its terms
+    from being turned away.
+    """
+    low = text.lower()
+    return "gate pass" in low and "authorised by" in low
 
 
 def _parse_supplier(text, result):

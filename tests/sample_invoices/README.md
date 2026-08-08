@@ -17,6 +17,9 @@ To run the parser tests in full, put these files here:
 | `golden_touch_service_line.pdf` | A customer who is a person, a service line, a two-digit quantity |
 | `golden_touch_bi_series.pdf` | The BI layout: two extra columns before the name |
 | `mangaldeep_scan.pdf` | A scan with no text layer at all |
+| `transfer_memo_doc69.pdf` | STOCK TRANSFER MEMO to Indospace — 2 lines, TOTAL 10 |
+| `transfer_memo_doc66.pdf` | To Indiranagar — 4 lines, the longest model name |
+| `transfer_memo_doc63.pdf` | To Sadashivanagar — 1 line |
 
 Each one is here because it broke the parser once. The two-page invoice is the
 important one: its item box has to be bounded by the *second* full-width rule on
