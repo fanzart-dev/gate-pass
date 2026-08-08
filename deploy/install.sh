@@ -45,10 +45,21 @@ fi
 
 say "Application code"
 if [ -d "$APP_DIR/.git" ]; then
-    git -C "$APP_DIR" fetch --quiet origin
-    git -C "$APP_DIR" reset --quiet --hard origin/master
-    note "updated to $(git -C "$APP_DIR" log --oneline -1)"
+    # As the service account, not as root. The checkout belongs to $APP_USER,
+    # and git refuses to work in a repository owned by somebody else:
+    #
+    #   fatal: detected dubious ownership in repository at '/opt/gate-pass'
+    #
+    # The documented escape is `safe.directory`, but that is the wrong fix — it
+    # tells git to ignore the mismatch rather than removing it. Running git as
+    # the owner has no mismatch to ignore, and keeps root from leaving
+    # root-owned objects behind in a tree the service has to write to.
+    sudo -u "$APP_USER" git -C "$APP_DIR" fetch --quiet origin
+    sudo -u "$APP_USER" git -C "$APP_DIR" reset --quiet --hard origin/master
+    note "updated to $(sudo -u "$APP_USER" git -C "$APP_DIR" log --oneline -1)"
 else
+    # First install: the directory is either absent or the empty home adduser
+    # made, so this one runs as root and the chown below tidies up after it.
     mkdir -p "$APP_DIR"
     git clone --quiet "$REPO" "$APP_DIR"
     note "cloned into $APP_DIR"
