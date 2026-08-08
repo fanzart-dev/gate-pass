@@ -10,8 +10,18 @@
         <img class="logo" src="{{ url_for('static', filename='img/fanzart-logo.png') }}"
              alt="{{ settings.company_name }}">
         <h1>Gate Pass</h1>
+        {# Labels sit in fixed-width spans so the colons line up down the block.
+           The colon is OUTSIDE the span deliberately: inside it, it would follow
+           the label text and move with its length, which is the thing being
+           fixed. #}
         <div class="serial">
-          Sl. No. : <strong>{{ gate_pass.serial_no }}</strong>
+          <div><span class="key key-serial">Serial No.</span>: <strong>{{ gate_pass.serial_no }}</strong></div>
+          {# The date the pass was ISSUED, off the record — not today's date at
+             render time. A pass is a document: reprinting FZ-00027 next year
+             must produce the same sheet it produced the day it was raised, and
+             `datetime.now()` would quietly restamp it. For a pass being printed
+             as it is issued, which is the normal case, this IS today. #}
+          <div><span class="key key-serial">Issue Date</span>: <strong>{{ gate_pass.issued_at|as_day_month_year }}</strong></div>
           {% if page_total > 1 %}
             <div class="page-of">Page {{ page_no }} of {{ page_total }}</div>
           {% endif %}
@@ -24,10 +34,21 @@
           <td class="meta-label">Customer :<br><strong>{{ gate_pass.customer_name }}</strong></td>
         </tr>
       </table>
-      <table class="meta-box">
+      <table class="meta-box meta-box-tall">
         <tr>
-          <td>Invoice No : <strong>{{ gate_pass.invoice_no }}</strong></td>
-          <td>Date : <strong>{{ gate_pass.invoice_date }}</strong></td>
+          {# "Document No", not "Invoice No": a pass is raised against a tax
+             invoice OR a stock transfer memo, and a memo has a TO number
+             rather than an invoice number. One neutral label covers both.
+             Date sits under it so the whole provenance of the pass — which
+             document, and when — reads as one block. #}
+          <td>
+            <div><span class="key key-doc">Document No</span>: <strong>{{ gate_pass.invoice_no }}</strong></div>
+            <div><span class="key key-doc">Date</span>: <strong>{{ gate_pass.invoice_date }}</strong></div>
+          </td>
+          {# Deliberately empty, like the cartons column: remarks are written at
+             the gate by whoever hands the goods over, and there is nowhere on
+             an invoice for them to come from. The box exists to be written in. #}
+          <td class="remarks-cell">Remarks :</td>
         </tr>
       </table>
 
@@ -41,40 +62,48 @@
         <thead>
           <tr>
             <th class="col-sl">Sl No.</th>
-            <th class="col-item">Item Names</th>
+            <th class="col-item">Item Name</th>
             <th class="col-qty">Quantity</th>
             <th class="col-ctn">No.of Cartons</th>
           </tr>
         </thead>
         <tbody>
-          {# Only rows that carry an item are drawn, so the ruled box closes
-             straight after the last one instead of running blank column
-             dividers down to the foot of the page.
+          {# Every budgeted row is drawn, so the ruled box and its column
+             dividers run the full height of the item area exactly like the
+             printed form. Only the rows carrying an item get `item-row`, and
+             only that class draws a horizontal rule — the blank rows below
+             keep the vertical dividers and nothing else.
 
-             `rows` is still what sets the row HEIGHT (--row-h above): it is the
-             number of rows this page is budgeted for, so a 3-item pass gets the
-             same roomy 6.27mm rows as a 20-item one and a full 26-item pass
-             tightens to 5.30mm and still fits. Height budget and rows drawn are
-             two different things; do not collapse them.
+             `rows` is the height budget: it divides ITEM_BODY_MM into --row-h
+             above, so a 3-item pass gets roomy 6.27mm rows and a full 26-item
+             pass tightens to 5.30mm and still fits on the sheet.
 
              Sl No. runs straight through the pass: page 2 of a 32-item pass
              starts at 27, not back at 1. #}
-          {% for entry in page_items %}
-            <tr>
-              <td class="col-sl">{{ entry[0] }}</td>
-              <td class="col-item">{{ entry[1].item_name }}</td>
-              <td class="col-qty">{{ entry[1].quantity }}</td>
-              <td class="col-ctn">{{ entry[1].cartons }}</td>
+          {% for r in range(1, rows + 1) %}
+            {% set entry = page_items[r - 1] if r - 1 < page_items|length else None %}
+            <tr{% if entry %} class="item-row"{% endif %}>
+              <td class="col-sl">{{ entry[0] if entry else '' }}</td>
+              <td class="col-item">{{ entry[1].item_name if entry else '' }}</td>
+              <td class="col-qty">{{ entry[1].quantity if entry else '' }}</td>
+              <td class="col-ctn">{{ entry[1].cartons if entry else '' }}</td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
 
+      {# One footer holding both names, so they sit on the same baseline across
+         the foot of the pass. "Prepared by" used to be a separate line BELOW
+         this block, which put it 2.88mm lower than "Authorised by" and cost a
+         whole row of the space the authoriser needs to sign in. #}
       <div class="pass-foot">
+        {# Who generated the pass is a record, not a signature — hence no rule
+           above it, and the quiet styling. #}
+        <div class="prepared-by">Prepared by: {{ gate_pass.prepared_by }}</div>
         <div class="foot-middle">
           {% if settings.show_totals == '1' and page_no == page_total %}
             {# Cartons are usually written by hand, so only total them if some were typed. #}
-            <div>Total qty : {{ gate_pass.total_qty }}{% if gate_pass.total_cartons != '' %}
+            <div>Total Qty : {{ gate_pass.total_qty }}{% if gate_pass.total_cartons != '' %}
               &middot; Boxes : {{ gate_pass.total_cartons }}{% endif %}</div>
           {% endif %}
           {% if settings.show_vehicle == '1' %}
@@ -87,9 +116,5 @@
           <div>Authorised by</div>
         </div>
       </div>
-
-      {# Who generated the pass is a record, not a signature — a quiet line in
-         the bottom corner rather than a second signature block. #}
-      <div class="prepared-by">Prepared by: {{ gate_pass.prepared_by }}</div>
     </div>
   {% endmacro %}

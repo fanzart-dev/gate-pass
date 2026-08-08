@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>{{ gate_pass.serial_no }} · Gate Pass</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/print.css') }}">
+  <link rel="stylesheet" href="{{ static_url('css/print.css') }}">
   <style>
     /* margin: 0 on purpose. The browser prints its own header and footer —
        document title, URL, page number, timestamp — into the page margin, so
@@ -15,15 +15,29 @@
 </head>
 {% from "_pass_card.html" import pass_card with context %}
 <body data-paper="{{ settings.paper_mode }}">
+  {# The end of the working flow: upload -> print -> register. The onward step
+     is a button rather than a link in the corner, because after printing there
+     IS a next thing to do and the operator should not have to look for it. #}
   <div class="no-print toolbar">
     <button class="tb-primary" onclick="window.print()">Print</button>
     <span class="tb-serial">{{ gate_pass.serial_no }}</span>
     <span class="tb-sep">·</span>
     <span class="tb-meta">{{ gate_pass.customer_name }} — {{ gate_pass.invoice_no }}</span>
+    <span class="tb-done" id="printed-note" hidden>Printed</span>
     <span class="tb-spacer"></span>
-    <a href="{{ url_for('register') }}">Register</a>
+    <a class="tb-next" id="to-register" href="{{ url_for('register') }}">Done &rarr; Register</a>
     <a href="{{ url_for('upload') }}">New Gate Pass</a>
   </div>
+
+  <script>
+    // Once the sheet has actually gone to the printer, say so and make the way
+    // onward the obvious thing on screen. The pass is already issued and in the
+    // register either way — this only marks where the operator has got to.
+    window.addEventListener("afterprint", () => {
+      document.getElementById("printed-note").hidden = false;
+      document.getElementById("to-register").classList.add("ready");
+    });
+  </script>
 
 
   {# One sheet per page. On A4 each sheet still carries two identical copies
