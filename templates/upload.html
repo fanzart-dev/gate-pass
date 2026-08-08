@@ -5,9 +5,7 @@
 
   <div class="page-head">
     <h1>New Gate Pass</h1>
-    <p class="hint">Upload one invoice or a whole batch. The invoice number, date, parties and
-      items are read from each PDF &mdash; you check them on the next screen. No gate pass
-      number is used until you issue them.</p>
+   
   </div>
 
   <form method="post" enctype="multipart/form-data" id="upload-form">
@@ -39,8 +37,7 @@
     <div class="form-actions">
       <button type="submit" class="primary" id="submit-btn">Read Invoices</button>
       <span class="hint" id="pick-error" hidden>Choose at least one PDF first.</span>
-      <span class="hint" id="pick-hint">Anything that can't be read waits on the next screen
-        instead of taking a number.</span>
+    
     </div>
   </form>
 
@@ -168,6 +165,7 @@
       setProgress(0, chosen.length);
 
       let failures = 0;
+      const draftIds = [];
       for (let i = 0; i < chosen.length; i++) {
         const body = new FormData();
         body.append("invoice", chosen[i]);
@@ -179,6 +177,7 @@
             failures++;
           } else {
             markRow(i, data.problem ? "attention" : "done", data.problem || "");
+            draftIds.push(data.draft_id);
           }
         } catch (err) {
           markRow(i, "failed", String(err));
@@ -190,7 +189,32 @@
       progressText.textContent = failures
         ? `Finished — ${failures} could not be read`
         : "Finished";
+
+{% if can('can_review_drafts') %}
+      // Reviewing is on for this account: stop at the draft list so the parse
+      // can be checked before a number is spent on it.
       window.location = "{{ url_for('drafts') }}";
+{% else %}
+      // No draft step for this account. Hand the parsed invoices straight to
+      // the issue route, which allocates the numbers in one transaction and
+      // redirects to the print preview. Posted as a real form so the browser
+      // sends its Origin header — the app rejects cross-site writes, and a
+      // bare fetch() here would look like one.
+      if (!draftIds.length) { submitBtn.disabled = false; return; }
+      progressText.textContent = "Issuing…";
+      const issue = document.createElement("form");
+      issue.method = "post";
+      issue.action = "{{ url_for('issue_drafts') }}";
+      for (const id of draftIds) {
+        const field = document.createElement("input");
+        field.type = "hidden";
+        field.name = "draft_id";
+        field.value = id;
+        issue.appendChild(field);
+      }
+      document.body.appendChild(issue);
+      issue.submit();
+{% endif %}
     });
 
     render();

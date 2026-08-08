@@ -46,7 +46,10 @@
     </div>
   {% endif %}
 
-  <h2 class="section-title">Accounts</h2>
+  <div class="section-head">
+    <h2 class="section-title" style="margin:0">Accounts</h2>
+    <button type="button" class="primary" id="add-user-open">+ Add User</button>
+  </div>
   <div class="table-wrap">
     <table class="list people-table">
       <thead>
@@ -67,16 +70,14 @@
           </td>
           <td class="mono-cell ppl-username">{{ u.username }}</td>
           <td class="ppl-perms">
+            {# The badge alone. Listing every granted permission here made the
+               row four lines tall and unscannable; the Permissions button is
+               the one place to see or change the detail. #}
             {% set held = u.permissions.values()|select|list|length %}
             {% if held == permission_labels|length %}
               <span class="pill admin">Full access</span>
             {% elif held %}
               <span class="pill approved">{{ held }} of {{ permission_labels|length }}</span>
-              <div class="perm-chips">
-                {% for key, label in permission_labels.items() %}
-                  {% if u.permissions[key] %}<span class="chip">{{ label }}</span>{% endif %}
-                {% endfor %}
-              </div>
             {% else %}
               <span class="muted-cell">Basic access only</span>
             {% endif %}
@@ -102,56 +103,58 @@
     </table>
   </div>
 
-  <details class="add-person card" {% if not others %}open{% endif %}>
-    <summary class="add-person-summary">
-      <span>+ Add someone</span>
-      <span class="hint">Creates an account they can sign in with straight away</span>
-    </summary>
+  {# Creating an account is a deliberate act with four fields and a permission
+     grid — it belongs in a dialog opened from the Accounts heading, not in a
+     panel wedged under the table that is either always expanded or always in
+     the way. #}
+  <dialog id="add-dialog" class="pw-dialog add-dialog">
     <form method="post" action="{{ url_for('add_person') }}">
-    <div class="filter-row">
-      <div class="grow">
-        <label for="display_name">Full name</label>
-        <input type="text" id="display_name" name="display_name"
-               placeholder="Printed as 'Prepared by'" required>
-      </div>
-      <div class="grow">
-        <label for="username">Username</label>
-        <input type="text" id="username" name="username" autocapitalize="none" required>
-      </div>
-    </div>
-    <div class="filter-row">
-      <div class="grow">
-        <label for="password">Initial password</label>
-        <input type="password" id="password" name="password" minlength="8"
-               autocomplete="new-password" required>
-      </div>
-      <div class="grow">
-        <label for="confirm_password">Repeat password</label>
-        <input type="password" id="confirm_password" name="confirm_password"
-               minlength="8" autocomplete="new-password" required>
-      </div>
-    </div>
+      <h2 class="section-title" style="margin-top:0">New account</h2>
 
-    <details class="perm-block">
-      <summary>Feature permissions <span class="hint">— none by default</span></summary>
-      <div class="perm-grid">
+      <div class="dialog-grid">
+        <div class="field">
+          <label for="display_name">Full name</label>
+          <input type="text" id="display_name" name="display_name"
+                 placeholder="Printed as 'Prepared by'" required>
+        </div>
+        <div class="field">
+          <label for="username">Username</label>
+          <input type="text" id="username" name="username" autocapitalize="none" required>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" minlength="8"
+                 autocomplete="new-password" required>
+        </div>
+        <div class="field">
+          <label for="confirm_password">Repeat password</label>
+          <input type="password" id="confirm_password" name="confirm_password"
+                 minlength="8" autocomplete="new-password" required>
+        </div>
+      </div>
+
+      <h3 class="perm-heading">Permissions <span class="hint">&mdash; none by default</span></h3>
+      <div class="perm-grid perm-grid-2">
         {% for key, label in permission_labels.items() %}
           <label class="checkbox perm-item">
             <input type="checkbox" name="{{ key }}" value="1">
-            <span>{{ label }}</span>
+            <span>
+              {{ label }}
+              <small class="perm-hint">{{ permission_hints[key] }}</small>
+            </span>
           </label>
         {% endfor %}
       </div>
-      <p class="hint">A new account can sign in, upload invoices, issue passes and
-        read the register with no permissions at all. Everything here is extra.</p>
-    </details>
-    <div class="form-actions">
-      <button type="submit" class="primary">Create Account</button>
-      <span class="hint">They can sign in straight away. Hand them the password
-        yourself &mdash; it is stored only as a hash and cannot be read back.</span>
-    </div>
+      <p class="hint">Everyone can upload invoices, issue passes and read the
+        register without any of these. Hand them the password yourself &mdash; it
+        is stored only as a hash and cannot be read back.</p>
+
+      <div class="dialog-actions">
+        <button type="submit" class="primary">Create Account</button>
+        <button type="button" id="add-cancel">Cancel</button>
+      </div>
     </form>
-  </details>
+  </dialog>
 
   {# Setting a password needs two matching entries, so it gets a small form of
      its own rather than a prompt() that would show the password in clear. #}
@@ -180,11 +183,18 @@
       <h2 class="section-title" style="margin-top:0">
         Permissions for <span id="perm-who"></span>
       </h2>
-      <div class="perm-grid">
+      {# Label plus one line of what it actually does. Several of these change
+         how the app behaves rather than what is merely visible — "Review
+         Drafts" decides whether an upload stops for checking or is issued on
+         the spot — and a bare label does not say so. #}
+      <div class="perm-grid perm-grid-2">
         {% for key, label in permission_labels.items() %}
           <label class="checkbox perm-item">
             <input type="checkbox" name="{{ key }}" value="1" data-perm="{{ key }}">
-            <span>{{ label }}</span>
+            <span>
+              {{ label }}
+              <small class="perm-hint">{{ permission_hints[key] }}</small>
+            </span>
           </label>
         {% endfor %}
       </div>
@@ -198,6 +208,13 @@
   </dialog>
 
   <script>
+    const addDialog = document.getElementById("add-dialog");
+    document.getElementById("add-user-open").addEventListener("click", () => {
+      addDialog.showModal();
+      addDialog.querySelector('input[name="display_name"]').focus();
+    });
+    document.getElementById("add-cancel").addEventListener("click", () => addDialog.close());
+
     const permDialog = document.getElementById("perm-dialog");
     const permForm = document.getElementById("perm-form");
     document.querySelectorAll(".edit-perms").forEach((button) => {

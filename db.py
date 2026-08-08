@@ -10,6 +10,8 @@ from pathlib import Path
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
+import invoice_parser
+
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 # Columns added after the first release. Existing databases are the real gate
@@ -48,14 +50,39 @@ BACKFILL = {
 # the single source of truth for what someone may do; `is_admin` is kept in
 # lockstep with can_manage_people (see _sync_admin_flag) purely so the existing
 # lockout guards and nav checks keep working off one value.
+# Short labels for the tick boxes. Searching and filtering the register used to
+# be two separate permissions; nobody ever wanted one without the other, so they
+# are one — `can_search_register` covers both and `can_filter_register` is gone.
 PERMISSIONS = {
-    "can_search_register": "Search the register",
-    "can_filter_register": "Filter the register by date and status",
-    "can_export_reports": "Open Reports and generate exports",
-    "can_access_settings": "View and change Settings",
-    "can_manage_people": "Create accounts and set permissions",
-    "can_cancel_passes": "Cancel an issued gate pass",
+    "can_search_register": "Search Register",
+    "can_export_reports": "Reports Access",
+    "can_access_settings": "Manage Settings",
+    "can_manage_people": "Manage Users",
+    "can_cancel_passes": "Cancel Pass",
+    "can_batch_print": "Batch Print",
+    "can_review_drafts": "Review Drafts",
+    "can_edit_parsed_details": "Edit Draft Details",
+}
+
+# The sentence under each tick box. Kept apart from the label so the tick list
+# stays scannable while still saying what the setting actually does — several of
+# these change how the app behaves, not just what is visible.
+PERMISSION_HINTS = {
+    "can_search_register": "Search and filter the register by date and status",
+    "can_export_reports": "Open Reports and generate CSV or Excel exports",
+    "can_access_settings": "View and change Settings, including the numbering",
+    "can_manage_people": "Create accounts and set what others may do",
+    "can_cancel_passes": "Cancel an issued pass — it keeps its number",
     "can_batch_print": "Select several passes and print them in one go",
+    # Without this, an upload is parsed, numbered, issued and sent straight to
+    # the print preview. With it, the pass stops at a draft first so it can be
+    # checked before a number is spent on it.
+    "can_review_drafts": "Check invoices as drafts first, instead of issuing straight away",
+    # Whether a person may CHANGE what the parser read, as opposed to filling in
+    # what it could not read. Without this, a value the invoice actually yielded
+    # is fixed and only the blanks can be typed in — so a scan can still be
+    # completed by hand, but nobody can quietly restate what a document said.
+    "can_edit_parsed_details": "Change what the invoice was read as saying, not just fill the blanks",
 }
 
 # The most a batch print can cover. A runaway request would otherwise try to
@@ -103,12 +130,22 @@ PRINT_MIN_ROWS = 22
 # from this and written into the page as an explicit value, so a row is the same
 # height whatever paper size or print scale the browser is using.
 #
-# 138, not the 142.8 the box could physically take: at 142.8 the "Prepared by"
-# line finished 0.15mm inside the pass, which Chrome just fit and Firefox
-# clipped in half — the pass is `overflow: hidden`, so a fraction of a
-# millimetre is the difference between a footer and no footer. This leaves
-# about 5mm of slack for engines that round differently.
-ITEM_BODY_MM = 138
+# 134, and every millimetre of the reduction from 142.8 was paid for:
+#
+#   142.8 -> 138  the "Prepared by" line finished 0.15mm inside the pass, which
+#                 Chrome just fit and Firefox clipped in half. The pass is
+#                 `overflow: hidden`, so a fraction of a millimetre is the
+#                 difference between a footer and no footer.
+#   138 -> 134    the header's second box gained a line (Document No above Date,
+#                 with Remarks matching it on the right), growing from 5.4mm to
+#                 11mm and pushing the item table 5.56mm down the page. A full
+#                 26-item pass overflowed by 3.17mm.
+#
+# At 26 rows this gives 5.15mm each, against a hard floor of about 4.96mm
+# (2mm vertical padding plus 7pt at line-height 1.2). There is very little left:
+# anything else that grows above the table has to come out of the footer's
+# signing room instead, or items per page must drop below 26.
+ITEM_BODY_MM = 134
 
 
 def print_row_height_mm(rows):
@@ -159,7 +196,7 @@ DEFAULT_SETTINGS = {
 # Bump when schema.sql or ADDED_COLUMNS changes. Stored in the file as
 # PRAGMA user_version, so a connection can tell in one cheap read whether the
 # schema script needs running at all.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 10
 
 # How long a writer waits for another writer before giving up. Four people
 # clicking Issue at the same moment are serialised in milliseconds, so this is
@@ -241,6 +278,43 @@ def _migrate_data(conn, previous_version):
     `previous_version` is 0 for a database that did not exist yet, which is why
     these are skipped on a fresh install — there is nothing to correct.
     """
+    if previous_version and previous_version < 10:
+        # can_search_register and can_filter_register merged into the first.
+        # Anyone who held either keeps the combined one; nobody gains anything
+        # they did not already have half of.
+        try:
+            conn.execute(
+                "UPDATE users SET permissions = json_set(permissions, "
+                "'$.can_search_register', json('true')) "
+                "WHERE json_extract(permissions, '$.can_filter_register') = 1")
+            conn.execute(
+                "UPDATE users SET permissions = json_remove(permissions, "
+                "'$.can_filter_register')")
+        except sqlite3.OperationalError:
+            pass
+
+    if previous_version and previous_version < 9:
+        # can_edit_parsed_details, same reasoning as below: an admin who could
+        # already correct a draft keeps that, and nobody else silently gains it.
+        try:
+            conn.execute(
+                "UPDATE users SET permissions = json_set(permissions, "
+                "'$.can_edit_parsed_details', json('true')) WHERE is_admin = 1")
+        except sqlite3.OperationalError:
+            pass
+
+    if previous_version and previous_version < 8:
+        # can_review_drafts was added after permissions existed, and it is the
+        # switch between "issue straight away" and "check it as a draft first".
+        # Admins keep the reviewing step they already had; without this they
+        # would silently lose the Drafts page on upgrade.
+        try:
+            conn.execute(
+                "UPDATE users SET permissions = json_set(permissions, "
+                "'$.can_review_drafts', json('true')) WHERE is_admin = 1")
+        except sqlite3.OperationalError:
+            pass
+
     if previous_version and previous_version < 7:
         # can_batch_print was added after permissions existed. Anyone who held
         # every permission at the time keeps parity — without this they would
@@ -768,6 +842,12 @@ def draft_problem(draft):
     gate pass never takes a number, which is what keeps the run continuous when
     some of the PDFs in a batch could not be read.
     """
+    # A gate pass uploaded in place of an invoice fails every field check, and
+    # reporting the first of them sends the operator off to type in a customer
+    # name that was never going to be on the page. Say what actually happened.
+    if invoice_parser.GATE_PASS_UPLOADED_NOTE in (draft.get("parse_notes") or ""):
+        return invoice_parser.GATE_PASS_UPLOADED_NOTE
+
     if not draft["supplier_name"].strip():
         return "no supplier — could not be read from the PDF"
     if not draft["customer_name"].strip():
