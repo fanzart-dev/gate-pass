@@ -60,7 +60,12 @@ These are the reason the app exists. Do not "simplify" them away.
    number, so the run stays continuous. The delete trigger enforces this.
 3. **The audit log is append-only.** Same reason, same enforcement.
 4. **The serial is allocated at issue time, not at upload.** Abandoning a draft
-   must not burn a number.
+   must not burn a number. This still holds under instant issue — the number is
+   allocated inside the transaction that inserts the pass, not when the PDF
+   arrives. What instant issue changes is *when issue time is*: for staff
+   without `can_review_drafts` it is immediately after the parse, so a
+   misparsed invoice that still has all its required fields is issued rather
+   than checked. That trade is deliberate (see "The draft step is optional").
 5. **Cartons are never filled in by the app, and never required.** A single fan
    can ship in two cartons and several spares can share one box — the count
    depends on how the goods were actually packed, is known at the gate rather
@@ -79,6 +84,112 @@ These are the reason the app exists. Do not "simplify" them away.
    from different people cannot collide.
 8. **A number is never issued twice.** This is what makes restarting the count
    delicate — see below.
+
+## Permissions
+
+Eight, stored as JSON on the user row. `db.PERMISSIONS` maps key to the short
+label on the tick box; `db.PERMISSION_HINTS` carries the sentence under it,
+kept separate so the list stays scannable while still saying what each setting
+does — several change how the app *behaves*, not merely what is visible.
+
+| Key | Label |
+|---|---|
+| `can_search_register` | Search Register |
+| `can_export_reports` | Reports Access |
+| `can_access_settings` | Manage Settings |
+| `can_manage_people` | Manage Users |
+| `can_cancel_passes` | Cancel Pass |
+| `can_batch_print` | Batch Print |
+| `can_review_drafts` | Review Drafts |
+| `can_edit_parsed_details` | Edit Draft Details |
+
+**`can_filter_register` is gone.** Searching and filtering the register were two
+permissions and nobody ever wanted one without the other — a register you can
+search but not narrow is no use, and vice versa. The `previous_version < 10`
+migration grants the survivor to anyone who held *either*, then removes the old
+key from the stored JSON, so nobody gains anything they did not already have
+half of.
+
+**Adding a permission means adding a migration.** `read_permissions()` fills a
+missing key with False, so an existing admin silently *loses* whatever is added
+unless `_migrate_data` grants it to them. There are now four such steps
+(`< 7`, `< 8`, `< 9`, `< 10`); follow the pattern.
+
+On the People page the accounts table shows only the badge — Full access, N of
+8, or Basic access only. It used to list every granted permission as chips
+underneath, which made a row four lines tall and unscannable. The Permissions
+button is the one place to see or change the detail. Creating an account is a
+dialog opened from the Accounts heading rather than a panel under the table.
+
+## The draft step is optional
+
+`can_review_drafts` is the switch between two workflows:
+
+| | Without it (staff) | With it (admins) |
+|---|---|---|
+| Upload | parse → number → insert → **issue**, one transaction | parse → **draft** |
+| Lands on | `/print/<id>`, ready to print | `/review/<draft_id>` |
+| Drafts page | hidden, and the route 302s | visible |
+
+The draft row still exists for a moment on the instant path — it is what
+`create_gate_passes_batch()` reads and deletes inside the transaction — but it
+is never a screen anyone sees and never holds a number.
+
+**A PDF that could not be read falls back to the review screen, and that is not
+optional.** A pass needs a supplier, customer, document number, date and at
+least one item with a quantity; issuing one without them would put a numbered
+pass with no items into the register, and cancelling cannot undo it because a
+cancelled pass keeps its number. So `_issue_immediately()` issues what it can
+and redirects to `/review/<first skipped>`. That screen is per-draft and needs
+no permission, so it stays reachable for someone with no Drafts page —
+`_back_to_drafts()` exists for the same reason, so a drafts action never bounces
+someone to a 403 for finishing the job they were sent to do.
+
+**What this costs.** Rule 4 says abandoning a draft must not burn a number, and
+that still holds — but the review step was also the moment a parse error got
+caught *before* a number was spent. On the instant path an invoice that parses
+completely but wrongly is issued, and the only remedy is to cancel it, which
+leaves a cancelled pass in the register for good. Fewer clicks, in exchange for
+mistakes becoming permanent instead of correctable. Grant `can_review_drafts`
+to anyone who should get the second look.
+
+## The parse is the record
+
+`can_edit_parsed_details` decides whether someone may **change** what the
+invoice was read as saying, as against **filling in** what it could not be read
+for. Without it:
+
+- a field the parser returned is rendered as text, not as a locked input — a
+  greyed-out box invites people to click into it and wonder why it will not
+  take;
+- a field it returned blank is an ordinary box;
+- the item list is fixed if the parser found one, and freely editable if it
+  found none;
+- `vehicle_no` and `cartons` are always editable, because the parser never
+  returns either (rule 5).
+
+**Enforced in `_fill_blanks_only()`, not in the template.** A `readonly`
+attribute is a courtesy to the person typing; anyone can post whatever they
+like to `/review/<id>`. There is a test that forges exactly that post.
+
+This is what makes a draft worth landing on for someone who may not edit. A
+review screen with everything locked is a speed bump — but a scan yields *no*
+fields, so locking the whole screen by role would strand every scanned invoice
+and leave staff waiting on an admin to type it in. Keying it to what the
+document actually yielded gives both: the blanks are theirs to fill, and the
+rest is the invoice speaking for itself.
+
+The merge is per field and per item cell rather than all-or-nothing, because a
+half-read invoice is the common case — supplier and date come through and one
+quantity does not, and that single gap is what needs filling.
+
+The uploader posts the parsed drafts to `/drafts/issue` as a real form, not a
+`fetch()`: the app rejects cross-site writes by comparing `Origin` to the host,
+and a bare fetch here would look like one.
+
+Existing admins keep the permission through the `previous_version < 8`
+migration — without it they would silently lose the Drafts page on upgrade,
+exactly as would have happened when `can_batch_print` was added.
 
 ## Serial numbers
 
@@ -169,6 +280,90 @@ deliberate: it rejects the 8-digit HSN code and the decimal prices that sit in
 the same row. A supplier using fractional quantities falls through to manual
 entry, which is the right way to fail.
 
+## Stock transfer memos
+
+A **STOCK TRANSFER MEMO / TRANSFER OUT** (the WEBPOS documents) moves stock
+between Golden Touch branches. The goods still leave the gate, so they still
+need a pass, but three fields do not mean what the same-looking fields mean on
+a tax invoice — so it gets its own module, `stock_transfer_parser.py`.
+`parse_invoice()` routes on `"stock transfer memo"` or `"transfer out"`.
+
+**The two documents share no item-extraction code, because they are not laid
+out alike:**
+
+| | Tax invoice | Transfer memo |
+|---|---|---|
+| Column rules | drawn vertical lines | **none at all** — `page.edges` is empty |
+| Separators | drawn rules | runs of `-` characters, i.e. text |
+| Columns | `S.no · Model · HSN · Description · Qty` | `Sl.No · HSN · Model Name · Description · Quantity · Value` |
+| Parties | Bill To block | two addresses printed **side by side** |
+
+| Field | On a transfer memo |
+|---|---|
+| `invoice_no` | the **TO number**, label kept: `TO NO: FR 262700512` |
+| `customer_name` | `Golden Touch Exports, <branch>` |
+| `supplier_name` | `Golden Touch Exports` |
+
+**The label is kept inside the value** so a register or audit export read months
+later says what kind of document the pass came from, without a second column.
+
+### Three things this layout gets wrong if you assume anything
+
+**Column boundaries hug the NEXT heading, they do not split the gap.**
+`_bounds_from_headings()` sets each edge at `next_heading_x0 - 10`. The obvious
+midpoint rule is wrong because a heading is far narrower than its values:
+`Model Name` spans 54pt over names up to 140pt. `GRANDMASTER MATTE BLACK 70
+INCHES` runs to x=252 while the midpoint between `Name` (ends 164.6) and
+`Description` (starts 276.2) is 220.4 — so `INCHES` landed in the Description
+column and the item came through as `GRANDMASTER MATTE BLACK 70`, silently
+missing the last word of a product name.
+
+**The destination is taken from the words RIGHT of the `TO ADDRESS` label**, not
+by searching the page. Both addresses are Golden Touch and printed side by side,
+so `extract_text()` interleaves them:
+
+```
+FROM ADDRESS :               TO ADDRESS :
+15 Krishnanagar Ind Area,    B1 - Unit A,4Th Floor, Plot No 183 -187,
+Off Hosur Main Road
+Indospace Logistics Complex Bommasandra,
+```
+
+The sender is itself in Bommasandra. A keyword search over that flattened text
+finds the right answer out of the wrong column and stops being right the moment
+a branch moves. `_to_address_label()` finds the `TO` of `TO ADDRESS` (matched as
+a pair, so the `TO` of `TO NO:` is not taken) and splits on its x.
+
+**Separator lines are skipped explicitly.** They are hyphens, not drawn rules,
+so they arrive as ordinary words. Where the midpoint of that one very wide word
+falls depends on how far the rule happens to run — a short one drops straight
+into the Model Name column and is appended to the item above as part of its name.
+
+An unrecognised branch is **not** a parse failure: a new one may have opened, so
+the company name goes in, a note asks the operator to add the branch, and the
+items still come through.
+
+**Cartons are not parsed from a transfer memo either** — rule 5 has no
+exceptions.
+
+### Verified
+
+Against the three real documents, one per branch. Each states its own TOTAL
+quantity, checked against the sum of the lines read — confirmation from the
+document itself, not from the test:
+
+| Document | TO number | Branch | Lines | TOTAL |
+|---|---|---|---|---|
+| DOC69 | FR 262700512 | Indospace | 2 | 10 |
+| DOC66 | FR 262700531 | Indiranagar | 4 | 9 |
+| DOC63 | FR 262700536 | Sadashivanagar | 1 | 1 |
+
+`tests/make_invoice_pdf.build_stock_transfer()` reproduces this layout for the
+fixture-free tests, including the long name and the hyphen separators. Its
+`_text` runs wider than the real font, so the name column is drawn at size 7 to
+match the real geometry — at size 8 the test would not reproduce the trap it
+exists to catch.
+
 **Scanned invoices cannot be read at all.** A scan has no text layer, so the
 parser reports one plain note saying so and the operator types the pass in.
 There is no OCR — invoices normally arrive as the supplier's original PDF.
@@ -188,6 +383,29 @@ that has the PDFs it is 698/698. See `tests/sample_invoices/README.md`.
 | `mangaldeep_scan.pdf` | A scan with no text layer at all |
 
 Add the supplier's invoice here whenever the parser changes.
+
+## Stylesheets are cache-busted
+
+Every `<link>` to a stylesheet goes through `static_url()`, which appends the
+file's modification time: `css/print.css?v=1786087356`.
+
+**This is not a nicety.** Without it the browser keeps serving the CSS it
+already has, and the failure that produces is the most confusing one available:
+template changes appear immediately — they are rendered fresh on every request
+— while CSS changes do not. The page comes out half-applied, the new markup
+present and the new styling missing, and the code looks wrong when it is
+correct. That cost real time more than once before this existed.
+
+If a layout change still appears to be missing, check in this order:
+
+1. Is the link versioned? `curl -s http://host/login | grep -o 'css/[^"]*'`
+2. Is the running app the current code? `pgrep -af app.py` should show **two**
+   processes in development — the reloader and its child. One means the
+   reloader is not running and Python changes are not being picked up.
+3. Is the template cached? `tests/preview_server.py` runs without debug, so
+   Jinja caches compiled templates — restart it after editing one.
+4. **Is it deployed?** The office server runs whatever was last pushed and
+   installed, not the working tree.
 
 ## Print format
 
@@ -213,26 +431,69 @@ Must match the Fanzart gate pass form exactly:
   transparent PNG so it prints clean on any stock. It is the full lockup
   including "LUXURY DESIGNER FANS" and "SINCE 2012", matching the paper form.
   Sized by width, never by height, so the strapline stays legible.
-- Item area is **one open box** — outer border and column dividers only, no
-  rules between rows.
-- **Only rows carrying an item are drawn.** The box closes straight after the
-  last item rather than running blank column dividers to the foot of the page.
-  The template iterates `page_items`; it used to iterate `range(1, rows + 1)`
-  and emit empty cells, which is what drew the filler rows.
+- **The header's second box carries Document No above Date, with Remarks
+  matching it on the right.** One row, two cells, so the boxes are the same
+  height and width by construction — the Remarks cell is empty and takes its
+  height entirely from its neighbour. Remarks print blank on purpose, like the
+  cartons column: they are written at the gate by whoever hands the goods over,
+  and there is nowhere on an invoice for them to come from. There is no
+  `remarks` column in the database and nothing types into it.
 
-  **`rows` is still the height budget, and that is a different thing from the
-  number of rows drawn.** `print_row_count()` (min 22, capped at 26) is what
-  divides `ITEM_BODY_MM` into `--row-h`, so a 3-item pass gets the same roomy
-  6.27mm rows as a 20-item one, and a full 26-item pass tightens to 5.30mm and
-  still fits. Do not collapse the two — using the item count as the budget
-  would make a 2-item pass draw two 69mm-tall rows.
+  **That second line cost 5.56mm and nearly broke the page.** The box grew from
+  5.4mm to 11mm, pushing the item table down, and a full 26-item pass overflowed
+  by 3.17mm. Two things paid for it:
 
-  Because the table no longer fills the page, `.pass-foot` carries
-  `margin-top: auto`. Without it the signature block rides up under the table
-  and signs halfway down an empty pass. Measured after the change: 6-item pass
-  draws 6 rows at 6.27mm with 106.75mm of clear space above a footer still
-  pinned 6.88mm from the bottom; a 26-item pass draws 26 at 5.30mm with zero
-  overflow; a 32-item pass splits 26 + 6 with Sl No. running 1–26 then 27–32.
+  * `ITEM_BODY_MM` 138 → 134;
+  * the item cells' vertical padding 1mm → 0.85mm.
+
+  The second was not optional. Row height is `--row-h` *or the row's content
+  floor, whichever is larger* — padding plus the line box — and at 1mm that
+  floor was 5.22mm. Twenty-six of those did not fit however small `--row-h`
+  asked them to be, so lowering `ITEM_BODY_MM` alone left 1.06mm of overflow
+  with nothing able to give.
+
+  Measured after: 26 rows at 5.15mm in a 138.35mm table, zero overflow, no text
+  clipped, ~11.6mm of signing room, and the same on A5 at 134mm wide.
+
+  **There is very little slack left.** Anything else that grows above the table
+  has to come out of the footer's signing room, or `ITEMS_PER_PAGE` must drop
+  below 26. `test_print_layout_rules` asserts 26 rows at the floor still fit
+  inside `ITEM_BODY_MM`, so this fails loudly rather than silently clipping.
+
+- **The box is full height; only the populated rows are ruled.** Every budgeted
+  row is rendered (`{% for r in range(1, rows + 1) %}`), which is what carries
+  the outer border and the column dividers down the whole item area exactly
+  like the printed form. Rows carrying an item get `class="item-row"`, and the
+  horizontal rule hangs off that class alone:
+
+  ```css
+  table.items-table tbody tr.item-row td { border-bottom: 1px solid #000; }
+  ```
+
+  So the list is ruled off Excel-style and the blank space below it keeps the
+  vertical lines and nothing else. The dividers themselves come from
+  `border-left` on every cell, not from the table, which is why they reach the
+  bottom without any extra markup.
+
+  A fixed-height container painted with `background-image` gradients was the
+  other way to do this. It was rejected: the gradient stops would restate the
+  8/68/12/12 column widths in a second place, so changing a column width would
+  slide the painted lines off the real cell edges with nothing to catch it.
+
+  **`rows` is the height budget, which is not the same as the number of items.**
+  `print_row_count()` (min 22, capped at 26) divides `ITEM_BODY_MM` into
+  `--row-h`, so a 3-item pass gets roomy 6.27mm rows and a full 26-item pass
+  tightens to 5.30mm and still fits. Do not use the item count as the budget —
+  a 2-item pass would draw two 69mm-tall rows.
+
+  Measured: a 6-item pass draws 22 rows (6 ruled, 16 blank keeping their 1px
+  dividers) in a 142.41mm box; a 26-item pass draws 26, all ruled, 142.33mm;
+  a 32-item pass splits 26 + 6 with Sl No. running 1–26 then 27–32. Zero
+  overflow throughout.
+
+  `.pass-foot` keeps `margin-top: auto`. With the box full height it has no
+  slack to take, but it costs nothing and stops the signature block riding up
+  if the geometry is ever changed again.
 - The item column is the odd one out: headed **`Item Names`** and **centred**,
   but the names underneath are **left-aligned and indented 3mm**, so they read
   down the page as a list rather than a ragged zigzag. Centring is on
@@ -245,8 +506,34 @@ Must match the Fanzart gate pass form exactly:
   only because it asks for the 2mm it already has.) 3mm rather than the 12px
   originally specified: this stylesheet is in millimetres because px in print
   depends on rendering DPI, and 3mm is 11.3px.
-- Columns are **locked at `Sl No.` 8% / `Item Names` 68% / `Quantity` 12% /
-  `No.of Cartons` 12%**, and there is a test asserting those exact numbers.
+- **Every pass carries a 15mm left punch margin**, and both halves need one:
+  the sheet is cut down the middle, so the right-hand pass's left edge is the
+  cut line rather than the paper edge, and filing it needs the same clear strip
+  as its neighbour. It is padding on `.pass`, not a gap on `.sheet` — a gap
+  would only separate the two halves and leave the outer edges bare.
+
+  **It took 10mm out of every pass and broke two things.** `No.of Cartons` no
+  longer fit its column (needed 15.35mm, had 14.29mm) and spilled past its
+  border, so the columns were rebalanced. And on A5 — the narrower layout — the
+  longest real product name no longer fit on one line, wrapped, and pushed the
+  page 6.35mm over.
+
+- Columns are **locked at `Sl No.` 7% / `Item Names` 66% / `Quantity` 13% /
+  `No.of Cartons` 14%**, and there is a test asserting those exact numbers.
+  They were 8/68/12/12 before the punch margin.
+
+- **An item name must never wrap. This is load-bearing.** `max-height` does not
+  constrain a table cell, so a name that wraps to two lines makes its row
+  taller, and enough of those push the last item off the bottom of the page —
+  silently, because the pass is `overflow: hidden`. `white-space: nowrap` with
+  `text-overflow: ellipsis` fixes the row height by construction; a name too
+  long for its column is visibly cut instead. A truncated name an operator can
+  see beats a missing row nobody notices.
+
+  Without it the layout was balanced on luck: 4.88mm of headroom on A4 (about
+  **two characters** beyond the longest known product name) and 0.11mm on A5.
+  Proven by putting a 104-character name in every row — rows stayed 6.09mm and
+  overflow stayed 0.
   Item at 68% keeps names like
   `ERECTION COMMISSIONING AND INSTALLATION SERVICES` (48 characters) on one line.
 
@@ -306,10 +593,31 @@ Must match the Fanzart gate pass form exactly:
 - After any change here, render both a short pass and a full one and check
   `pass.scrollHeight` against `pass.clientHeight`. `tests/preview_server.py`
   serves exactly those two at `/print/1` and `/print/2`.
-- Below the table: **Authorised by** bottom-right with a blank rule to sign —
-  the only signature block on the pass. Optional totals and vehicle number sit
-  to its left and are off by default; the Boxes total is dropped when no cartons
-  were typed, rather than printing a label with nothing after it.
+- Below the table, **one footer holds both names on the same baseline**:
+  `.pass-foot` is `display: flex` with `align-items: flex-end` and
+  `justify-content: space-between`, so **Prepared by** sits bottom-left and the
+  **Authorised by** signature block bottom-right. Optional totals and vehicle
+  number sit between them and are off by default.
+
+  Only the authoriser signs, so only they get a rule. *Prepared by* is a record
+  of provenance, not a signature — hence the quiet 5.5pt grey and no rule.
+
+  **`min-height` on `.pass-foot` is the signing room.** Everything inside is
+  bottom-aligned, so the height above the rule is empty space to write in. At
+  15mm the gap between the table and the rule measures **13.26mm**, against
+  10.38mm when *Prepared by* was a separate line below the footer — that line
+  cost a whole row of signing space and left the two names 2.88mm out of
+  alignment. Raising it further starts to squeeze a full 26-item table, which
+  has first claim on the page: check `pass.scrollHeight` against `clientHeight`
+  on `/print/2` after changing it.
+
+  `.prepared-by` is `flex: none` with `max-width: 45%`, so a long name is
+  ellipsised rather than squeezing the signature block — verified with a
+  50-character name: the rule stayed 35mm and the baseline held.
+
+  It must carry **no `margin-top`**: as a flex item that would push it off the
+  shared baseline, which is the one thing this block exists to hold.
+
 - **Prepared by** is a record of provenance, not a signature, so it is a quiet
   watermark line in the bottom corner: 5.5pt, `#888888`, uppercase with letter
   spacing, reading `PREPARED BY: <name>`. It deliberately has no rule and no
