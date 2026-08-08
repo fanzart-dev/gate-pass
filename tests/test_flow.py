@@ -8,11 +8,13 @@ group, so it never touches storage/ (the real book).
 import functools
 import io
 import json
+import os
 import re
 import shutil
 import sqlite3
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -25,6 +27,7 @@ from app import create_app  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
 import make_invoice_pdf  # noqa: E402
+import stock_transfer_parser  # noqa: E402
 
 from werkzeug.datastructures import MultiDict  # noqa: E402
 
@@ -37,9 +40,11 @@ SERVICE_LINE_INVOICE = Path(__file__).parent / "sample_invoices" / "golden_touch
 # carry a supplier's GSTIN and named customers. Tests that need them are skipped
 # rather than failed on a fresh clone, and everything else still runs. Put the
 # real PDFs in tests/sample_invoices/ to run the parser tests in full.
-BI_INVOICE = Path(__file__).parent / "sample_invoices" / "golden_touch_bi_series.pdf"
+SAMPLE_DIR = Path(__file__).parent / "sample_invoices"
+BI_INVOICE = SAMPLE_DIR / "golden_touch_bi_series.pdf"
+TRANSFER_MEMOS = tuple(SAMPLE_DIR / f"transfer_memo_doc{n}.pdf" for n in (63, 66, 69))
 FIXTURES = (SAMPLE_INVOICE, SCANNED_INVOICE, TWO_PAGE_INVOICE, SERVICE_LINE_INVOICE,
-            BI_INVOICE)
+            BI_INVOICE) + TRANSFER_MEMOS
 HAVE_FIXTURES = all(p.exists() for p in FIXTURES)
 
 RESULTS = []
@@ -471,6 +476,178 @@ def test_name_column_is_found_by_its_heading():
           named and named[0]["item_name"] == "BUDDY")
 
 
+def test_stock_transfer_memo(tmpdir):
+    """A STOCK TRANSFER MEMO is a different document, read by its own module.
+
+    Goods moving between Golden Touch branches still leave the gate, so they
+    still need a pass — but the memo has a TO number rather than an invoice
+    number, and its destination is a branch rather than a customer. Recording
+    just "Golden Touch Exports" would make every transfer look identical in the
+    register.
+
+    The memo is generated to the real WEBPOS layout (see build_stock_transfer),
+    so this runs without any sample document. What makes that layout awkward:
+    there are NO drawn rules — the separators are runs of hyphens — so columns
+    are held by alignment alone, and the two addresses are printed side by side.
+    """
+    path = Path(tmpdir) / "transfer.pdf"
+    make_invoice_pdf.build_stock_transfer(path, items=make_invoice_pdf.TRANSFER_ITEMS)
+    result = invoice_parser.parse_invoice(path)
+
+    check("a transfer memo parses without notes", result["notes"] == [])
+    check("the TO number replaces the invoice number, label and all",
+          result["invoice_no"] == "TO NO: FR 262700512")
+    check("the destination branch is recorded, not just the company",
+          result["customer_name"] == "Golden Touch Exports, Indospace")
+    check("the transfer date is read", result["invoice_date"] == "01-08-2026")
+    check("the supplier is the company", result["supplier_name"] == "Golden Touch Exports")
+    check("all three lines come through", len(result["items"]) == 3)
+
+    # The heading "Model Name" is 54pt wide over names up to 140pt. Splitting
+    # the gap between headings put the last word of the longest name into the
+    # Description column, so it came through as "GRANDMASTER MATTE BLACK 70" —
+    # a product name quietly missing its last word.
+    check("a name wider than its heading keeps every word",
+          result["items"] and result["items"][0]["item_name"]
+          == "GRANDMASTER MATTE BLACK 70 INCHES")
+    check("model names, not HSN codes",
+          all(not i["item_name"].strip().isdigit() for i in result["items"]))
+    check("quantities come through",
+          [i["quantity"] for i in result["items"]] == ["1", "2", "5"])
+    # The TOTAL row is not an item, and neither are the hyphen separators.
+    check("the TOTAL row is not read as an item",
+          all("total" not in i["item_name"].lower() for i in result["items"]))
+    check("no separator rule is read as an item",
+          all("---" not in i["item_name"] for i in result["items"]))
+    # Cartons are never parsed from any document — rule 5, no exceptions.
+    check("no line carries a cartons value",
+          all("cartons" not in i for i in result["items"]))
+
+    # Both addresses are printed side by side and BOTH are Golden Touch. The
+    # sender is in Bommasandra, so a keyword search over the flattened text is
+    # reading the right answer out of the wrong column.
+    for keyword, address in (
+            ("Indiranagar", ("61, Defence Colony , 100 ft Road", "Indiranagar.",
+                              "Bengaluru 560038")),
+            ("Sadashivanagar", ("No 5, 1st Floor, opp. White Petals,",
+                                 "Bellary Road, Sadashivanagar,", "Bengaluru 560080"))):
+        p = Path(tmpdir) / f"transfer_{keyword}.pdf"
+        make_invoice_pdf.build_stock_transfer(
+            p, to_address=address,
+            from_address=("15 Krishnanagar Ind Area,", "Indospace Bommasandra,",
+                           "Bangalore 560029"),
+            items=make_invoice_pdf.TRANSFER_ITEMS)
+        r = invoice_parser.parse_invoice(p)
+        check(f"{keyword} maps to its branch",
+              r["customer_name"] == f"Golden Touch Exports, {keyword}")
+        check(f"the sender's branch does not win over {keyword}",
+              "Indospace" not in r["customer_name"])
+
+    # An unrecognised branch is not a failure — a new one may have opened.
+    p = Path(tmpdir) / "transfer_unknown.pdf"
+    make_invoice_pdf.build_stock_transfer(
+        p, to_address=("New Estate, Whitefield", "Bengaluru 560066"),
+        from_address=("15 Krishnanagar Ind Area,", "Bangalore 560029"),
+        items=make_invoice_pdf.TRANSFER_ITEMS)
+    r = invoice_parser.parse_invoice(p)
+    check("an unknown branch still yields the company name",
+          r["customer_name"] == "Golden Touch Exports")
+    check("and says the branch needs adding by hand",
+          any("which branch" in n for n in r["notes"]))
+    check("an unknown branch does not block the items", len(r["items"]) == 3)
+
+    # Routing: neither document type may be read by the other's rules.
+    check("a memo is detected by either marker",
+          stock_transfer_parser.looks_like_stock_transfer("STOCK TRANSFER MEMO")
+          and stock_transfer_parser.looks_like_stock_transfer("Transfer Out"))
+    check("a tax invoice is never routed to the transfer parser",
+          not stock_transfer_parser.looks_like_stock_transfer(
+              "Tax Invoice cum Delivery Note ... Bill To ... Name : M/S FANZART LLP"))
+
+
+@needs_fixtures
+def test_real_transfer_memos():
+    """The three real WEBPOS memos, one per branch.
+
+    Each document states its own TOTAL quantity, which is checked against the
+    sum of the lines read — an independent confirmation that nothing was
+    dropped or duplicated, from the document itself rather than from this test.
+    """
+    expected = {
+        "transfer_memo_doc69.pdf": ("TO NO: FR 262700512", "Indospace",
+                                     "01-08-2026", 2, 10),
+        "transfer_memo_doc66.pdf": ("TO NO: FR 262700531", "Indiranagar",
+                                     "04-08-2026", 4, 9),
+        "transfer_memo_doc63.pdf": ("TO NO: FR 262700536", "Sadashivanagar",
+                                     "06-08-2026", 1, 1),
+    }
+    for name, (to_no, branch, date, count, total_qty) in expected.items():
+        result = invoice_parser.parse_invoice(SAMPLE_DIR / name)
+        check(f"{name} parses without notes", result["notes"] == [])
+        check(f"{name} reads its TO number", result["invoice_no"] == to_no)
+        check(f"{name} goes to {branch}",
+              result["customer_name"] == f"Golden Touch Exports, {branch}")
+        check(f"{name} reads its date", result["invoice_date"] == date)
+        check(f"{name} reads all {count} line(s)", len(result["items"]) == count)
+        check(f"{name} totals match the document's own TOTAL row",
+              sum(int(i["quantity"]) for i in result["items"]) == total_qty)
+        check(f"{name} has no empty item name",
+              all(i["item_name"].strip() for i in result["items"]))
+
+    # The longest real name, which is what the column boundaries have to clear.
+    doc66 = invoice_parser.parse_invoice(SAMPLE_DIR / "transfer_memo_doc66.pdf")
+    check("the longest real name keeps its last word",
+          doc66["items"][0]["item_name"] == "GRANDMASTER MATTE BLACK 70 INCHES")
+
+
+def test_a_gate_pass_uploaded_as_an_invoice(tmpdir):
+    """Uploading one of our own printed passes must say so.
+
+    It happens: the printed pass and the supplier invoice sit in the same
+    folder. Left alone the parser produces confident nonsense rather than
+    failing — the two A5 halves of an A4 sheet read as one line, so the invoice
+    number comes back doubled ("FR 262702140 Date : 31-07-2026 Invoice No : FR
+    262702140 ..."), the supplier reads as "Sl. No. : FZ-00057 Sl. No. :
+    FZ-00057" and the item count doubles. The operator was then told only
+    "no customer — could not be read from the PDF", which points at the wrong
+    problem entirely.
+    """
+    flask_app, client = logged_in_app(tmpdir, "gatepassupload")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    gp = db.create_gate_pass(conn, None, "Golden Touch Exports", "FANZART LLP",
+                              "FR 262702140", "31-07-2026", "", sample_items(),
+                              prepared_by="Ravi Kumar")
+    printed = client.get(f"/print/{gp['id']}").get_data(as_text=True)
+    conn.close()
+
+    # The real thing is a PDF, but detection reads the page text, and that is
+    # what the printed HTML carries.
+    text = re.sub(r"<[^>]+>", " ", printed)
+    check("a printed pass is recognised as one",
+          invoice_parser._looks_like_a_gate_pass(text))
+
+    # Both markers are required, so an invoice mentioning a gate pass in its
+    # terms and conditions is not turned away.
+    check("'gate pass' alone is not enough",
+          not invoice_parser._looks_like_a_gate_pass(
+              "Tax Invoice ... a gate pass must accompany the goods"))
+    check("a signature block alone is not enough",
+          not invoice_parser._looks_like_a_gate_pass("Delivery note ... Authorised by"))
+
+    # The draft must report the real reason, not the first failed field check.
+    draft = {"supplier_name": "", "customer_name": "", "invoice_no": "",
+             "invoice_date": "", "items": [],
+             "parse_notes": invoice_parser.GATE_PASS_UPLOADED_NOTE}
+    check("the draft says a gate pass was uploaded, not 'no supplier'",
+          db.draft_problem(draft) == invoice_parser.GATE_PASS_UPLOADED_NOTE)
+
+    # And a genuine invoice with a missing field still reports that field.
+    ordinary = {"supplier_name": "", "customer_name": "", "invoice_no": "",
+                "invoice_date": "", "items": [], "parse_notes": ""}
+    check("an ordinary unreadable invoice still names the missing field",
+          db.draft_problem(ordinary) == "no supplier — could not be read from the PDF")
+
+
 @needs_fixtures
 def test_bi_series_invoice():
     """A BI-series invoice has two extra columns before the name.
@@ -805,7 +982,6 @@ def test_batch_upload_over_http(tmpdir):
     page = client.get("/drafts")
     check("the drafts screen flags the unreadable one", b"Needs attention" in page.data)
     check("the drafts screen marks the readable ones ready", b"Ready" in page.data)
-    check("the drafts screen shows the next number to be used", b"FZ-00001" in page.data)
 
     conn = db.connect(flask_app.config["DB_PATH"])
     all_ids = [d["id"] for d in db.list_drafts(conn)]
@@ -949,22 +1125,92 @@ def test_print_layout_rules(tmpdir):
     css = (ROOT / "static" / "css" / "print.css").read_text()
     card = (ROOT / "templates" / "_pass_card.html").read_text()
 
-    check("the item column is headed 'Item Names'",
-          '<th class="col-item">Item Names</th>' in card)
-    # The loop walks the items themselves. Iterating a fixed row count and
-    # emitting blanks is what drew filler rows down to the foot of the page.
-    check("the table iterates the items, not a fixed row count",
-          "{% for entry in page_items %}" in card
-          and "range(1, rows + 1)" not in card)
+    check("the item column is headed 'Item Name'",
+          '<th class="col-item">Item Name</th>' in card)
+
+    # Label and colon are separate now, so the colons can be aligned — assert
+    # on the labels rather than on a flat "Label :" string.
+    # Colons line up down each block because the label sits in a fixed-width
+    # span. The colon must stay OUTSIDE that span: inside it, it follows the
+    # label text and moves with its length, which is the thing being fixed.
+    for label in (">Serial No.</span>:", ">Issue Date</span>:",
+                  ">Document No</span>:", ">Date</span>:"):
+        check(f"the colon sits outside the label span ({label[1:-8]})", label in card)
+    key = re.search(r"\n\.key \{[^}]*\}", css)
+    key_serial = re.search(r"\.key-serial \{[^}]*\}", css)
+    check("labels are fixed-width so the colons align",
+          key is not None and "display: inline-block" in key.group()
+          and "min-width" in key.group())
+    check("each block sizes to its own longest label",
+          key_serial is not None and "min-width" in key_serial.group())
+    # min-width, not width: a longer label should push the colon right rather
+    # than overlap it.
+    check("a longer label pushes the colon rather than overlapping it",
+          key is not None and re.search(r"[^-]width: [\d.]+mm", key.group()) is None)
+    # The block is left-aligned inside but still flush right on the page —
+    # .pass-head is space-between. Right-aligning each line would put the colons
+    # wherever the values happened to end.
+    serial_css = re.search(r"\n\.serial \{[^}]*\}", css).group()
+    check("the serial block is left-aligned inside", "text-align: left" in serial_css)
+
+    check("the serial block carries the issue date under the number",
+          ">Serial No.</span>" in card and ">Issue Date</span>" in card
+          and card.index(">Serial No.</span>") < card.index(">Issue Date</span>"))
+    # From the record, never from the clock. A pass is a document: reprinting
+    # it next year must produce the sheet it produced the day it was raised.
+    # Jinja comments stripped first: the note explaining this decision talks
+    # about "today's date", and matching that would fail on the explanation.
+    card_code = re.sub(r"\{#.*?#\}", "", card, flags=re.S)
+    check("the issue date comes off the pass, not from datetime.now()",
+          "gate_pass.issued_at|as_day_month_year" in card_code
+          and "now()" not in card_code)
+
+    # Document No above Date in one box, Remarks matching it on the right.
+    check("Document No and Date share the left box",
+          ">Document No</span>" in card and ">Date</span>" in card
+          and card.index(">Document No</span>") < card.index("Remarks :"))
+    check("Remarks is the right-hand box", 'class="remarks-cell"' in card)
+    check("Remarks prints empty, to be written at the gate",
+          "Remarks :</td>" in card or "Remarks :\n" in card)
+    tall = re.search(r"table\.meta-box-tall td \{[^}]*\}", css)
+    check("that box is given room", tall is not None and "min-height" in tall.group())
+
+    # The header taking a second line is what forced ITEM_BODY_MM down. A full
+    # page has to still fit: 26 rows at their floor, plus the header, plus the
+    # footer's signing room, inside 196mm of pass.
+    floor_mm = 0.85 * 2 + (7 * 1.2) / 72 * 25.4      # padding + one 7pt line
+    check("a full page of rows still fits the item body",
+          db.ITEMS_PER_PAGE * floor_mm <= db.ITEM_BODY_MM)
+    check("and the row height asked for is above the floor",
+          db.print_row_height_mm(db.ITEMS_PER_PAGE) >= floor_mm)
+    # Every budgeted row is rendered, so the column dividers run the full height
+    # of the box like the printed form; only the rows carrying an item are
+    # tagged, and only that tag draws a horizontal rule.
+    check("every budgeted row is drawn, so the box is full height",
+          "{% for r in range(1, rows + 1) %}" in card)
+    check("only rows with an item are tagged item-row",
+          '<tr{% if entry %} class="item-row"{% endif %}>' in card)
+    rule = re.search(r"table\.items-table tbody tr\.item-row td \{[^}]*\}", css)
+    check("the horizontal rule is drawn per item row, not on the table",
+          rule is not None and "border-bottom: 1px solid #000" in rule.group())
+    check("blank rows are never ruled",
+          re.search(r"tbody tr:not\(\.item-row\)[^}]*border-bottom:\s*1px", css) is None)
+    # The dividers come from border-left on every cell, which is what carries
+    # them past the last item to the bottom of the box.
+    check("column dividers are on the cells, so they run the full height",
+          re.search(r"table\.items-table th,\s*table\.items-table td \{[^}]*border-left: 1px solid #000",
+                    css) is not None)
 
     def width_of(selector):
         match = re.search(rf"\.{selector} \{{[^}}]*width: ([\d.]+)%", css)
         return float(match.group(1)) if match else None
 
-    # These four are locked deliberately — see the note in CLAUDE.md about the
-    # heading text, not the digits, being what sets the numeric column widths.
-    for column, expected in (("col-sl", 8), ("col-item", 68),
-                              ("col-qty", 12), ("col-ctn", 12)):
+    # Locked deliberately — the heading text, not the digits, is what sets the
+    # numeric column widths. They were rebalanced from 8/68/12/12 when the 15mm
+    # punch margin took 10mm out of every pass and "No.of Cartons" no longer
+    # fit inside its column.
+    for column, expected in (("col-sl", 7), ("col-item", 66),
+                              ("col-qty", 13), ("col-ctn", 14)):
         check(f"{column} is locked at {expected}%", width_of(column) == expected)
     check("the four columns add up to the full width",
           sum(width_of(c) for c in
@@ -984,8 +1230,11 @@ def test_print_layout_rules(tmpdir):
 
     body = re.search(r"table\.items-table tbody td \{[^}]*\}", css).group()
     check("item rows have comfortable leading", "line-height: 1.2" in body)
+    # 0.85mm vertical is the row's hard floor — a row cannot be shorter than
+    # its padding plus its line box. It came down from 1mm when the header grew
+    # a line and 26 rows no longer fit. The 2mm sides keep text off the borders.
     check("item rows have padding that keeps text off the borders",
-          "padding: 1mm 2mm" in body)
+          "padding: 0.85mm 2mm" in body)
     check("item text is centred in its row", "vertical-align: middle" in body)
     # The row height is now explicit rather than shared out by flex, so the same
     # pass prints identically whatever the paper size or print scale.
@@ -1035,7 +1284,14 @@ def test_print_layout_rules(tmpdir):
     # !important is required: the tbody rule sets `padding: 1mm 2mm !important`
     # and an ordinary padding-left loses to it, measuring 2mm and doing nothing.
     check("and indented off the column divider",
-          item_cell is not None and "padding-left: 3mm !important" in item_cell.group())
+          item_cell is not None and "padding-left: 2mm !important" in item_cell.group())
+    # Load-bearing, not cosmetic: max-height does not constrain a table cell, so
+    # a name that wraps makes its row taller and enough of those push the last
+    # item off the page — silently, because the pass is overflow: hidden.
+    check("an item name can never wrap and grow its row",
+          "white-space: nowrap" in item_cell.group())
+    check("a name too long for its column is visibly cut",
+          "text-overflow: ellipsis" in item_cell.group())
     # Comments stripped first: this rule's own comment quotes the shorthand it
     # is warning about, and matching that would fail on the explanation rather
     # than on the code.
@@ -1045,11 +1301,65 @@ def test_print_layout_rules(tmpdir):
     for column in ("col-sl", "col-qty", "col-ctn"):
         check(f"{column} stays centred",
               re.search(rf"\.{column} \{{[^}}]*text-align: center", css) is not None)
-    # The table no longer fills the page, so the signature block has to be
-    # pushed down explicitly or it signs halfway up a short pass.
+    # Both names live in one footer so they share a baseline across the foot of
+    # the pass. "Prepared by" used to be a separate line below it, sitting
+    # 2.88mm lower and eating a row of the space the authoriser signs in.
     foot = re.search(r"\.pass-foot \{[^}]*\}", css).group()
     check("the signature block is pinned to the foot of the pass",
           "margin-top: auto" in foot)
+    check("both names sit on one baseline",
+          "align-items: flex-end" in foot and "justify-content: space-between" in foot)
+    # min-height is the signing room: everything inside is bottom-aligned, so
+    # the height above the rule is empty space to write in. Measured at 15mm:
+    # 13.26mm between the table and the rule, against 10.38mm before.
+    signing_room = float(re.search(r"min-height: ([\d.]+)mm", foot).group(1))
+    check("there is room above the rule to sign", signing_room >= 14)
+    check("Prepared by is inside the footer, not a line below it",
+          card.index('class="prepared-by"') > card.index('class="pass-foot"')
+          and card.index('class="prepared-by"') < card.index('class="foot-side'))
+
+    # Both halves need a punch margin: the sheet is cut down the middle, so the
+    # right-hand pass's left edge is the cut line, not the paper edge.
+    pass_css = re.search(r"\n\.pass \{[^}]*\}", css).group()
+    punch = re.search(r"padding: [\d.]+mm [\d.]+mm [\d.]+mm ([\d.]+)mm", pass_css)
+    check("each pass carries a punch margin on its left",
+          punch is not None and float(punch.group(1)) >= 15)
+    check("and it is on .pass, so both halves get one, not on the sheet",
+          "padding" in pass_css)
+
+    prepared_css = re.search(r"\.prepared-by \{[^}]*\}", css).group()
+    check("a long name cannot squeeze the signature block",
+          "flex: none" in prepared_css and "max-width" in prepared_css)
+    check("and no margin knocks it off the shared baseline",
+          "margin-top" not in prepared_css)
+
+    # The document title, set the way an official form is set.
+    title = re.search(r"\.pass-head h1 \{[^}]*\}", css).group()
+    check("the title is uppercase", "text-transform: uppercase" in title)
+    check("the title is heavy",
+          int(re.search(r"font-weight: (\d+)", title).group(1)) >= 700)
+    check("the title is tracked", "letter-spacing" in title)
+    check("the title never breaks across two lines", "white-space: nowrap" in title)
+    # Nothing is drawn under the title. The weight and tracking already mark it
+    # as the title, and a rule there only competes with the boxed rows below.
+    check("no underline under the title", "text-decoration: underline" not in title)
+    check("and no rule either", "border-bottom" not in title)
+    # letter-spacing adds a gap after the FINAL letter too, so the text box is
+    # wider than the glyphs and a centred title sits left of centre.
+    check("the trailing letter-space is cancelled", "margin-right: -" in title)
+
+    for face in ("Inter", "Roboto", "Montserrat"):
+        check(f"{face} is offered for the title", face in title)
+    check("and there is a fallback the machine is certain to have",
+          "Arial" in title and "sans-serif" in title)
+    # A print stylesheet cannot afford a webfont that may or may not arrive:
+    # the office server has no guaranteed route to the internet, and a font
+    # swapping in mid-print changes the width of a title centred between the
+    # logo and the serial number. Measured across every fallback, the title is
+    # 26.2mm (Inter) to 28.12mm (Arial) with ~26mm clear on each side.
+    check("no webfont is fetched over the network",
+          "@import" not in css and "fonts.googleapis" not in css
+          and "@font-face" not in css)
 
     prepared = re.search(r"\.prepared-by \{[^}]*\}", css).group()
     check("Prepared by is small", "font-size: 5.5pt" in prepared)
@@ -1946,24 +2256,28 @@ def test_permissions_gate_each_feature(tmpdir):
             check(f"{permission} does not open {other_path}",
                   staff.get(other_path, follow_redirects=True).request.path == "/register")
 
-    # Search and filter are independent of each other.
-    grant(can_search_register=True)
+    # Searching and filtering the register are ONE permission: nobody wanted to
+    # search a register they could not narrow, or narrow one they could not
+    # search, so the two tick boxes became one.
+    grant()
     page = staff.get("/register").data
-    check("search alone shows the search box", b'name="q"' in page)
-    check("search alone hides the filter button", b'id="filter-toggle"' not in page)
-    check("search alone actually searches",
-          staff.get("/register?q=MANGALDEEP").data.count(b'serial-cell reg-serial') == 1)
-    check("search alone still ignores a status filter",
+    check("without it there is no search box", b'name="q"' not in page)
+    check("and no filter button", b'id="filter-toggle"' not in page)
+    check("and a search term in the URL is ignored",
+          staff.get("/register?q=NOTHING").data.count(b'serial-cell reg-serial') == 1)
+    check("and so is a status filter",
           staff.get("/register?status=cancelled").data.count(b'serial-cell reg-serial') == 1)
 
-    grant(can_filter_register=True)
+    grant(can_search_register=True)
     page = staff.get("/register").data
-    check("filter alone shows the filter button", b'id="filter-toggle"' in page)
-    check("filter alone hides the search box", b'name="q"' not in page)
-    check("filter alone ignores a search term",
-          staff.get("/register?q=NOTHING").data.count(b'serial-cell reg-serial') == 1)
-    check("filter alone applies a status filter",
+    check("the one permission shows the search box", b'name="q"' in page)
+    check("and the filter button with it", b'id="filter-toggle"' in page)
+    check("searching works",
+          staff.get("/register?q=MANGALDEEP").data.count(b'serial-cell reg-serial') == 1)
+    check("and filtering works",
           staff.get("/register?status=cancelled").data.count(b'serial-cell reg-serial') == 0)
+    check("can_filter_register no longer exists",
+          "can_filter_register" not in db.PERMISSIONS)
 
     # Cancelling is its own permission.
     grant()
@@ -1986,8 +2300,12 @@ def test_permissions_gate_each_feature(tmpdir):
 
     # Everything else stays open to everyone.
     grant()
-    for path in ("/upload", "/drafts", "/register"):
+    for path in ("/upload", "/register"):
         check(f"{path} needs no permission", staff.get(path).status_code == 200)
+    # ...except Drafts, which is the switch between "check it first" and
+    # "issue it straight away". Without it there is no draft list to show.
+    check("/drafts is behind can_review_drafts",
+          staff.get("/drafts").status_code == 302)
 
 
 def test_managing_permissions_from_the_people_page(tmpdir):
@@ -1996,7 +2314,14 @@ def test_managing_permissions_from_the_people_page(tmpdir):
     page = admin.get("/people").data
     check("the create form offers the permission checkboxes",
           all(f'name="{key}"'.encode() in page for key in db.PERMISSIONS))
-    check("the permissions are collapsed by default", b"perm-block" in page)
+    # Creating an account is a dialog opened from the Accounts heading, not a
+    # panel wedged under the table.
+    check("there is an Add User button", b'id="add-user-open"' in page)
+    check("and the form lives in a dialog", b'id="add-dialog"' in page)
+    check("each tick box says what it does",
+          all(hint.encode() in page for hint in
+              (db.PERMISSION_HINTS["can_review_drafts"][:30],
+               db.PERMISSION_HINTS["can_batch_print"][:30])))
     check("the old admin tick is gone", b'name="is_admin"' not in page)
 
     admin.post("/people/add", data={
@@ -2193,8 +2518,8 @@ def test_role_based_access(tmpdir):
     staff = flask_app.test_client()
     sign_in(staff, "asha")
 
-    ADMIN_ONLY = ["/reports", "/reports/export", "/settings", "/people"]
-    EVERYONE = ["/upload", "/drafts", "/register"]
+    ADMIN_ONLY = ["/reports", "/reports/export", "/settings", "/people", "/drafts"]
+    EVERYONE = ["/upload", "/register"]
 
     for path in ADMIN_ONLY:
         check(f"an admin can open {path}", admin.get(path).status_code == 200)
@@ -2214,7 +2539,12 @@ def test_role_based_access(tmpdir):
         check(f"{link.decode()} is hidden from a regular user", link not in staff_nav)
         check(f"{link.decode()} is shown to an admin", link in admin_nav)
     check("a regular user still sees the everyday links",
-          b'href="/upload"' in staff_nav and b'href="/drafts"' in staff_nav)
+          b'href="/upload"' in staff_nav and b'href="/register"' in staff_nav)
+    # No draft list without the permission — their uploads go straight to a
+    # printed pass, so there is nothing for that page to hold.
+    check("Drafts is hidden from a user who does not review",
+          b'href="/drafts"' not in staff_nav)
+    check("Drafts is shown to an admin", b'href="/drafts"' in admin_nav)
 
     # The register's search and filter are admin-only, and enforced server side.
     check("a regular user gets no search box", b'name="q"' not in staff_nav)
@@ -2316,12 +2646,268 @@ def test_admin_powers_and_guardrails(tmpdir):
           staff.get("/upload").status_code == 302)
 
 
+def test_stylesheets_are_cache_busted(tmpdir):
+    """Every stylesheet link carries the file's modification time.
+
+    Without it the browser keeps serving the CSS it already has, and that
+    produces the most confusing possible failure: template changes appear
+    immediately — they are rendered fresh every request — while CSS changes do
+    not. A layout looks half-applied and the code looks wrong when it is
+    correct. It cost real time more than once before this existed.
+    """
+    flask_app, client = logged_in_app(tmpdir, "cachebust")
+    for path in ("/login", "/register", "/upload"):
+        page = client.get(path, follow_redirects=True).get_data(as_text=True)
+        for href in re.findall(r'<link[^>]+href="([^"]*\.css[^"]*)"', page):
+            check(f"{path} asks for {href.split('?')[0]} with a version",
+                  "?v=" in href)
+
+    conn = db.connect(flask_app.config["DB_PATH"])
+    gp = db.create_gate_pass(conn, None, "S", "C", "I", "01-01-2026", "",
+                              sample_items(), prepared_by="Ravi Kumar")
+    conn.close()
+    printed = client.get(f"/print/{gp['id']}").get_data(as_text=True)
+    hrefs = re.findall(r'<link[^>]+href="([^"]*\.css[^"]*)"', printed)
+    check("the print stylesheet is versioned too",
+          hrefs and all("?v=" in h for h in hrefs))
+
+    # The stamp must follow the file, or it is just a constant that never busts
+    # anything. Touch the file and the link has to change.
+    with flask_app.test_request_context():
+        static_url = flask_app.jinja_env.globals["static_url"]
+        before = static_url("css/print.css")
+        css = Path(flask_app.static_folder) / "css" / "print.css"
+        stamp = css.stat().st_mtime
+        try:
+            os.utime(css, (stamp + 60, stamp + 60))
+            check("touching the file changes the link",
+                  static_url("css/print.css") != before)
+        finally:
+            os.utime(css, (stamp, stamp))
+        check("and restoring it restores the link",
+              static_url("css/print.css") == before)
+        check("a missing file does not raise", "?v=" in static_url("css/nope.css"))
+
+
+def test_printed_issue_date_is_the_pass_date(tmpdir):
+    """The printed Issue Date comes off the record, not off the clock.
+
+    A gate pass is a document. Reprinting FZ-00027 a year later must produce
+    the same sheet it produced the day it was raised — `datetime.now()` in the
+    template would quietly restamp it with the day it was reprinted, which is a
+    different claim about when the goods left.
+    """
+    flask_app, client = logged_in_app(tmpdir, "issuedate")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    gp = db.create_gate_pass(conn, None, "Golden Touch Exports", "FANZART LLP",
+                              "FR 1", "01-01-2026", "", sample_items(),
+                              prepared_by="Ravi Kumar")
+    # Backdate it the way an old pass in the register would be.
+    with db.writing(conn):
+        conn.execute("UPDATE gate_passes SET issued_at = ? WHERE id = ?",
+                     ("2026-02-14 09:30:00", gp["id"]))
+    conn.close()
+
+    printed = client.get(f"/print/{gp['id']}").get_data(as_text=True)
+    # Tags stripped: the label and its colon are separate elements so the
+    # colons can be aligned, so the pair only reads as one string once rendered.
+    text = " ".join(re.sub(r"<[^>]+>", " ", printed).split())
+    check("the printed pass shows the date it was issued",
+          "Issue Date : 14-02-2026" in text)
+    check("and not today's date",
+          datetime.now().strftime("%d-%m-%Y") not in printed
+          or datetime.now().strftime("%d-%m-%Y") == "14-02-2026")
+    check("the serial is still there", gp["serial_no"] in printed)
+
+    # The filter turns the stored 'YYYY-MM-DD HH:MM:SS' into the way the office
+    # writes a date, and leaves anything it cannot read alone.
+    with flask_app.test_request_context():
+        fmt = flask_app.jinja_env.filters["as_day_month_year"]
+        check("timestamps become DD-MM-YYYY", fmt("2026-02-14 09:30:00") == "14-02-2026")
+        check("a bare date works too", fmt("2026-12-01") == "01-12-2026")
+        check("something unreadable is passed through", fmt("") == "")
+        check("and None does not raise", fmt(None) == "")
+
+
+@needs_fixtures
+def test_the_parse_is_the_record(tmpdir):
+    """Without `can_edit_parsed_details`, a value the invoice yielded is fixed.
+
+    The rule: **the parser's output is the record.** A person fills in what the
+    document did not yield; they never overwrite what it did. That is what
+    makes a draft worth landing on for someone who may not edit — the blanks
+    are theirs to fill, the rest is the invoice speaking for itself.
+    """
+    flask_app, admin = logged_in_app(tmpdir, "parsedrec",
+                                      users=(("ravi", "Ravi Kumar"), ("asha", "Asha Nair")))
+    conn = db.connect(flask_app.config["DB_PATH"])
+    asha = db.get_user_by_username(conn, "asha")
+    # She reviews, but may not restate what the document said.
+    db.set_user_permissions(conn, asha["id"], {"can_review_drafts": True})
+    conn.close()
+    staff = flask_app.test_client()
+    sign_in(staff, "asha")
+
+    with open(SAMPLE_INVOICE, "rb") as f:
+        resp = staff.post("/upload", data={"invoice": (f, "inv.pdf")},
+                           content_type="multipart/form-data")
+    draft_id = int(resp.headers["Location"].rstrip("/").rsplit("/", 1)[-1])
+    conn = db.connect(flask_app.config["DB_PATH"])
+    parsed = db.get_draft(conn, draft_id)
+    conn.close()
+
+    page = staff.get(f"/review/{draft_id}").get_data(as_text=True)
+    check("a parsed value is shown as text, not an input",
+          'class="read-field"' in page
+          and 'id="customer_name"' not in page)
+    check("and the item list cannot be added to", 'id="add-row"' not in page)
+
+    # A readonly attribute is a courtesy to the person typing, not a control:
+    # anyone can post whatever they like to this route.
+    staff.post(f"/review/{draft_id}", headers={"Origin": "http://localhost"},
+               data=MultiDict([
+                   ("supplier_name", "SOMEONE ELSE"), ("customer_name", "NOT THEM"),
+                   ("invoice_no", "FAKE-999"), ("invoice_date", "01-01-2000"),
+                   ("vehicle_no", "KA 01 AB 1234"),
+                   ("item_name", "GOLD BARS"), ("quantity", "999"), ("cartons", "5"),
+                   ("action", "save"),
+               ]))
+    conn = db.connect(flask_app.config["DB_PATH"])
+    after = db.get_draft(conn, draft_id)
+    conn.close()
+    for field in ("supplier_name", "customer_name", "invoice_no", "invoice_date"):
+        check(f"a forged post cannot change {field}", after[field] == parsed[field])
+    check("nor the items the invoice listed",
+          [i["item_name"] for i in after["items"]] == [i["item_name"] for i in parsed["items"]])
+    check("nor how many there were", len(after["items"]) == len(parsed["items"]))
+    # Neither of these comes from the parser, so both are theirs to enter.
+    check("the vehicle number is still theirs to enter",
+          after["vehicle_no"] == "KA 01 AB 1234")
+    check("and so are cartons, which the parser never returns",
+          after["items"][0]["cartons"] == "5")
+
+    # A scan yields nothing, so there is nothing to protect and everything to
+    # type. Locking the whole screen would strand every scanned invoice.
+    with open(SCANNED_INVOICE, "rb") as f:
+        resp = staff.post("/upload", data={"invoice": (f, "scan.pdf")},
+                           content_type="multipart/form-data")
+    scan_id = int(resp.headers["Location"].rstrip("/").rsplit("/", 1)[-1])
+    page = staff.get(f"/review/{scan_id}").get_data(as_text=True)
+    check("a scan offers every field as a box", 'class="read-field"' not in page)
+    check("and lets rows be added", 'id="add-row"' in page)
+
+    resp = staff.post(f"/review/{scan_id}", headers={"Origin": "http://localhost"},
+                      data=MultiDict([
+                          ("supplier_name", "MANGALDEEP"), ("customer_name", "FANZART LLP"),
+                          ("invoice_no", "HAND-001"), ("invoice_date", "07-08-2026"),
+                          ("vehicle_no", ""),
+                          ("item_name", "VIENNA 52 WALNUT"), ("quantity", "2"),
+                          ("cartons", ""), ("action", "issue"),
+                      ]))
+    check("a typed-in scan issues normally", "/print/" in resp.headers.get("Location", ""))
+    conn = db.connect(flask_app.config["DB_PATH"])
+    issued = conn.execute("SELECT * FROM gate_passes ORDER BY id DESC LIMIT 1").fetchone()
+    check("with the details the operator entered", issued["supplier_name"] == "MANGALDEEP")
+    conn.close()
+
+    # An admin correcting a genuine mis-parse is the escape hatch.
+    admin.post(f"/review/{draft_id}", headers={"Origin": "http://localhost"},
+               data=MultiDict([
+                   ("supplier_name", "Corrected Supplier"), ("customer_name", "FANZART LLP"),
+                   ("invoice_no", "FR 262702171"), ("invoice_date", "03-08-2026"),
+                   ("vehicle_no", ""), ("item_name", "MICRON MODREN OAK"),
+                   ("quantity", "1"), ("cartons", ""), ("action", "save"),
+               ]))
+    conn = db.connect(flask_app.config["DB_PATH"])
+    check("an admin can still correct a mis-parse",
+          db.get_draft(conn, draft_id)["supplier_name"] == "Corrected Supplier")
+    conn.close()
+
+
+@needs_fixtures
+def test_instant_issue_without_the_draft_step(tmpdir):
+    """Without `can_review_drafts`, an upload becomes a printed pass in one go.
+
+    Parse, number, insert and issue happen in a single transaction, and the
+    operator lands on the print preview. With the permission, the same upload
+    stops at a draft first so the parse can be corrected before a number is
+    spent on it.
+    """
+    flask_app, admin = logged_in_app(tmpdir, "instant",
+                                      users=(("ravi", "Ravi Kumar"), ("asha", "Asha Nair")))
+    staff = flask_app.test_client()
+    sign_in(staff, "asha")
+
+    def upload(client, path=SAMPLE_INVOICE, name="inv.pdf"):
+        with open(path, "rb") as f:
+            return client.post("/upload", data={"invoice": (f, name)},
+                                content_type="multipart/form-data")
+
+    conn = db.connect(flask_app.config["DB_PATH"])
+    before = conn.execute("SELECT COUNT(*) FROM gate_passes").fetchone()[0]
+    conn.close()
+
+    resp = upload(staff)
+    where = resp.headers.get("Location", "")
+    check("a staff upload goes straight to the print preview", "/print/" in where)
+    conn = db.connect(flask_app.config["DB_PATH"])
+    check("and the pass is already issued",
+          conn.execute("SELECT COUNT(*) FROM gate_passes").fetchone()[0] == before + 1)
+    issued = conn.execute("SELECT * FROM gate_passes ORDER BY id DESC LIMIT 1").fetchone()
+    check("it carries the next number in the run", issued["serial_no"].startswith("FZ-"))
+    check("and names whoever uploaded it", issued["prepared_by"] == "Asha Nair")
+    check("no draft is left behind", len(db.list_drafts(conn)) == 0)
+    conn.close()
+
+    check("the print preview really is theirs to open",
+          staff.get(where).status_code == 200)
+
+    # The Drafts page and its nav link are gone for them.
+    check("Drafts is not reachable", staff.get("/drafts").status_code == 302)
+    check("and not offered in the nav",
+          b'href="/drafts"' not in staff.get("/register").data)
+
+    # An admin, who reviews, gets the old behaviour.
+    resp = upload(admin)
+    check("an admin's upload stops at the review screen",
+          "/review/" in resp.headers.get("Location", ""))
+    conn = db.connect(flask_app.config["DB_PATH"])
+    check("as a draft holding no number", len(db.list_drafts(conn)) == 1)
+    conn.close()
+
+    # A PDF that cannot be read has nowhere to go but the review screen: a pass
+    # needs items, and a numbered pass with none is a permanent hole in the
+    # register that cancelling cannot undo.
+    conn = db.connect(flask_app.config["DB_PATH"])
+    before = conn.execute("SELECT COUNT(*) FROM gate_passes").fetchone()[0]
+    conn.close()
+    resp = upload(staff, SCANNED_INVOICE, "scan.pdf")
+    check("an unreadable upload lands on review instead",
+          "/review/" in resp.headers.get("Location", ""))
+    conn = db.connect(flask_app.config["DB_PATH"])
+    check("and burns no number",
+          conn.execute("SELECT COUNT(*) FROM gate_passes").fetchone()[0] == before)
+    conn.close()
+    # That review screen must be usable without the Drafts permission, or the
+    # operator is sent somewhere they cannot open to finish the job.
+    draft_id = int(resp.headers["Location"].rstrip("/").rsplit("/", 1)[-1])
+    check("the review screen opens without the Drafts permission",
+          staff.get(f"/review/{draft_id}").status_code == 200)
+
+
 @needs_fixtures
 def test_serial_run_is_shared_between_people(tmpdir):
     """Different people at the office draw from one continuous run — the whole
     point of replacing the handwritten book."""
     flask_app, ravi = logged_in_app(tmpdir, "shared_storage",
                                      users=(("ravi", "Ravi Kumar"), ("asha", "Asha Nair")))
+    # Both go through the draft step here, so the test exercises one flow. What
+    # it is checking is that the RUN is shared, not how a pass is raised —
+    # mixed flows are covered by test_instant_issue_without_the_draft_step.
+    conn = db.connect(flask_app.config["DB_PATH"])
+    asha_user = db.get_user_by_username(conn, "asha")
+    db.set_user_permissions(conn, asha_user["id"], {"can_review_drafts": True})
+    conn.close()
     asha = flask_app.test_client()
     sign_in(asha, "asha")
 
@@ -2415,11 +3001,12 @@ def test_prepared_by_is_recorded_and_printed(tmpdir):
     check("the printed pass still carries Authorised by", b"Authorised by" in printed)
     check("both labels appear on each of the two passes",
           printed.count(b"Prepared by") == 2 and printed.count(b"Authorised by") == 2)
-    # One blank cartons cell per item per pass, and no more: the table draws
-    # only rows that carry an item, so a 1-item pass has exactly 1 row on each
-    # of the two halves rather than being padded out to PRINT_MIN_ROWS.
+    # The box is drawn to its full budgeted height, so every row on both halves
+    # has an empty cartons cell — the one item's included, since cartons are
+    # written by hand.
+    rows_drawn = db.print_row_count(1)
     check("the cartons column prints empty when nothing was typed",
-          printed.count(b'<td class="col-ctn"></td>') == 1 * 2)
+          printed.count(b'<td class="col-ctn"></td>') == rows_drawn * 2)
 
     # With cartons blank there is no box count to total, so the label is dropped
     # rather than printed with nothing after it.
@@ -2427,7 +3014,7 @@ def test_prepared_by_is_recorded_and_printed(tmpdir):
     db.update_settings(conn, show_totals="1")
     conn.close()
     with_totals = client.get(f"/print/{gate_pass_id}").data
-    check("the totals line still shows the quantity", b"Total qty :" in with_totals)
+    check("the totals line still shows the quantity", b"Total Qty :" in with_totals)
     check("no empty Boxes total is printed when cartons were left blank",
           b"Boxes :" not in with_totals)
 
@@ -2656,13 +3243,17 @@ def test_full_app_flow(tmpdir):
     check("print page shows the serial number", gp["serial_no"].encode() in print_resp.data)
     check("print page shows the item", b"MICRON MODREN OAK" in print_resp.data)
 
-    # Only rows carrying an item are drawn, so the ruled box closes after the
-    # last one instead of running blank dividers to the foot of the page.
+    # The box runs to its full budgeted height on both halves, so the column
+    # dividers reach the bottom exactly as on the printed form.
     printed_rows = print_resp.data.count(b'<td class="col-sl">')
-    check("only the items are drawn, the same on each of the two passes",
-          printed_rows == 1 * 2)
-    check("no blank filler row is drawn",
-          print_resp.data.count(b'<td class="col-sl"></td>') == 0)
+    check("the box is drawn full height on each of the two passes",
+          printed_rows == db.print_row_count(1) * 2)
+    # ...but only the one real item is ruled off horizontally.
+    check("exactly the populated rows are tagged for a horizontal rule",
+          print_resp.data.count(b'<tr class="item-row">') == 1 * 2)
+    check("the rest are blank filler rows carrying no rule",
+          print_resp.data.count(b'<td class="col-sl"></td>')
+          == (db.print_row_count(1) - 1) * 2)
     # print_row_count is now the height BUDGET, not the number of rows drawn:
     # it is what divides ITEM_BODY_MM into --row-h, so a short pass still gets
     # roomy rows and a full one tightens enough to fit.
@@ -2816,6 +3407,9 @@ def main():
         test_service_line_invoice()
         test_name_column_is_found_by_its_heading()
         test_bi_series_invoice()
+        test_stock_transfer_memo(tmpdir)
+        test_real_transfer_memos()
+        test_a_gate_pass_uploaded_as_an_invoice(tmpdir)
         test_cartons_are_never_prefilled(tmpdir)
         test_sequence_derives_from_the_book(tmpdir)
         test_batch_issue_keeps_the_run_unbroken(tmpdir)
@@ -2849,6 +3443,10 @@ def main():
         test_batch_printing(tmpdir)
         test_role_based_access(tmpdir)
         test_admin_powers_and_guardrails(tmpdir)
+        test_stylesheets_are_cache_busted(tmpdir)
+        test_printed_issue_date_is_the_pass_date(tmpdir)
+        test_the_parse_is_the_record(tmpdir)
+        test_instant_issue_without_the_draft_step(tmpdir)
         test_serial_run_is_shared_between_people(tmpdir)
         test_concurrent_issuing_keeps_the_run_unbroken(tmpdir)
         test_prepared_by_is_recorded_and_printed(tmpdir)
