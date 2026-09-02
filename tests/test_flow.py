@@ -3543,6 +3543,13 @@ def test_hosting_hardening(tmpdir):
           'chmod 600 "$CERT_DIR/fanzart-ca.key" "$CERT_DIR/server.key"' in make_cert)
     check("nginx hands the CA out so nobody carries a USB stick",
           "location = /fanzart-ca.pem" in ssl_conf)
+    # make-cert.sh only runs when there is NO certificate, so a permissions fix
+    # made there never reaches a machine that already has one — which is every
+    # machine that matters. enable-https.sh sets them on every run.
+    enable_https = (ROOT / "deploy" / "enable-https.sh").read_text()
+    check("permissions are set on every run, not only at issue",
+          'chmod 755 "$CERT_DIR"' in enable_https
+          and 'chmod 644 "$CERT_DIR/fanzart-ca.pem"' in enable_https)
 
     # The part the usual advice gets wrong: on Linux, Chrome and Brave do NOT
     # read /usr/local/share/ca-certificates. They keep their own NSS database,

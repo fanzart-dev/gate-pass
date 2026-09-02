@@ -29,7 +29,16 @@ else
     "$APP_DIR/deploy/make-cert.sh" >/dev/null || die "could not issue a certificate"
     note "issued — install $CERT_DIR/fanzart-ca.pem on the office machines"
 fi
-chmod 600 "$CERT_DIR/server.key"   # nginx reads it as root; nobody else needs it
+# Set every run, not just when the certificate is issued. make-cert.sh only
+# runs when there ISN'T one, so a permissions fix made there would never reach
+# a machine that already had certificates — which is every machine that matters.
+#
+# The directory has to be traversable and the CA readable: it is a public
+# certificate that every office machine needs a copy of, and nginx (as
+# www-data) serves it at /fanzart-ca.pem. The private keys stay 600.
+chmod 755 "$CERT_DIR"
+chmod 644 "$CERT_DIR/fanzart-ca.pem" "$CERT_DIR/server.pem" 2>/dev/null || true
+chmod 600 "$CERT_DIR/server.key" "$CERT_DIR/fanzart-ca.key" 2>/dev/null || true
 
 say "Working out which addresses 443 is ours to use"
 # `listen 443 ssl` means 0.0.0.0:443, and that bind FAILS if anything already
