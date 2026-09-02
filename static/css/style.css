@@ -325,6 +325,7 @@ label {
 
 input[type="text"],
 input[type="file"],
+textarea,
 select {
   width: 100%;
   padding: 9px 11px;
@@ -338,10 +339,22 @@ select {
 }
 
 input[type="text"]:focus,
+textarea:focus,
 select:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Remarks. Starts exactly as tall as the single-line fields beside it so the
+   row does not sit in a hole, and grows when there is more to say. Tighter
+   padding than an input because a textarea adds its own line box on top. */
+textarea.multiline {
+  min-height: 38px;
+  line-height: 1.4;
+  padding: 6px 10px;
+  resize: vertical;
+  display: block;      /* kills the baseline gap under an inline-block */
 }
 
 .field { margin-bottom: 16px; }

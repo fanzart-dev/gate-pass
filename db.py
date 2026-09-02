@@ -766,14 +766,55 @@ def fill_cartons(conn, items):
     Never overwrites a value that is already there: if a parser managed to read
     a carton count off the document, the document beats the master list.
     """
+    items = list(items or [])
+    if not items:
+        return []
+
+    # One query for the whole invoice rather than one per line. The saving is
+    # small in absolute terms — the lookup was already well under a millisecond
+    # against ~285 ms of PDF parsing — but a query per line grows with the
+    # document, and a 60-line invoice has no business issuing 60 statements.
+    #
+    # Deliberately NOT a cache loaded at startup: that would save the same
+    # fraction of a millisecond and buy a real bug, where re-importing a
+    # corrected sheet appears to do nothing until somebody restarts the app.
+    wanted = {normalize_item_name(i.get("item_name")) for i in items
+              if not str(i.get("cartons") or "").strip()}
+    wanted = {key for key in wanted if key and not is_non_stock_item(key)}
+
+    known = {}
+    if wanted:
+        keys = list(wanted)
+        # Chunked: SQLite refuses a statement with more than 999 parameters by
+        # default, and a big transfer memo could otherwise exceed it.
+        for start in range(0, len(keys), 500):
+            chunk = keys[start:start + 500]
+            placeholders = ",".join("?" * len(chunk))
+            for row in conn.execute(
+                    f"SELECT normalized, cartons FROM item_carton_mappings "
+                    f"WHERE normalized IN ({placeholders})", chunk):
+                known[row["normalized"]] = row["cartons"]
+
     filled = []
-    for item in items or []:
+    for item in items:
         item = dict(item)
         if not str(item.get("cartons") or "").strip():
-            found = cartons_for_line(conn, item.get("item_name"), item.get("quantity"))
-            item["cartons"] = "" if found is None else str(found)
+            per_unit = known.get(normalize_item_name(item.get("item_name")))
+            item["cartons"] = "" if per_unit is None else _line_cartons(
+                per_unit, item.get("quantity"))
         filled.append(item)
     return filled
+
+
+def _line_cartons(per_unit, quantity):
+    """Per-unit count times how many were bought, as a string. "" if unknowable."""
+    if not CARTONS_SCALE_WITH_QUANTITY:
+        return str(per_unit)
+    try:
+        units = int(str(quantity or "").strip())
+    except ValueError:
+        return ""
+    return str(per_unit * units) if units > 0 else ""
 
 
 def upsert_carton_mappings(conn, pairs):
@@ -808,6 +849,17 @@ def upsert_carton_mappings(conn, pairs):
             else:
                 unchanged += 1
     return added, updated, unchanged
+
+
+def carton_list_is_empty(conn):
+    """True when no master list has been imported at all.
+
+    Worth distinguishing from "this item is not on the list": every carton box
+    coming out blank looks identical either way, and the first time this
+    happened the cause was simply that manage_cartons.py had never been run on
+    the server. Silence made that look like a bug in the matching.
+    """
+    return carton_mapping_count(conn) == 0
 
 
 def carton_mapping_count(conn):

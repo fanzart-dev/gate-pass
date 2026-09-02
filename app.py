@@ -11,6 +11,7 @@ from flask import (
     Flask, Response, abort, flash, g, jsonify, redirect, render_template, request,
     session, send_from_directory, url_for,
 )
+from markupsafe import Markup, escape
 from werkzeug.utils import secure_filename
 
 import db
@@ -128,6 +129,18 @@ def create_app(db_path=None, storage_dir=None):
         except OSError:
             stamp = 0
         return url_for("static", filename=filename, v=stamp)
+
+    @app.template_filter("line_breaks")
+    def line_breaks(text):
+        """Render typed newlines as line breaks on the printed pass.
+
+        Escaped first and only then joined with <br>, so a remark containing
+        angle brackets prints as text instead of being interpreted as markup.
+        Building the string the other way round would be an injection into a
+        document the company signs.
+        """
+        lines = str(text or "").splitlines()
+        return Markup("<br>".join(escape(line) for line in lines))
 
     @app.template_filter("as_day_month_year")
     def as_day_month_year(value):
@@ -408,14 +421,19 @@ def register_routes(app):
             return redirect(url_for("upload"))
 
         draft_ids, unreadable, rejected = [], [], []
+        accepted = []
         for file in files:
             if not file.filename.lower().endswith(".pdf"):
                 rejected.append(file.filename)
-                continue
-            # Each file is parsed and stored on its own. A PDF that cannot be
-            # read still becomes a draft — it just cannot be issued until
-            # someone fills it in, and a draft never holds a serial number.
-            draft_id, notes = _draft_from_upload(app, file)
+            else:
+                accepted.append(file)
+
+        # The whole batch is parsed together so the files can be read several
+        # at a time — fifty invoices takes about 3.5 seconds this way against
+        # 13 one after another. A PDF that cannot be read still becomes a
+        # draft: it just cannot be issued until someone fills it in, and a
+        # draft never holds a serial number.
+        for file, (draft_id, notes) in zip(accepted, _drafts_from_uploads(app, accepted)):
             draft_ids.append(draft_id)
             if notes:
                 unreadable.append(f"{file.filename}: {notes}")
@@ -998,6 +1016,32 @@ def _draft_from_upload(app, file):
     except Exception as exc:  # noqa: BLE001 - one bad file must not stop the batch
         parsed = {"supplier_name": "", "customer_name": "", "invoice_no": "",
                   "invoice_date": "", "items": [], "notes": [f"could not be read: {exc}"]}
+    return _draft_from_parsed(app, dest, parsed)
+
+
+def _drafts_from_uploads(app, files):
+    """Save and parse a batch, then create the drafts in the order given.
+
+    Only the PARSING is done in parallel, and only in worker processes. The
+    database work stays here, one draft at a time, on this thread: the sqlite
+    connection on `g` belongs to this request and this thread, and drafts must
+    appear in the order the files were chosen so that issuing them allocates
+    serial numbers in that order too.
+    """
+    saved = []
+    for file in files:
+        dest = app.config["INVOICES_DIR"] / _timestamped_filename(file.filename)
+        file.save(dest)
+        saved.append(dest)
+
+    results = []
+    for dest, parsed in zip(saved, invoice_parser.parse_many(saved)):
+        results.append(_draft_from_parsed(app, dest, parsed))
+    return results
+
+
+def _draft_from_parsed(app, dest, parsed):
+    """Store one already-parsed invoice as a draft. Returns (draft_id, notes)."""
     notes = "; ".join(parsed["notes"])
 
     # Carton counts come from the master list rather than being counted by
@@ -1007,6 +1051,11 @@ def _draft_from_upload(app, file):
     # Items with no match — and every spare, freight or service line — are left
     # blank on purpose. See db.fill_cartons.
     parsed["items"] = db.fill_cartons(g.db, parsed["items"])
+    # Every carton box blank looks the same whether the item is unlisted or the
+    # master list was never imported. Say which, where it will be noticed.
+    if parsed["items"] and db.carton_list_is_empty(g.db):
+        notes = "; ".join(filter(None, [
+            notes, "carton master list is not loaded — run manage_cartons.py import"]))
 
     relpath = str(dest.relative_to(app.config["STORAGE_DIR"]))
     try:

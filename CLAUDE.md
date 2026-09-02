@@ -413,6 +413,32 @@ exists to catch.
 parser reports one plain note saying so and the operator types the pass in.
 There is no OCR — invoices normally arrive as the supplier's original PDF.
 
+### Parsing a batch
+
+`invoice_parser.parse_many` parses several invoices at once, in worker
+**processes** (`spawn`), and only when there are at least four. Three things are
+deliberate and were all measured:
+
+* **Processes, not threads.** pdfplumber is Python nearly all the way down, so
+  the GIL serialises it: eight copies of a two-page invoice took 2.21s
+  sequentially, **3.16s on four threads** and 0.64s on eight processes. A thread
+  pool here is slower than doing nothing.
+* **Spawn, not fork.** gunicorn runs `gthread` workers, so the process has
+  threads, and forking a threaded process can inherit a lock held by a thread
+  that does not exist in the child.
+* **If the pool fails, parse sequentially.** A pool that cannot start its
+  workers fails every file, and those failures look exactly like unreadable
+  PDFs — fifty good invoices would become fifty drafts marked "could not be
+  read". `parse_many` distrusts the pool rather than the documents.
+
+The database work stays on the request thread, one draft at a time: the sqlite
+connection belongs to that thread, and drafts must be created in the order the
+files were chosen so serial numbers are allocated in that order.
+
+The browser uploads **four at a time** (`CONCURRENT_UPLOADS` in `upload.html`)
+rather than one after another, because each file is its own request and the
+server runs three workers. Results are stored by index so the order survives.
+
 Sample invoices under `tests/sample_invoices/`, each covering a different trap.
 **They are not in git** — they are real supplier invoices carrying a GSTIN, IRN
 hashes and named customers, and the repository is public. The 13 tests that read
@@ -431,9 +457,15 @@ Add the supplier's invoice here whenever the parser changes.
 
 ## The review screen's item table
 
-Down and Up move between rows **in the same column**. Tab goes sideways along a
-row, which is the wrong direction for the job — cartons and quantities are typed
-down a delivery, not across one. Enter does the same as Down.
+Two ways of working, one key each. **Enter goes across the row** — item,
+quantity, cartons, then the first cell of the next row — which is the order a
+line is read off an invoice. **Down and Up move between rows in the same
+column**, for filling one column down a whole delivery once the names are in.
+
+Enter used to do the same as Down; typing a single row then needed Tab or the
+mouse between every cell. Enter is swallowed in every cell including the last:
+letting it through submits the form, and on that screen submitting issues a gate
+pass and spends a serial number.
 
 **Enter must never submit the form**, including on the last row where there is
 nowhere to move to: this screen's submit button issues a gate pass, and a stray

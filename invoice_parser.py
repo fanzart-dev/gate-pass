@@ -458,3 +458,89 @@ def _is_quantity(value):
     """
     text = value.strip()
     return bool(QUANTITY_RE.fullmatch(text)) and int(text) > 0
+
+
+# --- parsing a batch ------------------------------------------------------
+#
+# Parsing is where essentially all the time goes: about 285 ms for a two-page
+# invoice, against 0.7 ms for everything else the upload does. Fifty invoices
+# is therefore fifty times 285 ms, and the only way to make that shorter is to
+# do several at once.
+#
+# PROCESSES, not threads. pdfplumber is Python almost all the way down, so the
+# GIL serialises it and a thread pool only adds contention — measured on this
+# machine with eight copies of a two-page invoice:
+#
+#     sequential                2.21 s
+#     ThreadPoolExecutor(4)     3.16 s     <- slower than doing nothing
+#     ThreadPoolExecutor(8)     3.53 s     <- slower still
+#     ProcessPoolExecutor(8)    0.64 s     <- 3.4x faster
+#
+# SPAWN, not fork. gunicorn runs gthread workers, so this process has threads,
+# and forking a threaded process can inherit a lock held by a thread that does
+# not exist in the child — a deadlock that shows up rarely and under load,
+# which is the worst kind. Spawn costs about 100 ms of start-up per worker and
+# cannot do that.
+#
+# The pool is skipped for small batches, where that start-up is most of the
+# work, and any failure to build one falls back to parsing in order. A slow
+# upload is a nuisance; a failed upload is a gate pass nobody can issue.
+PARALLEL_THRESHOLD = 4
+MAX_PARSE_WORKERS = 8
+
+
+def parse_many(paths, workers=None):
+    """Parse several invoices, in parallel when it is worth it.
+
+    Returns results in the same order as `paths`. A file that cannot be read
+    yields the same error-shaped dict `parse_invoice` failures produce, so one
+    unreadable PDF never costs the rest of the batch.
+    """
+    paths = list(paths)
+    if not paths:
+        return []
+
+    def failed(exc):
+        return {"supplier_name": "", "customer_name": "", "invoice_no": "",
+                "invoice_date": "", "items": [], "notes": [f"could not be read: {exc}"]}
+
+    def sequentially():
+        out = []
+        for path in paths:
+            try:
+                out.append(parse_invoice(path))
+            except Exception as exc:  # noqa: BLE001 - one bad file, not a bad batch
+                out.append(failed(exc))
+        return out
+
+    if len(paths) < PARALLEL_THRESHOLD:
+        return sequentially()
+
+    import concurrent.futures as futures
+    import multiprocessing
+    import os
+
+    count = min(len(paths), MAX_PARSE_WORKERS, (os.cpu_count() or 2))
+    try:
+        context = multiprocessing.get_context("spawn")
+        with futures.ProcessPoolExecutor(count, mp_context=context) as pool:
+            submitted = [pool.submit(parse_invoice, str(p)) for p in paths]
+            results, broken = [], 0
+            for future in submitted:
+                try:
+                    results.append(future.result())
+                except Exception as exc:  # noqa: BLE001
+                    broken += 1
+                    results.append(failed(exc))
+    except Exception:  # noqa: BLE001 - no pool available at all
+        return sequentially()
+
+    # A pool that cannot start its workers fails EVERY file, and the failures
+    # come back looking exactly like unreadable PDFs. Left alone, one broken
+    # pool turns a batch of fifty good invoices into fifty drafts marked
+    # "could not be read" — the parallelism silently destroying the work it was
+    # meant to speed up. If nothing at all parsed, distrust the pool rather
+    # than fifty documents that were fine yesterday, and redo it in order.
+    if broken == len(paths):
+        return sequentially()
+    return results
