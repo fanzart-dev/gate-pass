@@ -51,6 +51,11 @@ CREATE TABLE IF NOT EXISTS drafts (
     invoice_no TEXT NOT NULL DEFAULT '',
     invoice_date TEXT NOT NULL DEFAULT '',
     vehicle_no TEXT NOT NULL DEFAULT '',
+    -- Typed on the review screen and printed in the Remarks box. Unlike cartons
+    -- (rule 5) a remark CAN be known at the keyboard: it is a note about the
+    -- consignment, not a count of how it was packed. The printed box is still
+    -- empty when nobody typed anything, so it can be written on by hand.
+    remarks TEXT NOT NULL DEFAULT '',
     invoice_pdf_path TEXT,
     parse_notes TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
@@ -83,6 +88,11 @@ CREATE TABLE IF NOT EXISTS gate_passes (
     invoice_no TEXT NOT NULL DEFAULT '',
     invoice_date TEXT NOT NULL DEFAULT '',
     vehicle_no TEXT NOT NULL DEFAULT '',
+    -- Typed on the review screen and printed in the Remarks box. Unlike cartons
+    -- (rule 5) a remark CAN be known at the keyboard: it is a note about the
+    -- consignment, not a count of how it was packed. The printed box is still
+    -- empty when nobody typed anything, so it can be written on by hand.
+    remarks TEXT NOT NULL DEFAULT '',
     invoice_pdf_path TEXT,
     -- Who generated it. The display name is snapshotted onto the row so the
     -- printed pass still names them if the account is later renamed or removed.

@@ -48,8 +48,11 @@
                "Who the goods are going to", True) }}
       {{ field("invoice_no", "Document No", draft.invoice_no, "", True) }}
       {{ field("invoice_date", "Date", draft.invoice_date, "DD-MM-YYYY", True) }}
-      {# Never parsed, so always a box. #}
+      {# Neither of these is ever parsed from the invoice, so both are always
+         boxes — _fill_blanks_only leaves them alone for the same reason. #}
       {{ field("vehicle_no", "Vehicle No", draft.vehicle_no, "KA 01 AB 1234",
+               False, "(optional)") }}
+      {{ field("remarks", "Remarks", draft.remarks, "Anything to note about this consignment",
                False, "(optional)") }}
     </div>
 
@@ -160,6 +163,32 @@
       tbody.appendChild(row);
       renumber();
       row.querySelector('input[name="item_name"]').focus();
+    });
+
+    // Down/Up move between rows in the SAME column, which is how a column of
+    // cartons or quantities actually gets typed — Tab goes sideways along the
+    // row, which is the wrong direction for the job. Enter does the same as
+    // Down so the whole column can be entered without leaving the keyboard,
+    // and is stopped from submitting the form on the way past.
+    tbody.addEventListener("keydown", (e) => {
+      const cell = e.target;
+      if (cell.tagName !== "INPUT") return;
+      const step = e.key === "ArrowDown" || e.key === "Enter" ? 1
+                 : e.key === "ArrowUp" ? -1 : 0;
+      if (!step) return;
+
+      const row = cell.closest("tr");
+      const column = [...row.children].indexOf(cell.closest("td"));
+      const rows = [...tbody.querySelectorAll("tr")];
+      const target = rows[rows.indexOf(row) + step];
+
+      // Enter must not submit the form even on the last row, or a stray
+      // keystroke issues a gate pass.
+      e.preventDefault();
+      if (!target) return;
+      const next = target.children[column] &&
+                   target.children[column].querySelector("input");
+      if (next) { next.focus(); next.select(); }
     });
 
     tbody.addEventListener("click", (e) => {

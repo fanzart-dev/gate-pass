@@ -429,6 +429,9 @@ def register_routes(app):
                                     active="drafts")
 
         action = request.form.get("action", "save")
+        # Never parsed from the invoice, so always the operator's to type —
+        # same as the vehicle number. _fill_blanks_only leaves it alone.
+        remarks = request.form.get("remarks", "").strip()
         if may_edit:
             supplier_name = request.form.get("supplier_name", "").strip()
             customer_name = request.form.get("customer_name", "").strip()
@@ -448,7 +451,7 @@ def register_routes(app):
             vehicle_no = fields["vehicle_no"]
 
         db.update_draft(g.db, draft_id, supplier_name, customer_name, invoice_no,
-                         invoice_date, vehicle_no, items)
+                         invoice_date, vehicle_no, items, remarks=remarks)
 
         if action == "issue":
             try:
@@ -457,6 +460,7 @@ def register_routes(app):
                     invoice_date, vehicle_no, items,
                     prepared_by=g.user["display_name"],
                     prepared_by_user_id=g.user["id"],
+                    remarks=remarks,
                 )
             except ValueError as exc:
                 flash(str(exc), "error")

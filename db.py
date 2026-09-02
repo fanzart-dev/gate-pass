@@ -18,7 +18,16 @@ SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 # pass book and are never rebuilt, so missing columns are added in place before
 # the schema (and its triggers, which reference them) is applied.
 ADDED_COLUMNS = {
+    "drafts": [
+        ("remarks", "TEXT NOT NULL DEFAULT ''"),
+    ],
     "gate_passes": [
+        # Typed on the review screen and printed in the Remarks box. Unlike
+        # cartons (rule 5) this one CAN be known at the keyboard — it is a note
+        # about the consignment, not a count of how it was packed — so it is
+        # captured with the pass rather than left blank for the gate. The box
+        # still prints empty when nobody typed anything, to be written on.
+        ("remarks", "TEXT NOT NULL DEFAULT ''"),
         ("prepared_by", "TEXT NOT NULL DEFAULT ''"),
         ("prepared_by_user_id", "INTEGER REFERENCES users(id)"),
         ("cancelled_by", "TEXT"),
@@ -196,7 +205,7 @@ DEFAULT_SETTINGS = {
 # Bump when schema.sql or ADDED_COLUMNS changes. Stored in the file as
 # PRAGMA user_version, so a connection can tell in one cheap read whether the
 # schema script needs running at all.
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # How long a writer waits for another writer before giving up. Four people
 # clicking Issue at the same moment are serialised in milliseconds, so this is
@@ -733,14 +742,15 @@ def count_users(conn):
 # ---------------------------------------------------------------------------
 
 def create_draft(conn, supplier_name="", customer_name="", invoice_no="",
-                  invoice_date="", invoice_pdf_path=None, parse_notes="", items=None):
+                  invoice_date="", invoice_pdf_path=None, parse_notes="", items=None,
+                  remarks=""):
     with writing(conn):
         cur = conn.execute(
             """INSERT INTO drafts (supplier_name, customer_name, invoice_no, invoice_date,
-                                    invoice_pdf_path, parse_notes, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                    invoice_pdf_path, parse_notes, remarks, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (supplier_name, customer_name, invoice_no, invoice_date, invoice_pdf_path,
-             parse_notes, _now()),
+             parse_notes, remarks, _now()),
         )
         draft_id = cur.lastrowid
         _replace_draft_items(conn, draft_id, items or [])
@@ -776,13 +786,14 @@ def list_drafts(conn):
 
 
 def update_draft(conn, draft_id, supplier_name, customer_name, invoice_no,
-                  invoice_date, vehicle_no, items):
+                  invoice_date, vehicle_no, items, remarks=""):
     with writing(conn):
         conn.execute(
             """UPDATE drafts SET supplier_name = ?, customer_name = ?, invoice_no = ?,
-                                  invoice_date = ?, vehicle_no = ?
+                                  invoice_date = ?, vehicle_no = ?, remarks = ?
                WHERE id = ?""",
-            (supplier_name, customer_name, invoice_no, invoice_date, vehicle_no, draft_id),
+            (supplier_name, customer_name, invoice_no, invoice_date, vehicle_no,
+             remarks, draft_id),
         )
         _replace_draft_items(conn, draft_id, items)
 
@@ -799,7 +810,7 @@ def delete_draft(conn, draft_id):
 
 def create_gate_pass(conn, draft_id, supplier_name, customer_name, invoice_no,
                       invoice_date, vehicle_no, items, invoice_pdf_path=None,
-                      prepared_by="", prepared_by_user_id=None):
+                      prepared_by="", prepared_by_user_id=None, remarks=""):
     items = [i for i in items if str(i.get("item_name", "")).strip()]
     if not items:
         raise ValueError("at least one item with a name is required to issue a gate pass")
@@ -826,6 +837,7 @@ def create_gate_pass(conn, draft_id, supplier_name, customer_name, invoice_no,
             conn, scope, next_seq(conn, scope), supplier_name, customer_name,
             invoice_no, invoice_date, vehicle_no, items, invoice_pdf_path,
             prepared_by, prepared_by_user_id, source=f"draft {draft_id}",
+            remarks=remarks,
         )
 
         if draft_id is not None:
@@ -908,6 +920,8 @@ def create_gate_passes_batch(conn, draft_ids, prepared_by="", prepared_by_user_i
                 # path to a file that is gone is worse than no path at all.
                 items, None, prepared_by, prepared_by_user_id,
                 source=f"batch, draft {draft['id']}",
+                # Whatever was typed on the review screen travels with the draft.
+                remarks=draft.get("remarks", "") or "",
             )
             issued_ids.append(gate_pass_id)
             conn.execute("DELETE FROM draft_items WHERE draft_id = ?", (draft["id"],))
@@ -919,7 +933,7 @@ def create_gate_passes_batch(conn, draft_ids, prepared_by="", prepared_by_user_i
 
 def _insert_gate_pass(conn, scope, seq, supplier_name, customer_name, invoice_no,
                        invoice_date, vehicle_no, items, invoice_pdf_path,
-                       prepared_by, prepared_by_user_id, source):
+                       prepared_by, prepared_by_user_id, source, remarks=""):
     """One pass at an already-allocated number. Caller holds the write lock."""
     serial_no = serial_for(scope, seq)
     # issued_at is set here rather than left to the column default. Changing a
@@ -930,11 +944,11 @@ def _insert_gate_pass(conn, scope, seq, supplier_name, customer_name, invoice_no
         """INSERT INTO gate_passes (serial_no, serial_scope, serial_seq, supplier_name,
                                      customer_name, invoice_no, invoice_date, vehicle_no,
                                      invoice_pdf_path, prepared_by, prepared_by_user_id,
-                                     issued_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                     remarks, issued_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (serial_no, scope, seq, supplier_name, customer_name, invoice_no,
          invoice_date, vehicle_no, invoice_pdf_path, prepared_by, prepared_by_user_id,
-         _now()),
+         remarks, _now()),
     )
     gate_pass_id = cur.lastrowid
     for i, item in enumerate(items, start=1):
