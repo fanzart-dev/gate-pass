@@ -418,7 +418,23 @@ def register_routes(app):
     def review(draft_id):
         draft = db.get_draft(g.db, draft_id)
         if draft is None:
-            abort(404)
+            # Issuing DELETES the draft, so this link dies the moment the pass
+            # exists — and that is precisely where the browser's Back button
+            # lands after issuing one. A bare 404 tells the operator nothing
+            # and loses the pass they just made.
+            issued = db.gate_pass_from_draft(g.db, draft_id)
+            if issued is not None:
+                gate_pass = db.get_gate_pass(g.db, issued)
+                if gate_pass is not None:
+                    # No flash: print.html is a standalone page and renders
+                    # none, so the message would sit in the session and
+                    # surface later on an unrelated screen. The print page
+                    # names the serial in its toolbar anyway, which is the
+                    # thing the operator wanted to know.
+                    return redirect(url_for("print_gate_pass", gate_pass_id=issued))
+            flash("That draft is gone — it was either issued or discarded. "
+                  "Nothing was lost from the register.", "warn")
+            return redirect(url_for("upload"))
 
         may_edit = db.user_can(g.user, "can_edit_parsed_details")
 
