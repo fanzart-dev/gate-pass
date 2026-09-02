@@ -82,11 +82,30 @@ else
 fi
 
 say "Firefox"
-# Firefox keeps a separate store again, one per profile, and has no supported
-# command-line way in. Its own UI is the reliable route.
-note "Settings -> Privacy & Security -> Certificates -> View Certificates"
-note "  -> Authorities -> Import -> pick the file -> tick \"identify websites\""
-note "file to import: $CA"
+# Firefox keeps a separate store AGAIN, one per profile. It is an NSS database
+# like the browser one above, so certutil can write to it directly — no need to
+# walk anybody through a settings dialog. Every profile, because people have
+# more than one and only find out which when the warning does not go away.
+FF_DONE=0
+if command -v certutil >/dev/null; then
+    for profile in "$HOME"/.mozilla/firefox/*/ "$HOME"/snap/firefox/common/.mozilla/firefox/*/ \
+                   "$HOME"/.var/app/org.mozilla.firefox/.mozilla/firefox/*/; do
+        [ -f "$profile/cert9.db" ] || continue
+        certutil -d "sql:$profile" -D -n "$CA_NAME" >/dev/null 2>&1 || true
+        if certutil -d "sql:$profile" -A -t "C,," -n "$CA_NAME" -i "$CA" 2>/dev/null; then
+            note "installed into $(basename "$profile")"
+            FF_DONE=1
+        fi
+    done
+fi
+if [ "$FF_DONE" = "0" ]; then
+    note "no Firefox profile found (or certutil missing). By hand:"
+    note "  Settings -> Privacy & Security -> Certificates -> View Certificates"
+    note "  -> Authorities -> Import -> pick the file -> tick \"identify websites\""
+    note "  file to import: $CA"
+else
+    note "Firefox must be fully closed and reopened to notice"
+fi
 
 say "Checking"
 if curl -fsS --max-time 10 -o /dev/null "https://$SERVER/login" 2>/dev/null; then

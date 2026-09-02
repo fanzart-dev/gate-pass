@@ -3554,6 +3554,21 @@ def test_hosting_hardening(tmpdir):
     check("it does not mistake its own listeners for a conflict",
           'grep -v \'users:(("nginx"\'' in enable_https)
 
+    # The redirect must NOT catch the CA. It is the file that makes https
+    # trustworthy, so requiring a trusted https connection to fetch it means a
+    # machine that has not got it yet is told to come back over a connection it
+    # cannot verify. An exact-match location outranks `location /`, which is
+    # where the redirect now lives — it used to sit at server level, where it
+    # applied to everything.
+    port80 = ssl_conf[ssl_conf.index("listen 80 default_server"):
+                       ssl_conf.index("__HTTPS_LISTEN__")]
+    check("the CA has its own exact-match location on port 80",
+          "location = /fanzart-ca.pem" in port80)
+    check("and the redirect is inside location /, not at server level",
+          port80.index("location = /fanzart-ca.pem") < port80.index("return 301"))
+    check("so the redirect cannot reach it",
+          re.search(r"location / \{[^}]*if \(\$needs_https\)", port80, re.S) is not None)
+
     # The CA must be reachable when HTTPS is OFF, which is precisely when a
     # machine needs it. Serving it only from the TLS site is a chicken and egg.
     http_conf = (ROOT / "deploy" / "nginx-gate-pass.conf").read_text()
@@ -3573,8 +3588,16 @@ def test_hosting_hardening(tmpdir):
           "update-ca-certificates" in trust)
     check("and the browser's own NSS store",
           "certutil" in trust and ".pki/nssdb" in trust)
-    check("and says how to do Firefox, which has neither",
-          "Firefox" in trust)
+    # Firefox keeps yet another NSS store, one per profile. certutil can write
+    # to it directly, so there is no need to walk anybody through a dialog —
+    # and profiles live in three different places depending on how Firefox was
+    # installed (deb, snap, flatpak).
+    check("it installs into Firefox profiles too",
+          ".mozilla/firefox" in trust and "cert9.db" in trust)
+    check("including snap and flatpak Firefox",
+          "snap/firefox" in trust and ".var/app/org.mozilla.firefox" in trust)
+    check("and falls back to instructions when there is no profile",
+          "View Certificates" in trust)
     check("and verifies afterwards rather than assuming",
           "verifies — the padlock will be clean" in trust)
 
