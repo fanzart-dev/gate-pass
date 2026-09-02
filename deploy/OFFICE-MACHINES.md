@@ -1,6 +1,29 @@
 # Setting up an office machine
 
-The gate pass server is at **`https://fanzart-server.local`**.
+There are two ways to reach the gate pass server, and they are not equally
+good. Read the first one before doing any of the work in the second.
+
+## The easy way: Tailscale (no certificate to install)
+
+    https://faniq.tailaf7188.ts.net:9443
+
+Install Tailscale on the machine, sign in, and open that address. **Nothing
+else.** The padlock is clean immediately, on any device.
+
+This works because Tailscale issues a genuine Let's Encrypt certificate for
+that name — the same kind of certificate a bank uses. Every browser, phone and
+antivirus product on earth already trusts it, so there is no file to install,
+no Kaspersky exclusion to add, and no warning to click past. It also renews
+itself, and it works from home and from a phone, not only in the office.
+
+Set up on the server with `sudo deploy/enable-tailscale-https.sh`. It is
+`tailscale serve`, not `tailscale funnel`: reachable inside the tailnet only,
+never published to the public internet.
+
+**If a machine can be put on Tailscale, stop here.** Everything below is the
+harder path, needed only for machines that cannot be.
+
+## The other way: `https://fanzart-server.local` on the LAN
 
 Each machine needs the server's certificate installed **once**. Until it is,
 the browser says "Not secure" and staff have to click through a security
@@ -59,8 +82,12 @@ business products; look for "encrypted connection" together with "trusted" or
 but it stops Kaspersky inspecting *every* HTTPS site on that machine, so prefer
 the exclusion.
 
-**If neither is possible** — a locked corporate policy, say — use plain HTTP on
-that machine:
+**If neither is possible** — a locked corporate policy, say — put the machine
+on Tailscale and use the address at the top of this file instead. Kaspersky has
+no objection to a Let's Encrypt certificate, so the problem disappears rather
+than being worked around.
+
+Failing that, plain HTTP on the LAN:
 
     http://fanzart-server.local
 
@@ -100,8 +127,14 @@ and is why this is done by hand rather than pushed out silently.
 
 ## Checking it worked
 
-Open `https://fanzart-server.local`. The padlock should be plain, with no
-warning and no "Not secure".
+Open `https://fanzart-server.local` (or the Tailscale address). The padlock
+should be plain, with no warning and no "Not secure".
+
+**Do not use `http://100.123.239.33`.** It now redirects to the Tailscale
+address, but if you meet an older setup that still serves it directly, the
+login page will load and refuse to sign you in, with no error: the session
+cookie is marked Secure and a browser will not keep a Secure cookie that
+arrived over plain HTTP.
 
 Browsers cache certificate decisions hard: **close every window** and reopen,
 not just the tab.
