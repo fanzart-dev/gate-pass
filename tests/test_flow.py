@@ -3598,6 +3598,20 @@ def test_hosting_hardening(tmpdir):
           "snap/firefox" in trust and ".var/app/org.mozilla.firefox" in trust)
     check("and falls back to instructions when there is no profile",
           "View Certificates" in trust)
+
+    # Windows and the antivirus problem. Kaspersky intercepts HTTPS and checks
+    # against its OWN authority list, so installing the CA in the Windows root
+    # store does not make it accept the server — the browser trusts Kaspersky,
+    # and Kaspersky refuses. Anyone following the instructions has to be told
+    # that, or they will keep reinstalling a certificate that was never the
+    # problem.
+    for name in ("trust-ca-windows.ps1", "OFFICE-MACHINES.md"):
+        doc = (ROOT / "deploy" / name).read_text()
+        check(f"{name} covers the Windows root store", "Trusted Root" in doc)
+        check(f"{name} explains why antivirus HTTPS scanning defeats it",
+              "Kaspersky" in doc)
+        check(f"{name} offers plain HTTP rather than clicking through warnings",
+              "http://" in doc)
     check("and verifies afterwards rather than assuming",
           "verifies — the padlock will be clean" in trust)
 
