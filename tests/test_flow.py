@@ -3478,6 +3478,32 @@ def test_hosting_hardening(tmpdir):
         check(f"deploy/{script.name} is executable",
               os.access(script, os.X_OK))
 
+    # `listen 443 ssl` means 0.0.0.0:443, which FAILS to bind if anything holds
+    # 443 on any address — tailscaled does, for Funnel. nginx then rejects the
+    # whole config and silently keeps the previous one, so the site stays on
+    # plain HTTP and nothing looks wrong. The addresses are filled in at
+    # install time instead.
+    ssl_conf = (ROOT / "deploy" / "nginx-gate-pass-ssl.conf").read_text()
+    check("the TLS site does not try to bind every address on 443",
+          not re.search(r"^\s*listen\s+(\[::\]:)?443\b", ssl_conf, re.M))
+    check("its listen addresses are substituted at install time",
+          "__HTTPS_LISTEN__" in ssl_conf)
+    check("and Tailscale traffic is not redirected to a port nginx cannot answer",
+          "$needs_https" in ssl_conf and "100\\." in ssl_conf)
+
+    enable = (ROOT / "deploy" / "enable-https.sh").read_text()
+    # Under `set -e` a failing curl aborts inside the assignment, so `die`
+    # never runs and the script ends in silence looking like success.
+    check("the HTTPS script does not use set -e, which hides its own failures",
+          "set -uo pipefail" in enable and "set -euo" not in enable)
+    # Grepping for the bare string matched the explanatory comment in the unit
+    # file and reported "already done" where it had never been set.
+    check("it matches an uncommented GATE_PASS_HTTPS, not the comment about it",
+          '^[[:space:]]*Environment="GATE_PASS_HTTPS=1"' in enable)
+    # `systemctl reload` returning 0 does not mean the config is live.
+    check("it confirms nginx really bound the socket",
+          "did not bind" in enable)
+
     check("the debugger is off unless explicitly asked for",
           "debug=True" not in source and "GATE_PASS_DEBUG" in source)
 
