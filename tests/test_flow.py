@@ -3504,6 +3504,35 @@ def test_hosting_hardening(tmpdir):
     check("it confirms nginx really bound the socket",
           "did not bind" in enable)
 
+    # The TLS template is filled in by plain string replacement, so a
+    # placeholder NAMED in a comment gets substituted there too — which dropped
+    # a bare `listen` into the middle of a comment block and made nginx reject
+    # the whole file with "listen directive is not allowed here".
+    check("the listen placeholder appears exactly once",
+          ssl_conf.count("__HTTPS_LISTEN__") == 1)
+
+    # Render it the way enable-https.sh does and check the result is a valid
+    # shape: braces balanced, and no directive outside a block.
+    rendered = (ssl_conf.replace("__APP_DIR__", "/opt/gate-pass")
+                        .replace("__CERT_DIR__", "/opt/gate-pass/deploy/certs")
+                        .replace("__HTTPS_LISTEN__",
+                                 "    listen 127.0.0.1:443 ssl;\n"
+                                 "    listen 192.168.1.45:443 ssl;"))
+    depth, stray = 0, []
+    for number, raw in enumerate(rendered.split("\n"), 1):
+        line = raw.split("#")[0].strip()
+        if not line:
+            continue
+        if re.match(r"^(listen|proxy_pass|ssl_certificate)\b", line) and depth == 0:
+            stray.append(f"line {number}: {line}")
+        depth += line.count("{") - line.count("}")
+    check("the rendered config has no directive outside a block", not stray)
+    check("and its braces balance", depth == 0)
+    check("it defines both a plain and a TLS server",
+          len(re.findall(r"^server \{", rendered, re.M)) == 2)
+    check("with a TLS listener per address given",
+          len(re.findall(r"listen [0-9.]+:443 ssl;", rendered)) == 2)
+
     install = (ROOT / "deploy" / "install.sh").read_text()
     # install.sh rewrites the nginx site every run. It used to write the
     # plain-HTTP one unconditionally, so every update silently dropped the
