@@ -114,7 +114,7 @@
             <td class="reg-by">{{ gp.prepared_by or '—' }}</td>
             <td class="reg-from">{{ gp.supplier_name }}</td>
             <td class="reg-customer">{{ gp.customer_name }}</td>
-            <td class="reg-invoice">{{ gp.invoice_no }}</td>
+            <td class="reg-invoice invoice-cell">{{ gp.invoice_no }}</td>
             <td class="reg-status"><span class="pill {{ gp.status }}">{{ gp.status }}</span></td>
             <td class="actions-cell reg-actions">
               {# The flex row lives on this inner div, not on the td: a td with

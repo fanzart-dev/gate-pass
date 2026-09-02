@@ -4,8 +4,18 @@
     {
       "name": "gate-pass",
       "runtimeExecutable": "/home/fanzart/gate-pass/.venv/bin/python3",
-      "runtimeArgs": ["/home/fanzart/gate-pass/app.py"],
+      "runtimeArgs": [
+        "/home/fanzart/gate-pass/app.py"
+      ],
       "port": 8090
+    },
+    {
+      "name": "gate-pass-preview",
+      "runtimeExecutable": "/home/fanzart/gate-pass/.venv/bin/python3",
+      "runtimeArgs": [
+        "/home/fanzart/gate-pass/tests/preview_server.py"
+      ],
+      "port": 8091
     }
   ]
 }

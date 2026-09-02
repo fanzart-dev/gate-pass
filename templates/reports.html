@@ -94,11 +94,15 @@
     </div>
 
     <div class="report-actions">
+      {# Three levels, deliberately. Apply Filters is what this screen is for;
+         Export is a real action but the second one you reach for; Reset only
+         undoes and should not compete with either. Two solid buttons side by
+         side made the pair look like a choice between equals. #}
       <button type="submit" class="primary">Apply Filters</button>
-      <button type="submit" class="primary" formaction="{{ url_for('export_report') }}">
+      <button type="submit" formaction="{{ url_for('export_report') }}">
         Export Report
       </button>
-      <a class="button" href="{{ url_for('reports') }}">Reset</a>
+      <a class="button quiet" href="{{ url_for('reports') }}">Reset</a>
     </div>
   </form>
 

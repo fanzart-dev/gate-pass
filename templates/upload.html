@@ -10,9 +10,18 @@
 
   <form method="post" enctype="multipart/form-data" id="upload-form">
     <label class="dropzone" id="dropzone" for="invoice">
-      <div class="dropzone-icon">📄</div>
-      <div class="dropzone-title">Drop invoice PDFs here</div>
-      <div class="dropzone-sub">or click to choose &mdash; one file or a whole batch</div>
+      {# An inline SVG rather than an emoji: the emoji rendered at a different
+         size and weight on every machine in the office, and could not take the
+         accent colour on hover. #}
+      <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+           stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+           stroke-linejoin="round">
+        <path d="M16.5 17.5h1.75a3.75 3.75 0 0 0 .43-7.475 6 6 0 0 0-11.6-1.94A4.5 4.5 0 0 0 6.5 17.5h1"/>
+        <path d="M12 12v8"/>
+        <path d="m8.75 15.25 3.25-3.25 3.25 3.25"/>
+      </svg>
+      <div class="dropzone-title">Drag &amp; drop invoice PDFs or click to browse</div>
+      <div class="dropzone-sub">One file or a whole batch &mdash; PDFs only</div>
       <input type="file" id="invoice" name="invoice" accept="application/pdf" multiple required>
     </label>
 

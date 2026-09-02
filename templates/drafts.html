@@ -35,7 +35,7 @@
               <td class="muted-cell">{{ d.created_at }}</td>
               <td>{{ d.supplier_name or '—' }}</td>
               <td>{{ d.customer_name or '—' }}</td>
-              <td>{{ d.invoice_no or '—' }}</td>
+              <td class="invoice-cell">{{ d.invoice_no or '—' }}</td>
               <td class="muted-cell">{{ d.item_count }}</td>
               <td>
                 {% if d.problem %}
