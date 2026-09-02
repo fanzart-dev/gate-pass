@@ -7,3 +7,9 @@ debug/
 # Real supplier invoices — a supplier GSTIN, IRN hashes and named customers.
 # Kept out of the repo; tests that need them skip cleanly when absent.
 tests/sample_invoices/*.pdf
+
+# Certificates and keys — generated per machine by deploy/make-cert.sh.
+# The CA private key must never be committed: anyone holding it can issue a
+# certificate the office machines will trust.
+deploy/certs/
+.pytest_cache/
