@@ -38,6 +38,9 @@ def main():
     app = create_app(db_path=storage / "preview.db", storage_dir=storage)
 
     conn = db.connect(app.config["DB_PATH"])
+    # Totals on, so the preview shows the block that sits between the item
+    # table and the signatures. Off by default in a real install.
+    db.update_settings(conn, show_totals="1")
     db.create_user(conn, "demo", "Dinesh D", "demo-preview-only")          # admin
     db.create_user(conn, "staff", "Asha Nair", "demo-preview-only",         # no extras
                     status=db.APPROVED)

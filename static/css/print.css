@@ -429,15 +429,61 @@ table.items-table td.col-item {
    /print/2 after changing it.
 
    `margin-top: auto` pins the whole block to the foot of the pass. */
+/* Everything that belongs at the END of the pass, held together and pushed to
+   the bottom by ONE auto margin. Two of them — one here and one on .pass-foot,
+   which is how this started — divide the leftover space between the blocks and
+   leave the totals floating in the middle of the page. */
+.pass-end {
+  margin-top: auto;
+}
+
+/* Totals sit directly under the item table and directly above the signatures.
+   Figures right-aligned against the same edge as the No. of Cartons column, so
+   the eye runs straight down the numbers it is checking. */
+.pass-totals {
+  display: flex;
+  align-items: baseline;
+  gap: 4mm;
+  padding: 0.8mm 2mm;
+  border-bottom: 1px solid #000;
+  font-size: 7.5pt;
+}
+
+.totals-vehicle { flex: none; }
+
+/* margin-left:auto rather than justify-content:space-between, so the figures
+   stay hard right whether or not there is a vehicle number beside them. */
+.totals-figures {
+  margin-left: auto;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.totals-gap { display: inline-block; width: 5mm; }
+
 .pass-foot {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
   gap: 3mm;
-  margin-top: auto;
   padding-top: 1.5mm;
   font-size: 7.5pt;
+  /* Deliberate whitespace: everything inside is bottom-aligned, so this is the
+     room above the rule for somebody to sign in. 15mm gives 13.26mm between
+     the table and the rule; an earlier layout gave 10.38mm and was changed for
+     being too tight. */
   min-height: 15mm;
+}
+
+/* The pass is a fixed height with no spare room — adding the totals strip
+   overflowed it by 17px — so a page that shows the strip has to find that
+   space somewhere. It comes from here, the only part of the layout that is
+   blank on purpose, rather than from the item table, where it would have cost
+   a row and re-paginated passes that have already been issued.
+   Only pages that actually carry the strip are affected: a pass with no
+   vehicle and totals switched off keeps the full 15mm. */
+.pass.with-totals .pass-foot {
+  min-height: 11mm;
 }
 
 .foot-side { text-align: center; flex: none; }

@@ -204,7 +204,10 @@ DEFAULT_SETTINGS = {
     "serial_min_seq": "0",
     "paper_mode": "a4x2",  # "a4x2" (two A5 passes on A4 landscape) or "a5" (one per sheet)
     "show_totals": "0",
-    "show_vehicle": "0",
+    # There is no "show_vehicle": the vehicle prints whenever one was recorded
+    # and is absent when one was not, which is what the setting was really for.
+    # A tick box that only ever HIDES something already written on the pass is
+    # a way to print a document missing information somebody entered.
     "company_name": "fanzart",
 }
 

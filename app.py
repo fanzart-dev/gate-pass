@@ -883,7 +883,6 @@ def register_routes(app):
                 g.db,
                 paper_mode="a5" if request.form.get("paper_mode") == "a5" else "a4x2",
                 show_totals="1" if request.form.get("show_totals") else "0",
-                show_vehicle="1" if request.form.get("show_vehicle") else "0",
                 company_name=request.form.get("company_name", "fanzart").strip() or "fanzart",
             )
             flash("Settings saved.", "ok")
