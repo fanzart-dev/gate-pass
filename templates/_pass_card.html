@@ -5,7 +5,12 @@
      several pages, all carrying the SAME serial number — it is one gate pass,
      not two, so the number is never suffixed or split. #}
   {% macro pass_card(gate_pass, page_items, page_no, page_total) %}
-    <div class="pass">
+    {# Whether this page carries the totals strip decides how much room is left
+       for the signature, so it is worked out once here and put on the pass as
+       a class. Only a page that actually shows the strip pays for it. #}
+    {% set totals_on = settings.show_totals == '1' %}
+    {% set has_totals = page_no == page_total and (totals_on or gate_pass.vehicle_no) %}
+    <div class="pass{% if has_totals %} with-totals{% endif %}">
       <div class="pass-head">
         <img class="logo" src="{{ url_for('static', filename='img/fanzart-logo.png') }}"
              alt="{{ settings.company_name }}">
@@ -93,29 +98,53 @@
         </tbody>
       </table>
 
-      {# One footer holding both names, so they sit on the same baseline across
-         the foot of the pass. "Prepared by" used to be a separate line BELOW
-         this block, which put it 2.88mm lower than "Authorised by" and cost a
-         whole row of the space the authoriser needs to sign in. #}
-      <div class="pass-foot">
-        {# Who generated the pass is a record, not a signature — hence no rule
-           above it, and the quiet styling. #}
-        <div class="prepared-by">Prepared by: {{ gate_pass.prepared_by }}</div>
-        <div class="foot-middle">
-          {% if settings.show_totals == '1' and page_no == page_total %}
-            {# Cartons are usually written by hand, so only total them if some were typed. #}
-            <div>Total Qty : {{ gate_pass.total_qty }}{% if gate_pass.total_cartons != '' %}
-              &middot; Boxes : {{ gate_pass.total_cartons }}{% endif %}</div>
+      {# Totals and signatures are one block, pinned to the bottom of the pass
+         by a single margin-top:auto on the wrapper. They used to be two, each
+         with its own auto margin, which shares the leftover space out BETWEEN
+         them and floats the totals somewhere in the middle of the page.
+
+         Rendered on the LAST page only. On a two-page pass the signature has to
+         be at the end of the thing being signed, not on both halves as if each
+         were a document in its own right. Page 1 says "Page 1 of 2" in its
+         header, so a sheet on its own is still identifiable. #}
+      <div class="pass-end">
+        {% if page_no == page_total %}
+          {% if has_totals %}
+            <div class="pass-totals">
+              {# Only printed when there IS one. An empty "Vehicle :" on a gate
+                 pass reads as a vehicle nobody recorded rather than a consignment
+                 that did not travel by road. #}
+              {% if gate_pass.vehicle_no %}
+                <span class="totals-vehicle">Vehicle&nbsp;<strong>{{ gate_pass.vehicle_no }}</strong></span>
+              {% endif %}
+              {% if totals_on %}
+                <span class="totals-figures">
+                  Total Qty&nbsp;<strong>{{ gate_pass.total_qty }}</strong>{#
+                  Cartons are often written on by hand at the gate, so they are
+                  only totalled when some were actually typed — a bold 0 next to
+                  a column of blanks reads as a count, not as "not counted yet".
+                  #}{% if gate_pass.total_cartons != '' %}<span class="totals-gap"></span>Total Cartons&nbsp;<strong>{{ gate_pass.total_cartons }}</strong>{% endif %}
+                </span>
+              {% endif %}
+            </div>
           {% endif %}
-          {% if settings.show_vehicle == '1' %}
-            <div>Vehicle : {{ gate_pass.vehicle_no }}</div>
-          {% endif %}
-        </div>
-        {# Only the authoriser signs, so only they get a rule. #}
-        <div class="foot-side foot-right">
-          <div class="sign-line"></div>
-          <div>Authorised by</div>
-        </div>
+
+          {# One footer holding both names, so they sit on the same baseline
+             across the foot of the pass. "Prepared by" used to be a separate
+             line BELOW this block, which put it 2.88mm lower than "Authorised
+             by" and cost a whole row of the space the authoriser needs to sign
+             in. #}
+          <div class="pass-foot">
+            {# Who generated the pass is a record, not a signature — hence no
+               rule above it, and the quiet styling. #}
+            <div class="prepared-by">Prepared by: {{ gate_pass.prepared_by }}</div>
+            {# Only the authoriser signs, so only they get a rule. #}
+            <div class="foot-side foot-right">
+              <div class="sign-line"></div>
+              <div>Authorised by</div>
+            </div>
+          </div>
+        {% endif %}
       </div>
     </div>
   {% endmacro %}

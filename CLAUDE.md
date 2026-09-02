@@ -254,6 +254,37 @@ number is always one past the highest that exists, and the write lock is held
 across the read and the insert. Cancelled passes keep their number and still
 count, so cancelling never causes the next pass to reuse one.
 
+### The end of a pass
+
+Totals and signatures are one block, `.pass-end`, held to the bottom by a
+single `margin-top: auto`. Two auto margins — one on the totals and one on the
+footer, which is how it started — divide the leftover space *between* them and
+leave the totals floating mid-page.
+
+It renders on the **last page only**. A signature on page 1 of 2 says that half
+a gate pass was authorised on its own; the header carries "Page 1 of 2" so a
+loose sheet is still identifiable. The empty `.pass-end` still renders on
+earlier pages, so the geometry does not shift between them.
+
+**The vehicle prints when there is one, and not otherwise.** There is no
+`show_vehicle` setting any more — a tick box that only ever *hides* something
+already entered is a way to print a document missing information somebody
+typed. An empty `Vehicle :` also makes a different claim from no label at all:
+it reads as a vehicle nobody bothered to record. (`Remarks :` is the deliberate
+exception — it prints empty on purpose, to be written in by hand at the gate.)
+
+**Cartons are only totalled when some were typed.** A bold `0` beside a column
+of blanks reads as a count, not as "not counted yet".
+
+**The pass has no spare vertical room.** Adding the totals strip overflowed it
+by 17px. That is paid for out of `.pass-foot`'s `min-height`, the only part of
+the layout that is blank on purpose, and only on pages that actually carry the
+strip (`.pass.with-totals`): 15mm normally, 11mm with totals. Taking it from
+the item table instead would have cost a row and re-paginated passes that have
+already been issued. The measured signing gap drops from 13.26mm to 6.83mm when
+totals are on, which is tight — if that matters more than the totals, the space
+has to come from `ITEM_BODY_MM` and `ITEMS_PER_PAGE` instead.
+
 **Numbering does not reset by itself.** There is no fiscal-year rollover — the
 count runs on until an admin deliberately restarts it under Settings →
 Numbering (`db.start_new_run`).

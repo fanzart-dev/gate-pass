@@ -305,13 +305,15 @@ def test_settings(tmpdir):
     defaults = db.get_settings(conn)
     check("default paper mode is a4x2", defaults["paper_mode"] == "a4x2")
     check("totals are off by default", defaults["show_totals"] == "0")
-    check("vehicle is off by default", defaults["show_vehicle"] == "0")
+    # No show_vehicle setting: the vehicle prints when one was recorded.
+    check("there is no vehicle tick box to get wrong",
+          "show_vehicle" not in defaults)
 
     db.update_settings(conn, paper_mode="a5", show_totals="1")
     updated = db.get_settings(conn)
     check("paper_mode persists", updated["paper_mode"] == "a5")
     check("show_totals persists", updated["show_totals"] == "1")
-    check("unrelated setting keeps its default", updated["show_vehicle"] == "0")
+    check("unrelated setting keeps its default", updated["company_name"] == "fanzart")
 
     conn.close()
 
@@ -824,6 +826,106 @@ def test_parsing_a_batch(tmpdir):
     check("a pool that will not start falls back to parsing in order",
           [[i["item_name"] for i in r["items"]] for r in fallback]
           == [[i["item_name"] for i in r["items"]] for r in one_by_one])
+
+
+def test_vehicle_prints_only_when_there_is_one(tmpdir):
+    """No empty "Vehicle :" on a pass that did not travel by road.
+
+    An empty label reads as a vehicle nobody bothered to record, which is a
+    different claim from a consignment that had no vehicle. There is no longer
+    a setting for it either: a tick box that only ever HIDES something already
+    entered is a way to print a document missing information somebody typed.
+    """
+    flask_app, client = logged_in_app(tmpdir, "vehicle")
+    conn = db.connect(flask_app.config["DB_PATH"])
+
+    without = db.create_gate_pass(conn, None, "S", "C", "I1", "01-01-2026", "",
+                                   sample_items(), prepared_by="Ravi Kumar")
+    page = client.get(f"/print/{without['id']}").get_data(as_text=True)
+    check("no vehicle recorded, no vehicle label", "Vehicle" not in page)
+    check("and nothing is left dangling", 'class="totals-vehicle"' not in page)
+
+    with_one = db.create_gate_pass(conn, None, "S", "C", "I2", "01-01-2026",
+                                    "KA 01 AB 1234", sample_items(),
+                                    prepared_by="Ravi Kumar")
+    page = client.get(f"/print/{with_one['id']}").get_data(as_text=True)
+    check("a recorded vehicle is printed", "KA 01 AB 1234" in page)
+    check("with a short label so a bare registration is not left unexplained",
+          'class="totals-vehicle"' in page)
+    check("and it does not depend on a setting being ticked",
+          "show_vehicle" not in (ROOT / "templates" / "settings.html").read_text())
+    conn.close()
+
+
+def test_totals_sit_between_the_items_and_the_signatures(tmpdir):
+    """Totals below the table, signatures below the totals, both at the end.
+
+    They used to be a third column inside the footer, wedged between "Prepared
+    by" and "Authorised by".
+    """
+    flask_app, client = logged_in_app(tmpdir, "totals_pos")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    db.update_settings(conn, show_totals="1")
+    gp = db.create_gate_pass(conn, None, "S", "C", "I", "01-01-2026", "KA 01 AB 1234",
+                              [{"item_name": "MICRON", "quantity": "3", "cartons": "2"},
+                               {"item_name": "PHOENIX", "quantity": "4", "cartons": "1"}],
+                              prepared_by="Ravi Kumar")
+    page = client.get(f"/print/{gp['id']}").get_data(as_text=True)
+
+    check("the totals are on the pass", "Total Qty" in page and ">7<" in page)
+    check("cartons are totalled when some were typed",
+          "Total Cartons" in page and ">3<" in page)
+    check("the totals come after the item table",
+          page.index("</table>") < page.index("pass-totals"))
+    check("and before the signatures",
+          page.index("pass-totals") < page.index("pass-foot"))
+    check("both are inside one block pinned to the end of the pass",
+          page.index("pass-end") < page.index("pass-totals"))
+
+    # One auto margin, not two. Two share the leftover space out BETWEEN the
+    # blocks and leave the totals floating in the middle of the page.
+    print_css = (ROOT / "static" / "css" / "print.css").read_text()
+    autos = re.findall(r"^\.(pass-end|pass-foot|pass-totals)\s*\{[^}]*margin-top:\s*auto",
+                       print_css, re.S | re.M)
+    check("exactly one block is pushed to the bottom", autos == ["pass-end"])
+
+    # A blank carton column must not be totalled as a confident 0.
+    blank = db.create_gate_pass(conn, None, "S", "C", "I2", "01-01-2026", "",
+                                 sample_items(), prepared_by="Ravi Kumar")
+    page = client.get(f"/print/{blank['id']}").get_data(as_text=True)
+    check("cartons nobody counted are not totalled as 0",
+          "Total Cartons" not in page)
+    check("but the quantity still is", "Total Qty" in page)
+    conn.close()
+
+
+def test_a_two_page_pass_signs_off_only_at_the_end(tmpdir):
+    """Totals and signatures belong at the end of the document, once.
+
+    A signature on page 1 of 2 says that half of a gate pass was authorised on
+    its own.
+    """
+    flask_app, client = logged_in_app(tmpdir, "twopage")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    db.update_settings(conn, show_totals="1")
+    many = [{"item_name": f"ITEM {i}", "quantity": "1", "cartons": "1"}
+            for i in range(db.ITEMS_PER_PAGE + 4)]
+    gp = db.create_gate_pass(conn, None, "S", "C", "I", "01-01-2026", "KA 01 AB 1234",
+                              many, prepared_by="Ravi Kumar")
+    page = client.get(f"/print/{gp['id']}").get_data(as_text=True)
+
+    sheets = page.count('class="sheet')
+    check("a long pass prints on more than one sheet", sheets >= 2)
+    check("the pages are numbered so a loose sheet is identifiable",
+          "Page 1 of 2" in page and "Page 2 of 2" in page)
+
+    # Two copies per A4 sheet, so the last page contributes two of each.
+    check("the signatures appear only on the last page",
+          page.count('class="pass-foot"') == 2)
+    check("and so do the totals", page.count('class="pass-totals"') == 2)
+    check("every page still has the end block, so the geometry does not shift",
+          page.count('class="pass-end"') == page.count('class="pass"'))
+    conn.close()
 
 
 def test_printed_sheet_has_no_rule_between_the_copies(tmpdir):
@@ -1576,8 +1678,13 @@ def test_print_layout_rules(tmpdir):
     # the pass. "Prepared by" used to be a separate line below it, sitting
     # 2.88mm lower and eating a row of the space the authoriser signs in.
     foot = re.search(r"\.pass-foot \{[^}]*\}", css).group()
-    check("the signature block is pinned to the foot of the pass",
-          "margin-top: auto" in foot)
+    # Pinned by ONE auto margin on the wrapper that holds the totals and the
+    # signatures together. Two — one on each — divide the leftover space
+    # between them and leave the totals floating mid-page.
+    check("the end block is pinned to the foot of the pass",
+          "margin-top: auto" in re.search(r"\.pass-end \{[^}]*\}", css).group())
+    check("and the footer no longer carries an auto margin of its own",
+          "margin-top: auto" not in foot)
     check("both names sit on one baseline",
           "align-items: flex-end" in foot and "justify-content: space-between" in foot)
     # min-height is the signing room: everything inside is bottom-aligned, so
@@ -1585,6 +1692,13 @@ def test_print_layout_rules(tmpdir):
     # 13.26mm between the table and the rule, against 10.38mm before.
     signing_room = float(re.search(r"min-height: ([\d.]+)mm", foot).group(1))
     check("there is room above the rule to sign", signing_room >= 14)
+    # A page that shows the totals strip has to find its height somewhere, and
+    # this is the only blank-on-purpose part of the layout. Only those pages
+    # pay: a pass with no vehicle and totals off keeps the full 15mm.
+    tight = re.search(r"\.pass\.with-totals \.pass-foot \{[^}]*\}", css).group()
+    with_totals_room = float(re.search(r"min-height: ([\d.]+)mm", tight).group(1))
+    check("a page carrying totals gives up some of it, but not all",
+          11 <= with_totals_room < signing_room)
     check("Prepared by is inside the footer, not a line below it",
           card.index('class="prepared-by"') > card.index('class="pass-foot"')
           and card.index('class="prepared-by"') < card.index('class="foot-side'))
@@ -3499,7 +3613,7 @@ def test_prepared_by_is_recorded_and_printed(tmpdir):
     db.update_settings(conn, show_totals="1")
     conn.close()
     with_totals = client.get(f"/print/{gate_pass_id}").data
-    check("the totals line still shows the quantity", b"Total Qty :" in with_totals)
+    check("the totals line still shows the quantity", b"Total Qty" in with_totals)
     check("no empty Boxes total is printed when cartons were left blank",
           b"Boxes :" not in with_totals)
 
