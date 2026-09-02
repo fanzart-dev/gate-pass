@@ -30,7 +30,11 @@ DAYS_CA=3650      # the CA is installed by hand, so make it long-lived
 DAYS_LEAF=825     # browsers refuse server certs valid for much longer than this
 
 mkdir -p "$CERT_DIR"
-chmod 700 "$CERT_DIR"
+# 755, not 700. The CA CERTIFICATE is meant to be handed out — every office
+# machine needs a copy before the padlock means anything — and locking the
+# directory made the one file people need impossible to fetch without root.
+# The private keys inside are 600, which is what actually matters.
+chmod 755 "$CERT_DIR"
 
 HOSTNAME_SHORT="$(hostname)"
 LAN_IP="$(hostname -I | awk '{print $1}')"
@@ -98,10 +102,16 @@ To stop the browser warning, install the CA once per machine:
   Windows   double-click fanzart-ca.pem -> Install Certificate ->
             Local Machine -> "Trusted Root Certification Authorities"
   macOS     double-click -> Keychain Access -> System -> set to "Always Trust"
-  Ubuntu    sudo cp fanzart-ca.pem /usr/local/share/ca-certificates/fanzart-ca.crt
-            sudo update-ca-certificates
-  Firefox   keeps its own store: Settings -> Certificates -> View Certificates
-            -> Authorities -> Import -> tick "identify websites"
+  Linux     deploy/trust-ca.sh does all of it, including the part below that
+            the usual advice misses
+  Chrome/   On Linux these do NOT read the system store. They keep their own
+  Brave     NSS database, so update-ca-certificates alone leaves them still
+            warning and it looks like the certificate did not work:
+              sudo apt install libnss3-tools
+              certutil -d sql:$HOME/.pki/nssdb -A -t "C,," \
+                       -n "Fanzart Gate Pass Local CA" -i fanzart-ca.pem
+  Firefox   keeps its own store again: Settings -> Certificates -> View
+            Certificates -> Authorities -> Import -> tick "identify websites"
   Android   Settings -> Security -> Encryption -> Install from storage -> CA
 
 Until that is done the padlock will still be crossed out. The traffic is
