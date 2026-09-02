@@ -3504,6 +3504,23 @@ def test_hosting_hardening(tmpdir):
     check("it confirms nginx really bound the socket",
           "did not bind" in enable)
 
+    install = (ROOT / "deploy" / "install.sh").read_text()
+    # install.sh rewrites the nginx site every run. It used to write the
+    # plain-HTTP one unconditionally, so every update silently dropped the
+    # server back off TLS.
+    check("updating does not silently turn HTTPS off",
+          "443 ssl" in install and "HTTPS_WAS_ON" in install)
+    # A neighbouring site losing its symlink is silent: nothing errors, the
+    # port just stops answering. It happened once, to a site published to the
+    # internet through Tailscale Funnel.
+    check("it records which other nginx sites were enabled",
+          "BEFORE=" in install)
+    check("and puts back any that vanish",
+          "RESTORED" in install)
+    check("it only ever disables the stock placeholder",
+          install.count("rm -f /etc/nginx/sites-enabled/") == 1
+          and "sites-enabled/default" in install)
+
     check("the debugger is off unless explicitly asked for",
           "debug=True" not in source and "GATE_PASS_DEBUG" in source)
 

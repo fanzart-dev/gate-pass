@@ -131,6 +131,18 @@ systemctl is-active --quiet gate-pass || {
 note "gate-pass.service running on 127.0.0.1:$PORT"
 
 say "nginx"
+# If TLS is already on, leave it on. This file used to write the plain-HTTP
+# site unconditionally, so every update silently dropped the server back to
+# HTTP -- the padlock would vanish and nobody would connect it to having run an
+# update. enable-https.sh is the one place that knows how to build the TLS
+# site, so re-run it rather than trying to reproduce it here.
+if grep -q '443 ssl' /etc/nginx/sites-available/gate-pass 2>/dev/null; then
+    note "HTTPS is on; keeping it"
+    HTTPS_WAS_ON=1
+else
+    HTTPS_WAS_ON=0
+fi
+
 # server_name _ is a catch-all: this answers on the IP address, on
 # <hostname>.local, and on a real domain later without being edited.
 cat > /etc/nginx/sites-available/gate-pass <<NGINX
@@ -172,6 +184,16 @@ server {
     }
 }
 NGINX
+# Everything enabled before this run. Only `gate-pass` and the stock `default`
+# are ours to change; anything else belongs to another site and must be in the
+# same state when we finish. A site quietly losing its symlink is the worst
+# kind of failure here: nothing errors, the port simply stops answering, and
+# the first anyone knows is a page that will not load. It has happened once on
+# this server -- `portfolio` on :8080, which is published to the internet
+# through Tailscale Funnel -- and the cause was never proven, so this both
+# records the state and repairs it.
+BEFORE="$(find /etc/nginx/sites-enabled -maxdepth 1 -type l -printf '%f\n' 2>/dev/null | sort || true)"
+
 ln -sf /etc/nginx/sites-available/gate-pass /etc/nginx/sites-enabled/gate-pass
 
 # Only the stock "Welcome to nginx" placeholder is disabled, and only its
@@ -186,12 +208,44 @@ if [ -L /etc/nginx/sites-enabled/default ]; then
     rm -f /etc/nginx/sites-enabled/default
     note "disabled the stock nginx placeholder (re-enable: ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/)"
 fi
+# Put back anything that was enabled when we started and is not now. Also
+# catches a site that went missing between runs for any other reason.
+for was in $BEFORE; do
+    case "$was" in
+        gate-pass|default) continue ;;
+    esac
+    if [ ! -e "/etc/nginx/sites-enabled/$was" ] \
+       && [ -e "/etc/nginx/sites-available/$was" ]; then
+        ln -s "/etc/nginx/sites-available/$was" "/etc/nginx/sites-enabled/$was"
+        note "RESTORED $was — it was enabled before this run and had gone"
+    fi
+done
+
+# Anything in sites-available that is not enabled and is not ours. Worth saying
+# out loud: a disabled site is invisible until somebody tries to use it.
+for avail in $(find /etc/nginx/sites-available -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | sort); do
+    case "$avail" in
+        gate-pass|gate-pass.bak|default) continue ;;
+    esac
+    if [ ! -e "/etc/nginx/sites-enabled/$avail" ]; then
+        note "NOTE: $avail exists but is not enabled (ln -s /etc/nginx/sites-available/$avail /etc/nginx/sites-enabled/)"
+    fi
+done
+
 OTHERS=$(find /etc/nginx/sites-enabled -maxdepth 1 ! -name 'gate-pass' -type l -printf '%f ' 2>/dev/null || true)
-[ -n "$OTHERS" ] && note "left untouched: $OTHERS"
+if [ -n "$OTHERS" ]; then
+    note "left untouched: $OTHERS"
+fi
 
 nginx -t >/dev/null 2>&1 || { nginx -t; die "nginx config rejected"; }
 systemctl reload nginx
 note "nginx proxying port 80 to the app"
+
+if [ "$HTTPS_WAS_ON" = "1" ]; then
+    say "Putting HTTPS back"
+    "$APP_DIR/deploy/enable-https.sh" || die "could not restore HTTPS — the site
+       is up on plain HTTP; run sudo $APP_DIR/deploy/enable-https.sh to retry"
+fi
 
 # Prove we did not break a neighbour. Anything already being served keeps
 # serving, or this install is a regression however well the app itself works.
