@@ -3547,6 +3547,19 @@ def test_hosting_hardening(tmpdir):
     # made there never reaches a machine that already has one — which is every
     # machine that matters. enable-https.sh sets them on every run.
     enable_https = (ROOT / "deploy" / "enable-https.sh").read_text()
+    # Re-running after HTTPS is on must work. nginx holds 443 on exactly the
+    # addresses it is about to reuse, and a graceful reload keeps old workers
+    # and their sockets alive for a moment — counting either as a conflict made
+    # the script work once and never again.
+    check("it does not mistake its own listeners for a conflict",
+          'grep -v \'users:(("nginx"\'' in enable_https)
+
+    # The CA must be reachable when HTTPS is OFF, which is precisely when a
+    # machine needs it. Serving it only from the TLS site is a chicken and egg.
+    http_conf = (ROOT / "deploy" / "nginx-gate-pass.conf").read_text()
+    check("the plain-HTTP site serves the CA too",
+          "location = /fanzart-ca.pem" in http_conf)
+
     check("permissions are set on every run, not only at issue",
           'chmod 755 "$CERT_DIR"' in enable_https
           and 'chmod 644 "$CERT_DIR/fanzart-ca.pem"' in enable_https)
@@ -3566,6 +3579,8 @@ def test_hosting_hardening(tmpdir):
           "verifies — the padlock will be clean" in trust)
 
     install = (ROOT / "deploy" / "install.sh").read_text()
+    check("and so does the one install.sh writes inline",
+          "location = /fanzart-ca.pem" in install)
     # install.sh rewrites the nginx site every run. It used to write the
     # plain-HTTP one unconditionally, so every update silently dropped the
     # server back off TLS.

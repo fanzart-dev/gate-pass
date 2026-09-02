@@ -15,6 +15,7 @@ set -euo pipefail
 
 REPO="https://github.com/fanzart-dev/gate-pass.git"
 APP_DIR="/opt/gate-pass"
+CERT_DIR="/opt/gate-pass/deploy/certs"
 APP_USER="gatepass"
 PORT=8090
 
@@ -162,6 +163,15 @@ server {
 
     access_log /var/log/nginx/gate-pass.access.log;
     error_log  /var/log/nginx/gate-pass.error.log;
+
+    # The CA certificate, so a machine can fetch the file that makes HTTPS
+    # trustworthy. Served on the plain-HTTP site too, because that is the one
+    # running when HTTPS is off -- which is exactly when it is needed.
+    location = /fanzart-ca.pem {
+        alias $CERT_DIR/fanzart-ca.pem;
+        default_type application/x-x509-ca-cert;
+        add_header Content-Disposition 'attachment; filename="fanzart-ca.pem"';
+    }
 
     location /static/ {
         alias $APP_DIR/static/;

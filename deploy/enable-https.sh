@@ -45,8 +45,17 @@ say "Working out which addresses 443 is ours to use"
 # holds 443 on any address — tailscaled does, for Funnel. nginx then rejects
 # the whole config and silently keeps running the previous one, so the site
 # stays on plain HTTP and nothing looks wrong. Hence: bind named addresses.
-TAKEN="$(ss -tlnH '( sport = :443 )' 2>/dev/null | awk '{print $4}' | sed 's/:443$//' | tr -d '[]')"
-[ -n "$TAKEN" ] && note "already listening on 443: $(echo "$TAKEN" | tr '\n' ' ')"
+# Ignore nginx's OWN listeners. Re-running this after HTTPS is already on
+# would otherwise find nginx holding 443 on exactly the addresses it is about
+# to reuse, call them taken, and refuse — so the script worked once and then
+# never again. A graceful reload also keeps old workers, and their sockets,
+# alive for a moment, so even a fresh run can see them.
+TAKEN="$(ss -tlnpH '( sport = :443 )' 2>/dev/null \
+         | grep -v 'users:(("nginx"' \
+         | awk '{print $4}' | sed 's/:443$//' | tr -d '[]')"
+if [ -n "$TAKEN" ]; then
+    note "held by something other than nginx: $(echo "$TAKEN" | tr '\n' ' ')"
+fi
 
 LISTEN_LINES=""
 ADDRESSES=""
