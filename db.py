@@ -205,7 +205,7 @@ DEFAULT_SETTINGS = {
 # Bump when schema.sql or ADDED_COLUMNS changes. Stored in the file as
 # PRAGMA user_version, so a connection can tell in one cheap read whether the
 # schema script needs running at all.
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # How long a writer waits for another writer before giving up. Four people
 # clicking Issue at the same moment are serialised in milliseconds, so this is
@@ -656,6 +656,162 @@ def authenticate(conn, username, password):
     if not check_password_hash(user["password_hash"], password or ""):
         return None
     return user
+
+
+# --- the master carton list ----------------------------------------------
+#
+# Counting cartons by hand was the slowest part of writing a gate pass, and the
+# count is a property of the item, not of the invoice: one AARI ships in one
+# box whoever is buying it. So it is looked up rather than typed.
+#
+# The lookup fills the field in and then gets out of the way — every carton box
+# stays editable, because the master list will be wrong or missing sometimes and
+# the person at the gate can see the actual pallet.
+
+# Invoices spell the same fan several ways: "AARI-APRICOT GOLD",
+# "AARI - APRICOT GOLD", "AARI  –  APRICOT  GOLD". All three are one item, so
+# the match key folds the differences away rather than the master list needing a
+# row per spelling.
+_DASH_CHARACTERS = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
+
+# Kept deliberately conservative: case, dashes and spacing only. Stripping
+# punctuation more aggressively risks collapsing two genuinely different models
+# into one key and silently putting the wrong carton count on a gate pass.
+def normalize_item_name(name):
+    """The key an item name is matched on. Same item, same key."""
+    text = (name or "").upper().replace("\u00a0", " ")
+    for dash in _DASH_CHARACTERS:
+        text = text.replace(dash, "-")
+    text = re.sub(r"\s*-\s*", " - ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+# Lines that are not physical goods, or are goods that do not ship in a carton
+# of their own. A spare part travels inside somebody else's box, and freight is
+# not a thing at all — neither has a carton count, and writing 0 or 1 would be
+# stating something untrue on a document that is signed at the gate.
+NON_STOCK_KEYWORDS = ("SPARE", "SPARES", "SERVICE", "FREIGHT",
+                      "CHARGES", "HARDWARE", "ACCESSORY")
+# Plurals matter: a real invoice line reads "ERECTION COMMISSIONING AND
+# INSTALLATION SERVICES", which \bSERVICE\b does not match. That one came out
+# blank anyway because it is not in the master list, so the gate pass was right
+# by luck — and luck stops working the day somebody adds a row for it.
+_NON_STOCK_RE = re.compile(
+    r"\b(?:SPARES?|SERVICES?|FREIGHTS?|CHARGES?|HARDWARES?|ACCESSORY|ACCESSORIES)\b")
+
+
+def is_non_stock_item(name):
+    """True for spares, freight and service lines.
+
+    Whole words only: a model legitimately called something containing these
+    letters inside a longer word must not be caught. Checked BEFORE the master
+    list, so a spare stays blank even if some future row happens to match it.
+    """
+    return bool(_NON_STOCK_RE.search(normalize_item_name(name)))
+
+
+def carton_count_for(conn, name):
+    """Cartons for one item name, or None if it should be left for a human.
+
+    None covers both "not in the master list" and "not the kind of line that
+    has a carton count". Both mean the same thing to the caller: leave the box
+    empty. An empty box is a question; a 0 or a 1 is an assertion, and a wrong
+    assertion on a gate pass is worse than a blank one.
+    """
+    key = normalize_item_name(name)
+    if not key or is_non_stock_item(key):
+        return None
+    row = conn.execute(
+        "SELECT cartons FROM item_carton_mappings WHERE normalized = ?", (key,)
+    ).fetchone()
+    return row["cartons"] if row else None
+
+
+# The master sheet gives cartons per UNIT, not per invoice line. The 32 rows
+# worth 2 are the FANDELIERs, the 100-inch GRANDMASTERs and the two-part
+# wall-mounts — physically large things that ship in two boxes each. Everything
+# else is one box per fan.
+#
+# So a line reading "MICRON MODREN OAK, quantity 8" is 8 cartons, not 1. Real
+# invoices in this office regularly run to 4, 5 and 8 of one model, so taking
+# the master value literally would understate the count on a document that is
+# signed at the gate — and understating boxes is how a box goes missing without
+# anybody noticing.
+#
+# Set this to False for the literal reading: the master value regardless of how
+# many were bought.
+CARTONS_SCALE_WITH_QUANTITY = True
+
+
+def cartons_for_line(conn, name, quantity):
+    """Cartons for one invoice line, or None to leave the box empty."""
+    per_unit = carton_count_for(conn, name)
+    if per_unit is None:
+        return None
+    if not CARTONS_SCALE_WITH_QUANTITY:
+        return per_unit
+    try:
+        units = int(str(quantity or "").strip())
+    except ValueError:
+        # The quantity could not be read, so the arithmetic cannot be done. An
+        # empty box asks the operator a question; a number would assert
+        # something nobody has actually worked out.
+        return None
+    return per_unit * units if units > 0 else None
+
+
+def fill_cartons(conn, items):
+    """Fill in carton counts on freshly parsed lines, leaving the rest blank.
+
+    Never overwrites a value that is already there: if a parser managed to read
+    a carton count off the document, the document beats the master list.
+    """
+    filled = []
+    for item in items or []:
+        item = dict(item)
+        if not str(item.get("cartons") or "").strip():
+            found = cartons_for_line(conn, item.get("item_name"), item.get("quantity"))
+            item["cartons"] = "" if found is None else str(found)
+        filled.append(item)
+    return filled
+
+
+def upsert_carton_mappings(conn, pairs):
+    """Load master rows. Returns (added, updated, unchanged).
+
+    An upsert rather than a wipe-and-reload: reloading the sheet must not
+    briefly empty the table while somebody is uploading an invoice, and a row
+    the office corrected by hand should be updated in place, not resurrected
+    with an old value under a new id.
+    """
+    added = updated = unchanged = 0
+    with writing(conn):
+        for name, cartons in pairs:
+            key = normalize_item_name(name)
+            if not key:
+                continue
+            row = conn.execute(
+                "SELECT id, cartons FROM item_carton_mappings WHERE normalized = ?",
+                (key,)).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO item_carton_mappings "
+                    "(item_name, normalized, cartons, updated_at) VALUES (?, ?, ?, ?)",
+                    (str(name).strip(), key, int(cartons), _now()))
+                added += 1
+            elif row["cartons"] != int(cartons):
+                conn.execute(
+                    "UPDATE item_carton_mappings SET item_name = ?, cartons = ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (str(name).strip(), int(cartons), _now(), row["id"]))
+                updated += 1
+            else:
+                unchanged += 1
+    return added, updated, unchanged
+
+
+def carton_mapping_count(conn):
+    return conn.execute("SELECT COUNT(*) AS n FROM item_carton_mappings").fetchone()["n"]
 
 
 # --- guarding the sign-in form against guessing --------------------------

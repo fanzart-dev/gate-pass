@@ -89,15 +89,31 @@ These are the reason the app exists. Do not "simplify" them away.
    without `can_review_drafts` it is immediately after the parse, so a
    misparsed invoice that still has all its required fields is issued rather
    than checked. That trade is deliberate (see "The draft step is optional").
-5. **Cartons are never filled in by the app, and never required.** A single fan
-   can ship in two cartons and several spares can share one box — the count
-   depends on how the goods were actually packed, is known at the gate rather
-   than at the keyboard, and appears nowhere on the invoice. So: the parser must
-   not return a `cartons` key, no button may derive cartons from quantity (the
-   *Cartons = quantity* shortcut was removed for this reason), the box renders
-   empty, **and a pass issues fine with cartons blank** — the column prints
-   empty to be written on by hand. The field is still accepted if someone does
-   type a count.
+5. **Cartons are looked up from the master list, never guessed, never
+   required.** This rule used to read "never filled in by the app", because the
+   code had no way to know how a fan is packed. The `Box Qty` master list is
+   exactly that knowledge, so the rule is now narrower rather than gone:
+
+   * The **parser** still must not return a `cartons` key. Nothing is read off
+     the invoice, because the count is not on it.
+   * The only thing that may fill the box is `db.fill_cartons`, from
+     `item_carton_mappings`, at draft creation — once, so a later correction on
+     the review page is never overwritten.
+   * The master sheet counts cartons **per unit**, so a line is
+     `quantity x per-unit` (`db.CARTONS_SCALE_WITH_QUANTITY`). Eight fans is
+     eight boxes; printing the per-unit 1 against 8 fans understates the load
+     on a document signed at the gate.
+   * **Anything not in the list stays blank**, as does every line matching
+     `db.NON_STOCK_KEYWORDS` (spares, freight, service, hardware, accessories)
+     — those travel in somebody else's box or are not goods at all. Never
+     default to 0 or 1. An empty box asks a question; a wrong number asserts
+     something nobody worked out.
+   * No button may derive cartons from quantity in the UI (the
+     *Cartons = quantity* shortcut was removed for this reason), every box
+     stays editable, **and a pass still issues fine with cartons blank**.
+
+   The list is loaded with `manage_cartons.py import` and lives in the database,
+   not the repo — it is company product data and this repository is public.
 
    **Remarks are not the same case, and are typed.** A remark is a note about
    the consignment, not a count of how the goods were physically packed, so it
