@@ -291,20 +291,46 @@ else
 fi
 
 say "Checking the app actually answers"
-if curl -sf --max-time 10 -o /dev/null -w '%{http_code}' http://127.0.0.1/login | grep -q 200; then
-    note "http://127.0.0.1/login returns 200 through nginx"
+# Ask over whatever the site is actually serving. With HTTPS on, port 80 is a
+# 301 by design -- demanding 200 there declared a perfectly healthy server
+# broken, right after enable-https.sh had finished setting it up.
+if [ "$HTTPS_WAS_ON" = "1" ] || grep -q '443 ssl' /etc/nginx/sites-available/gate-pass 2>/dev/null; then
+    BASE="https://127.0.0.1"
+    CURL="curl -sk"      # -k: the local CA is not in root's trust store
 else
-    die "nginx is up but the app did not answer on port 80 — check: journalctl -u gate-pass -n 30"
+    BASE="http://127.0.0.1"
+    CURL="curl -s"
 fi
-# The page returning 200 is not the same as the page being usable. nginx serves
-# static/ itself, so a permissions mistake shows up as an unstyled page rather
-# than an error, and the install would otherwise report success.
+
+code=$($CURL --max-time 10 -o /dev/null -w '%{http_code}' "$BASE/login")
+[ "$code" = "200" ] || die "nginx is up but the app did not answer: $BASE/login returned '${code:-nothing}'
+       journalctl -u gate-pass -n 30 --no-pager"
+note "$BASE/login returns 200 through nginx"
+
+# 200 is not the same as usable. nginx serves static/ itself, so a permissions
+# mistake shows up as an unstyled page rather than an error, and the install
+# would otherwise report success on something visibly broken.
 for asset in /static/css/style.css /static/img/fanzart-logo.png; do
-    code=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1$asset")
-    [ "$code" = "200" ] || die "$asset returned $code — nginx cannot read $APP_DIR/static
+    code=$($CURL --max-time 5 -o /dev/null -w '%{http_code}' "$BASE$asset")
+    [ "$code" = "200" ] || die "$asset returned '${code:-nothing}' — nginx cannot read $APP_DIR/static
        (check the directory is traversable: ls -ld $APP_DIR)"
 done
 note "stylesheets and logo load"
+
+# With TLS on, port 80 must redirect rather than serve.
+if [ "$BASE" = "https://127.0.0.1" ]; then
+    redirect=$(curl -s --max-time 8 -o /dev/null -w '%{http_code}' http://127.0.0.1/login)
+    case "$redirect" in
+        30*) note "http://127.0.0.1/login -> $redirect to HTTPS" ;;
+        *)   note "WARNING: port 80 returned $redirect, expected a redirect" ;;
+    esac
+    # And the CA must NOT be redirected, or a machine cannot fetch the file
+    # that would let it trust this server in the first place.
+    ca=$(curl -s --max-time 8 -o /dev/null -w '%{http_code}' http://127.0.0.1/fanzart-ca.pem)
+    [ "$ca" = "200" ] || die "http://127.0.0.1/fanzart-ca.pem returned '${ca:-nothing}'
+       Office machines fetch the certificate from there; it must not redirect."
+    note "the CA is fetchable over plain HTTP for new machines"
+fi
 
 IP=$(hostname -I | awk '{print $1}')
 HOST=$(hostname)
