@@ -4,7 +4,10 @@ body {
   margin: 0;
   font-family: Arial, Helvetica, sans-serif;
   color: #000;
-  background: #ccc;
+  /* Matches --paper in style.css. The old #ccc was a hard mid-grey that had
+     nothing to do with the rest of the app, and it made the sheet look dingy
+     by contrast rather than clean. Screen only: @media print sets its own. */
+  background: #f8fafc;
 }
 
 /* Screen-only chrome above the sheet. Hidden by @media print, so none of this
@@ -27,8 +30,8 @@ body {
   font-weight: 600;
   padding: 8px 18px;
   border-radius: 7px;
-  border: 1px solid #17171a;
-  background: #17171a;
+  border: 1px solid #0f172a;
+  background: #0f172a;
   color: #fff;
 }
 .toolbar .tb-primary:hover { opacity: .88; }
@@ -36,27 +39,40 @@ body {
 .toolbar .tb-serial {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-weight: 600;
-  color: #17171a;
+  color: #0f172a;
 }
 
-.toolbar .tb-sep, .toolbar .tb-meta { color: #7b7b88; font-size: 13px; }
+.toolbar .tb-sep, .toolbar .tb-meta { color: #64748b; font-size: 13px; }
 
 /* The onward step. A button, not a link in the corner: after printing there IS
    a next thing to do, and the operator should not have to hunt for it. */
 .toolbar .tb-next {
   padding: 7px 15px;
-  border: 1px solid #d5d0c6;
-  border-radius: 7px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
   font-weight: 600;
   text-decoration: none;
-  color: #17171a;
+  color: #0f172a;
 }
-.toolbar .tb-next:hover { background: #f4f1ea; color: #17171a; }
+.toolbar .tb-next:hover { background: #f1f5f9; color: #0f172a; }
+
+/* Nothing in this bar is underlined. "New Gate Pass" carried no class at all,
+   so it got the browser's default underline while everything beside it was a
+   button — it read as the odd one out rather than as the quiet option. */
+.toolbar a { text-decoration: none; }
+
+.toolbar a:not(.tb-next) {
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-weight: 600;
+  color: #334155;
+}
+.toolbar a:not(.tb-next):hover { background: #f1f5f9; color: #0f172a; }
 
 /* Once the sheet has gone to the printer. */
 .toolbar .tb-next.ready {
-  border-color: #17171a;
-  background: #17171a;
+  border-color: #0f172a;
+  background: #0f172a;
   color: #fff;
 }
 
@@ -70,12 +86,14 @@ body {
 .toolbar .tb-spacer { flex: 1; }
 
 .toolbar a {
-  color: #45454e;
+  color: #334155;
   font-size: 13.5px;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  /* No underline. This rule sits after the toolbar button styling and was
+     quietly putting one back on "New Gate Pass", which is why it read as the
+     odd one out beside two buttons. */
+  text-decoration: none;
 }
-.toolbar a:hover { color: #8a6a3a; }
+.toolbar a:hover { color: #0f172a; }
 
 /* Full paper size with the margin as padding — see the @page note on the print
    pages. box-sizing: border-box keeps the content box at 283x196mm, which is
@@ -87,7 +105,10 @@ body {
   margin: 10mm auto;
   background: #fff;
   display: flex;
-  box-shadow: 0 0 4px rgba(0, 0, 0, 0.25);
+  /* A card lifted off the page, not a box with a dark halo. The old flat
+     0 0 4px at 25% read as a grey outline once the backdrop went light. */
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .08), 0 8px 24px rgba(15, 23, 42, .06);
+  border-radius: 2px;
 }
 
 .sheet.single {

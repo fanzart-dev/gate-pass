@@ -10,8 +10,17 @@
 <body class="login-page">
   <main class="login-shell">
     <div class="login-brand">
-      <img class="brand-logo" src="{{ url_for('static', filename='img/fanzart-logo.png') }}"
-           alt="Fanzart">
+      <span class="brand-lockup">
+        {# The lockup is one PNG, so the fan cannot be selected inside it the
+           way a path in an SVG could. It is split into two images instead: the
+           wordmark with the fan erased, and the fan on its own square canvas
+           centred on its hub. Same artwork, same size, same position — only the
+           fan can now be turned. #}
+        <img class="brand-logo" src="{{ url_for('static', filename='img/fanzart-wordmark.png') }}"
+             alt="Fanzart">
+        <img class="fan-blade" src="{{ url_for('static', filename='img/fanzart-fan.png') }}"
+             alt="" aria-hidden="true">
+      </span>
       <span class="brand-sub">gate pass</span>
     </div>
 

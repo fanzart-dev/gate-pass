@@ -96,11 +96,23 @@ def main():
         prepared_by="Dinesh D")
     db.close(conn)
 
+    # A draft, so /review can be looked at too. The print pages are not the
+    # only screen with a layout worth eyeballing.
+    conn = db.connect(app.config["DB_PATH"])
+    db.create_draft(
+        conn, supplier_name="Golden Touch Exports", customer_name="FANZART LLP",
+        invoice_no="FR 262702188", invoice_date="03-09-2026",
+        remarks="Delivered to site gate by\nFANZART LLP",
+        items=[{"sl_no": i, "item_name": name, "quantity": qty, "cartons": qty}
+               for i, (name, qty) in enumerate(DEMO_ITEMS, 1)])
+    db.close(conn)
+
     print(f"preview at http://127.0.0.1:{port}/print/1  (demo / demo-preview-only)")
     print(f"  /print/1  a normal pass (6 items), with a two-line remark")
     print(f"  /print/2  a full page ({db.ITEMS_PER_PAGE} items) — the tight case")
     print(f"  /print/3  a 20-item pass — the busy end of a normal day")
     print(f"  /print/4  a 32-item pass — one number, printed over 2 pages")
+    print(f"  /drafts    one draft waiting, for the review screen")
     print(f"  sign in as demo (full access), partial (search+cancel) or staff (none)")
     print(f"throwaway data in {storage}")
     app.run(host="127.0.0.1", port=port, debug=False)

@@ -11,8 +11,17 @@
 <body>
   <header class="topbar">
     <a class="brand" href="{{ url_for('upload') }}">
-      <img class="brand-logo" src="{{ url_for('static', filename='img/fanzart-logo.png') }}"
-           alt="Fanzart">
+      <span class="brand-lockup">
+        {# The lockup is one PNG, so the fan cannot be selected inside it the
+           way a path in an SVG could. It is split into two images instead: the
+           wordmark with the fan erased, and the fan on its own square canvas
+           centred on its hub. Same artwork, same size, same position — only the
+           fan can now be turned. #}
+        <img class="brand-logo" src="{{ url_for('static', filename='img/fanzart-wordmark.png') }}"
+             alt="Fanzart">
+        <img class="fan-blade" src="{{ url_for('static', filename='img/fanzart-fan.png') }}"
+             alt="" aria-hidden="true">
+      </span>
       <span class="brand-sub">gate pass</span>
     </a>
     <nav>
@@ -38,12 +47,16 @@
       {% endif %}
       {% if current_user %}
         <span class="nav-divider"></span>
-        <span class="who" title="Printed as 'Prepared by' on passes you issue">
-          {{ current_user.display_name }}
+        {# Name and Sign out in one pill: whose session this is, not two more
+           nav items competing with the tabs beside them. #}
+        <span class="user-pill">
+          <span class="who" title="Printed as 'Prepared by' on passes you issue">
+            {{ current_user.display_name }}
+          </span>
+          <form method="post" action="{{ url_for('logout') }}" class="logout-form">
+            <button type="submit">Sign out</button>
+          </form>
         </span>
-        <form method="post" action="{{ url_for('logout') }}" class="logout-form">
-          <button type="submit" class="link-button">Sign out</button>
-        </form>
       {% endif %}
     </nav>
   </header>

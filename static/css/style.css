@@ -2,49 +2,70 @@
    The printed pass has its own tuned geometry in print.css; nothing here
    touches it. */
 
+/* Slate, not beige. The warm off-white read as washed out under the office
+   strip lights, which is where this is actually used — the greys below are
+   neutral so the ink keeps its contrast under that light rather than going
+   muddy. The brass accent survives as a brand touch, but it no longer carries
+   any contrast work. */
 :root {
-  --ink: #17171a;
-  --ink-2: #45454e;
-  --muted: #7b7b88;
-  --line: #e4e1db;
-  --line-soft: #efedE8;
-  --paper: #f6f5f2;
+  --ink: #0f172a;             /* slate 900 — primary text and solid buttons */
+  --ink-2: #334155;           /* slate 700 — body text in tables            */
+  --muted: #94a3b8;           /* slate 400 — placeholders, quiet labels     */
+  --label: #475569;           /* slate 600 — table headings                 */
+  --line: #e2e8f0;            /* slate 200 — card and input borders         */
+  --line-soft: #edf2f7;       /* the horizontal rules inside a table        */
+  --paper: #f8fafc;           /* slate 50 — the page behind the cards       */
   --card: #ffffff;
-  --brand: #17171a;
-  --accent: #8a6a3a;          /* brass, from the Fanzart wordmark */
+  --hover: #f8fafc;           /* row hover, same as the page: a quiet lift  */
+  --head-bg: #f1f5f9;         /* slate 100 — table header row               */
+  --brand: #0f172a;
+  --brand-hover: #1e293b;     /* slate 800 — primary button hover           */
+  --accent: #8a6a3a;          /* brass, from the Fanzart wordmark           */
   --accent-soft: #f5efe4;
-  --ok: #1c7048;
-  --ok-bg: #e9f5ef;
-  --warn: #855200;
-  --warn-bg: #fdf4e3;
-  --danger: #a02730;
-  --danger-bg: #fcecee;
+  --focus: #0f172a;           /* focus ring: slate, not brass — it has to be
+                                 obvious at a glance on a busy form         */
+  --focus-soft: rgba(15, 23, 42, .12);
+  --blue: #3b82f6;            /* used only for the drop zone's active state */
+  --blue-soft: #eff6ff;
+  --ok: #15803d;
+  --ok-bg: #dcfce7;
+  --warn: #b45309;
+  --warn-bg: #fef3c7;
+  --danger: #b91c1c;
+  --danger-bg: #fee2e2;
   --radius: 10px;
-  --radius-sm: 7px;
-  --shadow: 0 1px 2px rgba(20, 20, 26, .04), 0 6px 18px rgba(20, 20, 26, .05);
-  --shadow-lift: 0 2px 6px rgba(20, 20, 26, .07), 0 12px 28px rgba(20, 20, 26, .08);
+  --radius-sm: 6px;
+  --shadow: 0 1px 3px 0 rgba(0, 0, 0, .05);
+  --shadow-lift: 0 4px 6px -1px rgba(0, 0, 0, .07), 0 2px 4px -2px rgba(0, 0, 0, .05);
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --ink: #ece9e3;
-    --ink-2: #b9b6b0;
-    --muted: #8d8a85;
-    --line: #33322f;
-    --line-soft: #292826;
-    --paper: #131312;
-    --card: #1c1c1a;
-    --brand: #ece9e3;
+    --ink: #f1f5f9;
+    --ink-2: #cbd5e1;
+    --muted: #64748b;
+    --label: #94a3b8;
+    --line: #334155;
+    --line-soft: #1e293b;
+    --paper: #0b1120;
+    --card: #131c2e;
+    --hover: #1a2438;
+    --head-bg: #1a2438;
+    --brand: #e2e8f0;
+    --brand-hover: #cbd5e1;
     --accent: #c9a367;
     --accent-soft: #2a2419;
-    --ok: #6cc394;
-    --ok-bg: #16281f;
-    --warn: #e0b062;
-    --warn-bg: #2b2114;
-    --danger: #e8848d;
-    --danger-bg: #2e1a1c;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 18px rgba(0, 0, 0, .35);
-    --shadow-lift: 0 2px 6px rgba(0, 0, 0, .4), 0 12px 28px rgba(0, 0, 0, .45);
+    --focus: #94a3b8;
+    --focus-soft: rgba(148, 163, 184, .2);
+    --blue: #60a5fa;
+    --blue-soft: #17233b;
+    --ok: #4ade80;
+    --ok-bg: #14311f;
+    --warn: #fbbf24;
+    --warn-bg: #3a2a08;
+    --danger: #f87171;
+    --danger-bg: #3a1618;
   }
 }
 
@@ -62,6 +83,13 @@ body {
   background: var(--paper);
   -webkit-font-smoothing: antialiased;
 }
+
+/* An element carrying the `hidden` attribute must stay hidden. Any rule that
+   sets `display` beats the browser's own [hidden] rule, because author styles
+   win over the user-agent stylesheet — and .notice sets display:flex. The
+   review screen was drawing an empty bar for a notice marked hidden, which
+   went unnoticed only for as long as its tint matched the page behind it. */
+[hidden] { display: none !important; }
 
 /* ---------------------------------------------------------------- top bar */
 
@@ -87,19 +115,86 @@ body {
   color: var(--brand);
 }
 
-/* The Fanzart lockup is solid black artwork, so in dark mode it is inverted
-   rather than sitting in a white box. */
+/* The lockup is two images stacked in one box: the wordmark with the fan
+   erased, and the fan on its own square canvas. Same artwork, same size, same
+   position — only the fan can be turned.
+
+   The wrapper has no width of its own; it shrink-wraps whatever .brand-logo is
+   sized to. Pinning it to 118px broke the login page, which draws the same
+   lockup at 190px: the wrapper stayed 118 and the fan, sized in percentages of
+   it, came out two-thirds too small and off its hub.
+
+   The fan's numbers are percentages, not pixels, so it stays registered to the
+   wordmark at any size, on a lockup that is 1000x336 in the artwork's own
+   coordinates. How they are derived is on .fan-blade below. */
+.brand-lockup {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
 .brand-logo {
   width: 118px;
   height: auto;
   display: block;
 }
 
-@media (prefers-color-scheme: dark) {
-  .brand-logo { filter: invert(1); }
+/* Sized and placed so the blades never reach the wordmark.
+   The blades sweep a circle of radius 128.4px (in the 1000px artwork's
+   coordinates) around the hub, but the "f" is only 110px to the right of it and
+   the tagline only 112px below — so at rest the mark looked right and, once
+   turning, it swept straight through both. Worst case measured at 200
+   overlapping pixels, at 57 degrees.
+   0.89 of the original size, with the hub moved from (101,115) to (86,102),
+   clears everything by 10px of artwork — about 1.2px in the top bar and 1.9px
+   on the login page. Checked by compositing the rotated fan over the wordmark
+   at every single degree: no overlap anywhere, and the gap holds under a 10px
+   dilation of the wordmark.
+   left/top/width carry the placement, NOT transform: transform belongs to the
+   rotation, and a translate or scale there would be overwritten by the
+   keyframes on the first frame.
+     width = 232 * 0.89 / 1000
+     left  = (86 - 232*0.89/2) / 1000
+     top   = (102 - 232*0.89/2) / 336     (top % resolves against height) */
+.fan-blade {
+  position: absolute;
+  left: -1.724%;
+  top: -0.369%;
+  width: 20.648%;
+  height: auto;
+  /* The canvas is centred on the hub, not on the blades' bounding box — the
+     blades are not symmetrical about it, and spinning about the box centre
+     makes the mark wobble instead of turn. */
+  transform-origin: center;
+  animation: fan-spin 8s linear infinite;
+  will-change: transform;
 }
-:root[data-theme="light"] .brand-logo { filter: none; }
-:root[data-theme="dark"] .brand-logo { filter: invert(1); }
+
+/* Anticlockwise. The blades are swept, so they have a leading and a trailing
+   edge: turned the other way a real fan of this shape would be pushing air
+   backwards, and the eye reads it as running in reverse even though the motion
+   is perfectly smooth. */
+@keyframes fan-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(-360deg); }
+}
+
+/* Something that never stops moving, in the corner of every screen, all day.
+   Anyone who has asked their system to calm animations down gets a still fan. */
+@media (prefers-reduced-motion: reduce) {
+  .fan-blade { animation: none; }
+}
+
+/* The Fanzart artwork is solid black, so in dark mode it is inverted rather
+   than sitting in a white box. Both halves, or the fan stays black on a dark
+   bar while the wordmark goes white. */
+@media (prefers-color-scheme: dark) {
+  .brand-logo, .fan-blade { filter: invert(1); }
+}
+:root[data-theme="light"] .brand-logo,
+:root[data-theme="light"] .fan-blade { filter: none; }
+:root[data-theme="dark"] .brand-logo,
+:root[data-theme="dark"] .fan-blade { filter: invert(1); }
 
 .brand-sub {
   font-size: 8.5px;
@@ -127,10 +222,16 @@ body {
 
 .topbar nav a:hover { background: var(--line-soft); color: var(--ink); }
 
+/* The active tab is a solid slate pill. Tried a bottom-border accent first;
+   with the nav on a white bar it reads as an underlined link rather than as
+   "you are here", and it moves the text off the baseline of its neighbours. */
 .topbar nav a.active {
   background: var(--brand);
   color: var(--card);
+  font-weight: 600;
 }
+
+.topbar nav a.active:hover { background: var(--brand-hover); color: var(--card); }
 
 .nav-divider {
   width: 1px;
@@ -139,15 +240,42 @@ body {
   margin: 0 6px;
 }
 
+/* Name and Sign out share one pill so they read as one thing — whose session
+   this is — rather than as two more nav items competing with the tabs. */
+.user-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  white-space: nowrap;
+}
+
 .who {
   font-size: 13.5px;
   font-weight: 600;
   color: var(--ink);
   white-space: nowrap;
-  padding-left: 2px;
 }
 
-.logout-form { display: inline; margin-left: 10px; }
+.logout-form { display: inline; margin: 0; }
+
+.user-pill .logout-form button {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  border: 1px solid transparent;
+  background: var(--head-bg);
+  color: var(--ink-2);
+}
+
+.user-pill .logout-form button:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: transparent;
+}
 
 /* ------------------------------------------------------------ login page */
 
@@ -226,8 +354,8 @@ h1 {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  padding: 22px 24px;
   box-shadow: var(--shadow);
-  padding: 22px;
 }
 
 /* -------------------------------------------------------------- steps bar */
@@ -319,17 +447,22 @@ label {
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
-  color: var(--muted);
+  /* --muted is the placeholder grey. A caption in the same grey as the hint
+     inside the box it labels gives the eye nothing to hold on to. */
+  color: var(--label);
   margin-bottom: 5px;
 }
 
 input[type="text"],
 input[type="file"],
+input[type="password"],
+input[type="date"],
+input[type="number"],
 textarea,
 select {
   width: 100%;
   padding: 9px 11px;
-  border: 1px solid var(--line);
+  border: 1px solid #cbd5e1;
   border-radius: var(--radius-sm);
   font: inherit;
   font-size: 14.5px;
@@ -339,12 +472,21 @@ select {
 }
 
 input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="date"]:focus,
+input[type="number"]:focus,
 textarea:focus,
 select:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  /* A slate ring rather than the brass one. Brass on a warm background was
+     nearly invisible; on a busy form the focused field has to be findable
+     without hunting for it. */
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-soft);
 }
+
+::placeholder { color: var(--muted); opacity: 1; }
 
 /* Remarks. Starts exactly as tall as the single-line fields beside it so the
    row does not sit in a hole, and grows when there is more to say. Tighter
@@ -417,7 +559,7 @@ button, .button {
   transition: background .15s, border-color .15s, transform .05s;
 }
 
-button:hover, .button:hover { background: var(--line-soft); }
+button:hover, .button:hover { background: var(--head-bg); border-color: var(--muted); }
 button:active, .button:active { transform: translateY(1px); }
 
 button.primary {
@@ -426,7 +568,24 @@ button.primary {
   color: var(--card);
   font-weight: 600;
 }
-button.primary:hover { opacity: .88; background: var(--brand); }
+/* A real colour change, not a transparency fade: the old opacity trick let
+   the page show through and made the button look disabled on hover. */
+button.primary:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
+
+/* Third level: undo actions, which must be reachable without competing with
+   the thing the screen is actually for. */
+button.quiet, .button.quiet {
+  border-color: transparent;
+  background: none;
+  color: var(--label);
+  box-shadow: none;
+}
+
+button.quiet:hover, .button.quiet:hover {
+  background: var(--head-bg);
+  border-color: transparent;
+  color: var(--ink);
+}
 
 button.danger { color: var(--danger); border-color: var(--line); }
 button.danger:hover { background: var(--danger-bg); border-color: var(--danger); }
@@ -437,10 +596,9 @@ button.link-button {
   padding: 0;
   font-size: 13.5px;
   color: var(--ink-2);
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  text-decoration: none;
 }
-button.link-button:hover { background: none; color: var(--danger); }
+button.link-button:hover { background: none; color: var(--danger); text-decoration: none; }
 
 .form-actions {
   display: flex;
@@ -458,18 +616,28 @@ button.link-button:hover { background: none; color: var(--danger); }
 
 .dropzone {
   display: block;
-  border: 1.5px dashed var(--line);
+  border: 2px dashed #cbd5e1;
   border-radius: var(--radius);
-  background: var(--card);
+  background: #fafafa;
   padding: 46px 24px;
   text-align: center;
   cursor: pointer;
-  transition: border-color .15s, background .15s;
+  transition: border-color .15s, background .15s, color .15s;
+  color: var(--muted);
+  /* The drop zone IS a <label>, so it inherits the uppercase and letter
+     spacing meant for short field captions. On a whole sentence that is hard
+     to read and was shouting DRAG & DROP INVOICE PDFS OR CLICK TO BROWSE. */
+  text-transform: none;
+  letter-spacing: normal;
 }
 
+/* Blue only here. It is the one place in the app where the target is a thing
+   you aim at rather than read, and it has to say "let go here" while a file is
+   already hovering over it. */
 .dropzone:hover, .dropzone.dragover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: var(--blue);
+  background: var(--blue-soft);
+  color: var(--blue);
 }
 
 .dropzone input[type="file"] {
@@ -478,12 +646,19 @@ button.link-button:hover { background: none; color: var(--danger); }
   opacity: 0; pointer-events: none;
 }
 
-.dropzone-icon { font-size: 30px; line-height: 1; }
+.dropzone-icon {
+  width: 40px;
+  height: 40px;
+  margin: 0 auto;
+  display: block;
+  color: inherit;         /* picks up the blue on hover */
+}
 
 .dropzone-title {
   margin-top: 12px;
   font-size: 16px;
   font-weight: 600;
+  color: var(--ink);
 }
 
 .dropzone-sub { margin-top: 4px; font-size: 13px; color: var(--muted); }
@@ -492,7 +667,7 @@ button.link-button:hover { background: none; color: var(--danger); }
   margin-top: 14px;
   font-size: 13.5px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--ink-2);
   word-break: break-all;
 }
 
@@ -511,15 +686,22 @@ table.items-editor, table.list {
   font-size: 14px;
 }
 
+/* Below this the fixed column percentages stop working: the status column gets
+   too narrow for its badge and clips it to "ISSU". .table-wrap already scrolls,
+   so a narrow window scrolls the table sideways rather than crushing it. */
+table.list { min-width: 920px; }
+
 table.items-editor th, table.list th {
   text-align: left;
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: 12px;              /* 0.75rem */
+  font-weight: 700;
   letter-spacing: .05em;
   text-transform: uppercase;
-  color: var(--muted);
-  background: var(--line-soft);
-  padding: 9px 12px;
+  /* Darker than the old --muted: a heading row that is fainter than the data
+     under it stops working as a heading. */
+  color: var(--label);
+  background: var(--head-bg);
+  padding: 10px 16px;
   white-space: nowrap;
   border-bottom: 1px solid var(--line);
 }
@@ -529,7 +711,11 @@ table.items-editor td, table.list td {
   border-bottom: 1px solid var(--line-soft);
 }
 
-table.list td { padding: 11px 12px; vertical-align: middle; }
+table.list td {
+  padding: 12px 16px;
+  vertical-align: middle;
+  color: var(--ink-2);
+}
 table.items-editor tbody tr:last-child td,
 table.list tbody tr:last-child td { border-bottom: none; }
 
@@ -567,7 +753,11 @@ table.items-editor input[name="cartons"] {
 /* Cartons depend on how the goods are actually packed — one fan can be two
    cartons, several spares can share a box — so the operator always types them.
    Tinted to read as their column, never as something the app filled. */
-table.items-editor input[name="cartons"] { background: var(--accent-soft); }
+/* The cartons column is tinted because it is the one the operator is expected
+   to touch. Brass on the old warm palette; on slate that read as a stain, so
+   it is a neutral tint now — still visibly the odd column out, without
+   introducing a second accent colour to the screen. */
+table.items-editor input[name="cartons"] { background: var(--head-bg); }
 table.items-editor input[name="cartons"]:focus { background: var(--card); }
 
 .col-note {
@@ -605,7 +795,51 @@ table.items-editor input[name="cartons"]:focus { background: var(--card); }
 
 /* ------------------------------------------------------------ lists/table */
 
-table.list tbody tr:hover { background: var(--line-soft); }
+table.list tbody tr:hover { background: var(--hover); }
+
+/* Identifiers are read digit by digit, compared against a paper invoice and
+   typed into other systems, so they get a monospace face where 0/O and 1/l are
+   not the same shape, and full-strength ink. */
+table.list .serial-cell,
+table.list .invoice-cell {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 13px;
+  letter-spacing: -.01em;
+  /* Monospace is wider than the body face, so "FR 262702188" broke over two
+     lines in the narrower Drafts column. A reference number split across lines
+     is one that gets misread back to somebody over the phone. */
+  white-space: nowrap;
+}
+
+/* Actions read as things you press, not as prose links. */
+.actions-inner a,
+.actions-cell > a,
+.actions-inner button.link-button {
+  display: inline-block;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink-2);
+  text-decoration: none;
+  transition: background .15s, border-color .15s, color .15s;
+}
+
+.actions-inner a:hover,
+.actions-cell > a:hover,
+.actions-inner button.link-button:hover {
+  background: var(--head-bg);
+  border-color: var(--muted);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.actions-inner button.link-button:hover { color: var(--danger); border-color: var(--danger); }
 table.list tr.cancelled td:not(.actions-cell) { color: var(--muted); }
 table.list tr.cancelled .serial-cell { text-decoration: line-through; }
 
@@ -624,6 +858,10 @@ table.list tr.cancelled .serial-cell { text-decoration: line-through; }
   font-weight: 600;
   letter-spacing: .03em;
   text-transform: uppercase;
+  /* A wrapped badge renders as a lozenge with "ISSUE" over "D" in it, which is
+     what happened the moment the action links became buttons and took width
+     out of the status column. */
+  white-space: nowrap;
 }
 .pill.issued, .pill.approved { background: var(--ok-bg); color: var(--ok); }
 .pill.cancelled, .pill.rejected { background: var(--danger-bg); color: var(--danger); }
@@ -676,8 +914,11 @@ table.list tr.cancelled .serial-cell { text-decoration: line-through; }
 .actions-cell button { padding: 6px 12px; font-size: 13px; }
 .actions-cell form + form { margin-left: 8px; }
 
-.actions-cell a { color: var(--ink-2); font-size: 13.5px; text-decoration: underline; text-underline-offset: 2px; }
-.actions-cell a:hover { color: var(--accent); }
+/* No underline: these are buttons now, and this rule sits after the button
+   styling so it was quietly putting the underline back on every Print and
+   Open in the register. */
+.actions-cell a { color: var(--ink-2); font-size: 13.5px; text-decoration: none; }
+.actions-cell a:hover { text-decoration: none; }
 .actions-cell > * + * { margin-left: 12px; }
 
 .filters {
@@ -916,10 +1157,12 @@ button.secondary { background: var(--card); }
 
 /* A long invoice is information, not a failure — it still becomes one gate
    pass, just printed over more pages. */
+/* Informational, not a warning: the plain .notice is amber and this must not
+   look like one. Brass on the old warm palette; slate-blue on this one. */
 .notice.info {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--blue-soft);
+  border-color: #bfdbfe;
+  color: #1d4ed8;
 }
 
 /* Setting a password needs two matching entries, so it gets a small dialog
@@ -1003,13 +1246,13 @@ table.list td {
 .reg-issued   { width: 14%; }
 .reg-by       { width: 11%; }
 .reg-from     { width: 14%; }
-.reg-customer { width: 18%; }
+.reg-customer { width: 16%; }
 .reg-invoice  { width: 11%; }
-.reg-status   { width: 7%;  }
+.reg-status   { width: 9%;  }
 /* 11%, not 8%: "Print" + "Cancel" plus the cell padding measures about 130px,
    which is 10.6% of the table. At 8% they would overflow the cell — the very
    clipping this layout is meant to prevent. */
-.reg-actions  { width: 11%; }
+.reg-actions  { width: 12%; }
 
 /* Keep the two actions on one line, hard against the right edge.
    The flex row is the inner div: putting display:flex on the <td> itself takes
@@ -1268,4 +1511,12 @@ table.people-table th { padding: 10px 12px !important; }
 
 @media (max-width: 640px) {
   .dialog-grid, .perm-grid-2 { grid-template-columns: 1fr; }
+}
+
+
+/* ------------------------------------------------------------------ print */
+/* Nothing on paper animates. The fan is frozen where it stands rather than
+   hidden, so a printed page still carries the whole lockup. */
+@media print {
+  .fan-blade { animation: none !important; }
 }
