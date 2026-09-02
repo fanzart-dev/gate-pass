@@ -57,6 +57,16 @@
     // instead of replacing each other.
     let chosen = [];
 
+    // Some of the hint elements are optional and have come and gone from the
+    // markup. Setting .hidden on a missing one throws, and because that happened
+    // inside addFiles it killed the handler BEFORE render() ran -- so picking
+    // files updated nothing at all and the drop zone looked inert. Silence about
+    // an absent hint is fine; silence about the whole file list is not.
+    function toggle(id, hidden) {
+      const el = document.getElementById(id);
+      if (el) el.hidden = hidden;
+    }
+
     function humanSize(bytes) {
       if (bytes < 1024) return bytes + " B";
       if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " KB";
@@ -91,8 +101,8 @@
         if (!duplicate) chosen.push(file);
       }
       if (chosen.length) {
-        document.getElementById("pick-error").hidden = true;
-        document.getElementById("pick-hint").hidden = false;
+        toggle("pick-error", true);
+        toggle("pick-hint", false);
       }
       render();
     }
@@ -154,11 +164,11 @@
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!chosen.length) {
-        document.getElementById("pick-error").hidden = false;
-        document.getElementById("pick-hint").hidden = true;
+        toggle("pick-error", false);
+        toggle("pick-hint", true);
         return;
       }
-      document.getElementById("pick-error").hidden = true;
+      toggle("pick-error", true);
 
       submitBtn.disabled = true;
       progressWrap.hidden = false;

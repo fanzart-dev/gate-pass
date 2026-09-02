@@ -45,10 +45,11 @@
             <div><span class="key key-doc">Document No</span>: <strong>{{ gate_pass.invoice_no }}</strong></div>
             <div><span class="key key-doc">Date</span>: <strong>{{ gate_pass.invoice_date }}</strong></div>
           </td>
-          {# Deliberately empty, like the cartons column: remarks are written at
-             the gate by whoever hands the goods over, and there is nowhere on
-             an invoice for them to come from. The box exists to be written in. #}
-          <td class="remarks-cell">Remarks :</td>
+          {# Prints whatever was typed on the review screen, and stays empty
+             when nothing was — so the box is still there to be written in by
+             hand at the gate. Never parsed from the invoice: a remark is a note
+             about the consignment, and no invoice carries one. #}
+          <td class="remarks-cell">Remarks : {% if gate_pass.remarks %}<strong>{{ gate_pass.remarks }}</strong>{% endif %}</td>
         </tr>
       </table>
 
