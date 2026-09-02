@@ -192,9 +192,16 @@ def paginate_items(items, per_page=None):
     return [numbered[i:i + per_page] for i in range(0, len(numbered), per_page)] or [[]]
 
 DEFAULT_SETTINGS = {
-    # Serials are <prefix>-<5 digits>, e.g. FZ-00001. The prefix identifies the
-    # run; starting a new run takes a new prefix so a number is never repeated.
+    # Serials are <prefix><separator><5 digits>, e.g. FZ-00001. The prefix names
+    # the run and may carry its own separator (FZ, FZ-, FZ27-, FZ/).
     "serial_prefix": "FZ",
+    # The lowest number the next pass may take. Normally 0, meaning "carry on
+    # from the last one issued". Set when somebody deliberately jumps the
+    # numbering forward — after a box of pre-printed stationery is spoiled, say.
+    # A stored floor rather than a placeholder row, because a fake gate pass
+    # inserted to hold a gap would show up in the register and in every report
+    # as a real one.
+    "serial_min_seq": "0",
     "paper_mode": "a4x2",  # "a4x2" (two A5 passes on A4 landscape) or "a5" (one per sheet)
     "show_totals": "0",
     "show_vehicle": "0",
@@ -413,19 +420,60 @@ def _migrate(conn):
                     pass
 
 
-PREFIX_RE = re.compile(r"[A-Za-z0-9]{1,10}")
+# A run is named by a prefix, optionally ending in the separator that will be
+# printed before the digits: FZ, FZ-, FZ27-, FZ/. Without one, a dash is used,
+# so FZ and FZ- both print FZ-00001 and neither produces FZ--00001.
+SERIAL_SEPARATORS = "-/_."
+PREFIX_RE = re.compile(r"[A-Za-z0-9]{1,10}[-/_.]?")
+
+# "FZ-00001" typed in full: the leading part is the prefix and the digits are
+# where to start. Only split on an explicit separator, or FZ27 would be read as
+# prefix FZ starting at 27 rather than as a prefix in its own right.
+RUN_SPEC_RE = re.compile(r"^\s*([A-Za-z0-9]{1,10}[-/_.])(\d{1,6})\s*$")
 
 
 def serial_for(prefix, seq):
+    """FZ + 1 -> FZ-00001. FZ- + 1 -> FZ-00001. FZ/ + 1 -> FZ/00001."""
+    prefix = (prefix or "").strip().upper()
+    if prefix and prefix[-1] in SERIAL_SEPARATORS:
+        return f"{prefix}{seq:05d}"
     return f"{prefix}-{seq:05d}"
 
 
+def run_scope(prefix):
+    """Which RUN a prefix belongs to — the counter is shared across spellings.
+
+    FZ, FZ- and FZ/ are one run. If they were separate, FZ and FZ- would each
+    count from one and both produce FZ-00001, and the second would be refused
+    by the database at the moment somebody pressed Issue.
+
+    Stripping the separator also means this matches the scopes already in the
+    book, which were stored before prefixes could carry one.
+    """
+    return (prefix or "").strip().upper().rstrip(SERIAL_SEPARATORS)
+
+
+def parse_run_spec(text):
+    """Read what the user typed into (prefix, starting number or None).
+
+    Accepts a bare prefix ("FZ", "FZ-", "FZ27-") or a whole example serial
+    ("FZ-00001"), because the second is what people actually have in mind and
+    typing it should not be an error.
+    """
+    text = (text or "").strip()
+    whole = RUN_SPEC_RE.match(text)
+    if whole:
+        return validate_prefix(whole.group(1)), int(whole.group(2))
+    return validate_prefix(text), None
+
+
 def validate_prefix(prefix):
-    """A prefix is the part before the dash, e.g. FZ in FZ-00001."""
+    """A prefix is the part before the digits, e.g. FZ or FZ- in FZ-00001."""
     prefix = (prefix or "").strip().upper()
     if not PREFIX_RE.fullmatch(prefix):
         raise ValueError(
-            "the prefix must be 1 to 10 letters or digits, with no spaces or symbols")
+            "the prefix must be 1 to 10 letters or digits, optionally ending in "
+            "- / _ or . — for example FZ, FZ- or FZ27-")
     return prefix
 
 
@@ -436,13 +484,30 @@ def current_prefix(conn):
 def prefix_in_use(conn, prefix):
     """Whether any gate pass was ever issued under this prefix.
 
-    Reusing one would restart the count at 00001 and hand out a number that
-    already exists on a printed pass, so a new run must take a fresh prefix.
+    No longer a reason to refuse a prefix — reusing one RESUMES its count
+    rather than restarting it, because next_seq reads MAX(serial_seq) for the
+    run. Kept because the settings screen says what will happen, and because
+    start_new_run needs to know whether "restarting" is the honest word.
     """
     row = conn.execute(
-        "SELECT 1 FROM gate_passes WHERE serial_scope = ? LIMIT 1", (prefix,)
+        "SELECT 1 FROM gate_passes WHERE serial_scope = ? LIMIT 1", (run_scope(prefix),)
     ).fetchone()
     return row is not None
+
+
+def seq_after_last_issued(conn, scope):
+    """The number after the highest ever issued in this run, ignoring the floor.
+
+    Separate from next_seq because the floor is a single setting shared by
+    whichever run is current. Switching from a run that was jumped forward to
+    200 must not carry that 200 onto a different prefix, so start_new_run asks
+    what the ROWS say and sets the floor itself.
+    """
+    row = conn.execute(
+        "SELECT MAX(serial_seq) AS highest FROM gate_passes WHERE serial_scope = ?",
+        (run_scope(scope),),
+    ).fetchone()
+    return (row["highest"] or 0) + 1
 
 
 def next_seq(conn, scope):
@@ -453,16 +518,22 @@ def next_seq(conn, scope):
     IS the last row. Cancelled passes keep their number and still count, so a
     cancellation never causes the next pass to reuse it.
 
+    The one thing not in the rows is a deliberate jump forward, so the stored
+    floor is applied on top. It only ever raises the answer, never lowers it —
+    a floor below what has already been issued is ignored rather than handing
+    out a number twice.
+
     Only correct when called inside writing() — BEGIN IMMEDIATE holds the write
     lock, so no other connection can insert between this read and our insert.
     The (serial_scope, serial_seq) index makes it a single index lookup, not a
     scan, however large the book gets.
     """
-    row = conn.execute(
-        "SELECT MAX(serial_seq) AS highest FROM gate_passes WHERE serial_scope = ?",
-        (scope,),
-    ).fetchone()
-    return (row["highest"] or 0) + 1
+    after_last = seq_after_last_issued(conn, scope)
+    try:
+        floor = int(get_settings(conn).get("serial_min_seq") or 0)
+    except (TypeError, ValueError):
+        floor = 0
+    return max(after_last, floor)
 
 
 def next_serial_preview(conn):
@@ -471,30 +542,55 @@ def next_serial_preview(conn):
     return serial_for(prefix, next_seq(conn, prefix))
 
 
-def start_new_run(conn, prefix, started_by=""):
-    """Begin numbering again from 00001 under a new prefix.
+def start_new_run(conn, prefix, start_at=None, started_by=""):
+    """Begin numbering under `prefix`, from `start_at` or the next free number.
 
-    Nothing is deleted: every pass issued under the previous prefix keeps its
-    number and stays in the register. Only the counter for the new prefix starts
-    at one.
+    Nothing is ever deleted: every pass already issued keeps its number and
+    stays in the register.
+
+    A prefix that has been used before is allowed. It used to be refused, on
+    the reasoning that a new run starts at 00001 and would hand out a number
+    that is already on a printed pass. That is only true of a FRESH prefix:
+    next_seq reads MAX(serial_seq) for the run, so reusing FZ after FZ-00115
+    continues at FZ-00116. The rule was protecting against something that
+    could not happen, while blocking the thing people actually want — going
+    back to a clean FZ- after a run under an awkward prefix.
+
+    What genuinely cannot happen is issuing a number twice. The database
+    enforces that itself, with a UNIQUE constraint on (serial_scope,
+    serial_seq); removing the check here would not have allowed a duplicate,
+    only moved the failure from a sentence on this screen to an IntegrityError
+    at the moment somebody pressed Issue. So the check is not removed, it is
+    narrowed: it now refuses only a starting number that is actually taken, and
+    says which number is free.
     """
     prefix = validate_prefix(prefix)
-    if prefix_in_use(conn, prefix):
+    scope = run_scope(prefix)
+    first_free = seq_after_last_issued(conn, scope)
+
+    if start_at is None:
+        start_at = first_free
+    start_at = int(start_at)
+    if start_at < 1:
+        raise ValueError("the starting number must be 1 or more")
+    if start_at < first_free:
         raise ValueError(
-            f"gate passes have already been issued as {prefix}-00001 and up — "
-            "pick a prefix that has not been used, so no number is ever repeated")
-    if prefix == current_prefix(conn):
-        raise ValueError(f"the current run already uses {prefix}")
+            f"{serial_for(prefix, start_at)} has already been issued — "
+            f"the first free number under {prefix} is "
+            f"{serial_for(prefix, first_free)}. To begin again at "
+            f"{serial_for(prefix, 1)}, use a prefix that has not been used, or "
+            f"clear the passes already issued under this one")
 
     previous = current_prefix(conn)
     with writing(conn):
         update_settings(conn, serial_prefix=prefix)
+        update_settings(conn, serial_min_seq=str(start_at))
         conn.execute(
             "INSERT INTO audit_log (action, details) VALUES ('new_serial_run', ?)",
-            (f"numbering restarted at {serial_for(prefix, 1)} (was {previous}) "
+            (f"numbering set to {serial_for(prefix, start_at)} (was {previous}) "
              f"by {started_by or 'unknown'}",),
         )
-    return prefix
+    return prefix, start_at
 
 
 def _now():
@@ -1220,11 +1316,17 @@ def create_gate_passes_batch(conn, draft_ids, prepared_by="", prepared_by_user_i
     return [get_gate_pass(conn, i) for i in issued_ids], skipped
 
 
-def _insert_gate_pass(conn, scope, seq, supplier_name, customer_name, invoice_no,
+def _insert_gate_pass(conn, prefix, seq, supplier_name, customer_name, invoice_no,
                        invoice_date, vehicle_no, items, invoice_pdf_path,
                        prepared_by, prepared_by_user_id, source, remarks=""):
     """One pass at an already-allocated number. Caller holds the write lock."""
-    serial_no = serial_for(scope, seq)
+    serial_no = serial_for(prefix, seq)
+    # The COLUMN gets the canonical run, not the prefix as spelled. Storing
+    # "FZ27-" here while next_seq looked the run up as "FZ27" made MAX() find
+    # nothing, so every pass was allocated number 1 and the second one issued
+    # died on the UNIQUE constraint. The serial STRING keeps the separator; the
+    # scope is what identifies the run.
+    scope = run_scope(prefix)
     # issued_at is set here rather than left to the column default. Changing a
     # DEFAULT in schema.sql only affects databases created afterwards — an
     # existing table keeps the default it was made with — so relying on it left

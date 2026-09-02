@@ -258,13 +258,46 @@ count, so cancelling never causes the next pass to reuse one.
 count runs on until an admin deliberately restarts it under Settings →
 Numbering (`db.start_new_run`).
 
-**Restarting requires a new prefix.** Going back to `00001` under the same
-prefix would produce a second gate pass carrying a number already printed on a
-first one, breaking rule 8. So `start_new_run()` refuses a prefix that any pass
-has ever been issued under, and refuses the one currently in use. `FZ` → `FZ27`
-→ `FZ28` keeps every number unique for good. Restarting deletes nothing: passes
-from earlier runs keep their numbers and stay in the register, and the restart
-itself is written to the audit log.
+**Any prefix, any free number.** `start_new_run(conn, prefix, start_at=None)`
+takes a prefix — `FZ`, `FZ-`, `FZ27-`, `FZ/` — and optionally the number to
+start at. `db.parse_run_spec` also accepts a whole example (`FZ-00001`) and
+splits it, but only on an explicit separator, or `FZ27` would be read as `FZ`
+starting at 27.
+
+**Reusing a prefix is allowed, and resumes rather than restarts.** It used to
+be refused, on the reasoning that a new run starts at `00001` and would hand out
+a number already printed on a pass. That is only true of a *fresh* prefix:
+`next_seq` reads `MAX(serial_seq)` for the run, so reusing `FZ` after `FZ-00003`
+continues at `FZ-00004`. The rule was guarding against something that could not
+happen while blocking what people actually want — going back to a clean `FZ-`
+after a run under an awkward prefix.
+
+Rule 8 is not enforced here at all. It is enforced by the database: `serial_no`
+is `UNIQUE` and so is `(serial_scope, serial_seq)`. Removing the Python check
+never permitted a duplicate — it only moved the failure from a sentence on the
+settings screen to an `IntegrityError` at the moment somebody pressed Issue. So
+the check is narrowed, not removed: it refuses a starting number that is already
+taken, and names the first free one.
+
+**The prefix and the run are different things.** `run_scope()` strips any
+trailing separator, so `FZ`, `FZ-` and `FZ/` share one counter — otherwise `FZ`
+and `FZ-` would each count from one and both produce `FZ-00001`. The serial
+*string* keeps the separator; the `serial_scope` *column* stores the canonical
+run. Getting that backwards is a real bug that was caught here: storing `FZ27-`
+in the column while looking the run up as `FZ27` made `MAX()` find nothing, so
+every pass was allocated number 1 and the second one issued died on the UNIQUE
+constraint.
+
+**Jumping forward** (a spoiled box of pre-printed stationery) is a stored floor,
+`serial_min_seq`, applied on top of `MAX(serial_seq)` and only ever raising it.
+A floor rather than a placeholder row, because a fake gate pass inserted to hold
+a gap would appear in the register and in every report as a real one. It is one
+global setting, so `start_new_run` reads `seq_after_last_issued()` — the rows
+alone — and sets the floor itself, or a jump on one prefix would follow you onto
+the next.
+
+Changing the numbering deletes nothing: passes from earlier runs keep their
+numbers and stay in the register, and the change is written to the audit log.
 
 Older passes issued before this change keep their original
 `GP/<fiscal-year>/<seq>` numbers — serials are immutable, so a register may show

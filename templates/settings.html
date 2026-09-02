@@ -52,25 +52,41 @@
     {% if current_user.is_admin %}
       <form method="post" action="{{ url_for('new_serial_run') }}">
         <div class="danger-zone-head">Restarting the numbering</div>
-        <div class="field">
-          <label for="prefix">Start numbering again from 00001, using this prefix</label>
-          <input type="text" id="prefix" name="prefix" placeholder="e.g. FZ27"
-                 maxlength="10" autocapitalize="characters">
+        <div class="grid-2">
+          <div class="field">
+            <label for="prefix">Prefix or starting format</label>
+            <input type="text" id="prefix" name="prefix" placeholder="e.g. FZ- or FZ-00001"
+                   maxlength="17" autocapitalize="characters">
+          </div>
+          <div class="field">
+            <label for="start_at">Next number <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
+            <input type="text" id="start_at" name="start_at" placeholder="e.g. 1"
+                   inputmode="numeric" maxlength="6">
+          </div>
         </div>
         <p class="hint">
-          A new run has to use a prefix that has never been used before. If it
-          reused <strong>{{ settings.serial_prefix }}</strong>, the count would
-          go back to {{ settings.serial_prefix }}-00001 and you would end up with
-          two different gate passes carrying the same number.
-          <strong>Nothing is deleted</strong> &mdash; every pass already issued keeps its
-          number and stays in the register.
+          Enter the custom prefix or starting format (e.g. <strong>FZ-</strong> or
+          <strong>FZ27-</strong>) and set the next starting number. Resetting will
+          start new gate passes from your exact specified format (e.g.
+          <strong>FZ-00001</strong>). Typing a whole example such as
+          <strong>FZ-00001</strong> sets both at once.
+        </p>
+        <p class="hint">
+          A prefix that has been used before is fine &mdash; the count carries on
+          from the last number issued under it rather than going back to 00001,
+          so <strong>{{ settings.serial_prefix }}</strong> would continue at
+          <strong>{{ next_serial }}</strong>. A number that has already been
+          issued cannot be handed out again: the register refuses it, and the
+          screen will tell you the first free one.
+          <strong>Nothing is deleted</strong> &mdash; every pass already issued keeps
+          its number and stays in the register.
         </p>
         <label class="checkbox" style="margin-top:12px">
           <input type="checkbox" name="confirm" value="yes">
-          <span>I want to restart the numbering</span>
+          <span>I want to change the numbering</span>
         </label>
         <div class="form-actions">
-          <button type="submit" class="danger">Start New Run</button>
+          <button type="submit" class="danger">Set Numbering</button>
         </div>
       </form>
     {% else %}

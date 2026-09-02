@@ -957,9 +957,18 @@ def test_carton_lookup_rules(tmpdir):
     conn.close()
 
 
-def test_starting_a_new_numbering_run(tmpdir):
-    """An admin decides when numbering starts again from 00001. Restarting must
-    never repeat a number, and must never lose what came before."""
+def test_setting_the_numbering(tmpdir):
+    """An admin can point the numbering at any prefix and any free number.
+
+    A prefix that has been used before is allowed. It used to be refused, on
+    the reasoning that a new run starts at 00001 and would hand out a number
+    already on a printed pass — but that is only true of a FRESH prefix, since
+    the next number is read from MAX(serial_seq) for the run. Reusing FZ after
+    FZ-00003 continues at FZ-00004.
+
+    What still cannot happen is issuing a number twice, and that is enforced by
+    the database, not by this check: (serial_scope, serial_seq) is UNIQUE.
+    """
     flask_app, admin = logged_in_app(tmpdir, "run_storage",
                                       users=(("ravi", "Ravi Kumar"), ("asha", "Asha Nair")))
     conn = db.connect(flask_app.config["DB_PATH"])
@@ -971,61 +980,97 @@ def test_starting_a_new_numbering_run(tmpdir):
              for i in range(3)]
     check("the first run numbers straight through",
           [gp["serial_no"] for gp in first] == ["FZ-00001", "FZ-00002", "FZ-00003"])
-    check("the preview shows what comes next",
-          db.next_serial_preview(conn) == "FZ-00004")
 
-    check("a run cannot restart under the prefix already in use",
-          raises(ValueError, db.start_new_run, conn, "FZ"))
-    check("a run cannot restart under a prefix that has issued passes",
-          raises(ValueError, db.start_new_run, conn, "fz"))
-    check("an invalid prefix is refused", raises(ValueError, db.start_new_run, conn, "FZ 27"))
+    # Reuse resumes; it does not restart.
+    prefix, start = db.start_new_run(conn, "FZ", started_by="Ravi Kumar")
+    check("reusing the current prefix carries on from the last number", start == 4)
+    check("and the preview agrees", db.next_serial_preview(conn) == "FZ-00004")
+    check("spelled with a trailing separator it is the same run",
+          db.start_new_run(conn, "FZ-", started_by="Ravi Kumar") == ("FZ-", 4))
+    check("and prints only one separator", db.next_serial_preview(conn) == "FZ-00004")
+    check("lower case is the same run too",
+          db.start_new_run(conn, "fz", started_by="Ravi Kumar") == ("FZ", 4))
+
+    check("a prefix with a space is refused",
+          raises(ValueError, db.start_new_run, conn, "FZ 27"))
+    check("a number already issued is refused",
+          raises(ValueError, db.start_new_run, conn, "FZ", 1))
+    try:
+        db.start_new_run(conn, "FZ", 1)
+    except ValueError as exc:
+        check("and the message names the first free number", "FZ-00004" in str(exc))
     check("the failed attempts changed nothing",
           db.next_serial_preview(conn) == "FZ-00004")
 
-    db.start_new_run(conn, "FZ27", started_by="Ravi Kumar")
-    check("a new run starts at 00001 again",
+    # A whole example serial sets prefix and starting number together.
+    check("FZ-00001 parses into a prefix and a start",
+          db.parse_run_spec("FZ-00001") == ("FZ-", 1))
+    check("but FZ27 is a prefix in its own right, not FZ starting at 27",
+          db.parse_run_spec("FZ27") == ("FZ27", None))
+
+    db.start_new_run(conn, "FZ27-", 1, started_by="Ravi Kumar")
+    check("a new run starts where it was asked to",
           db.next_serial_preview(conn) == "FZ27-00001")
     second = db.create_gate_pass(conn, None, "S", "C", "NEW", "03-08-2026", "",
                                  sample_items(), prepared_by="Ravi Kumar")
     check("the first pass of the new run is numbered 00001",
           second["serial_no"] == "FZ27-00001")
+    check("a second one follows it rather than colliding",
+          db.create_gate_pass(conn, None, "S", "C", "NEW2", "03-08-2026", "",
+                              sample_items(), prepared_by="Ravi Kumar")["serial_no"]
+          == "FZ27-00002")
 
-    # Nothing from the old run is lost or altered.
-    check("every earlier pass is still in the register", len(db.list_gate_passes(conn)) == 4)
+    # Jumping forward, for a spoiled box of pre-printed stationery.
+    db.start_new_run(conn, "FZ27-", 500, started_by="Ravi Kumar")
+    check("the numbering can be moved forward", db.next_serial_preview(conn) == "FZ27-00500")
+    check("and issues from there",
+          db.create_gate_pass(conn, None, "S", "C", "J", "03-08-2026", "",
+                              sample_items(), prepared_by="Ravi Kumar")["serial_no"]
+          == "FZ27-00500")
+    # The jump is stored as one setting, so it must not follow a different run.
+    db.start_new_run(conn, "FZ", started_by="Ravi Kumar")
+    check("moving back to another prefix does not inherit the jump",
+          db.next_serial_preview(conn) == "FZ-00004")
+
+    # Nothing from any earlier run is lost or altered.
+    check("every earlier pass is still in the register", len(db.list_gate_passes(conn)) == 6)
     check("an earlier pass keeps its own number",
           db.get_gate_pass_by_serial(conn, "FZ-00003") is not None)
-    check("the old and new 00001 are different passes",
+    check("the two 00001s are different passes",
           db.get_gate_pass_by_serial(conn, "FZ-00001")["id"]
           != db.get_gate_pass_by_serial(conn, "FZ27-00001")["id"])
-    check("restarting is recorded in the audit log",
+    check("the change is recorded in the audit log",
           conn.execute("SELECT 1 FROM audit_log WHERE action = 'new_serial_run'").fetchone()
           is not None)
-    check("the old run cannot be resumed once left behind",
-          raises(ValueError, db.start_new_run, conn, "FZ"))
     conn.close()
 
-    # Only admins may restart it, and only deliberately.
+    # Only admins may change it, and only deliberately.
     staff = flask_app.test_client()
     sign_in(staff, "asha")
-    check("a non-admin cannot restart the numbering",
+    check("a non-admin cannot change the numbering",
           staff.post("/settings/new-run",
                       data={"prefix": "XX", "confirm": "yes"}).status_code == 302)
     admin.post("/settings/new-run", data={"prefix": "XX"})
     conn = db.connect(flask_app.config["DB_PATH"])
-    check("restarting without ticking the confirmation does nothing",
-          db.next_serial_preview(conn) == "FZ27-00002")
+    check("changing it without ticking the confirmation does nothing",
+          db.next_serial_preview(conn) == "FZ-00004")
     conn.close()
 
-    admin.post("/settings/new-run", data={"prefix": "XX", "confirm": "yes"})
+    admin.post("/settings/new-run", data={"prefix": "XX-", "confirm": "yes"})
     conn = db.connect(flask_app.config["DB_PATH"])
-    check("an admin can restart the numbering from the settings page",
+    check("an admin can set the numbering from the settings page",
           db.next_serial_preview(conn) == "XX-00001")
     check("the settings page shows the next number",
           b"XX-00001" in admin.get("/settings").data)
+
+    admin.post("/settings/new-run",
+               data={"prefix": "XX-", "start_at": "250", "confirm": "yes"})
+    check("a starting number typed on its own is used",
+          db.next_serial_preview(db.connect(flask_app.config["DB_PATH"])) == "XX-00250")
     conn.close()
 
-    check("a non-admin does not see the restart control",
-          b"Start New Run" not in staff.get("/settings").data)
+    check("a non-admin does not see the numbering control",
+          b"Set Numbering" not in staff.get("/settings").data)
 
 
 def test_sequence_derives_from_the_book(tmpdir):
@@ -4060,7 +4105,7 @@ def main():
         test_indexes_are_used(tmpdir)
         test_register_is_capped(tmpdir)
         test_failed_write_rolls_back(tmpdir)
-        test_starting_a_new_numbering_run(tmpdir)
+        test_setting_the_numbering(tmpdir)
         test_users_and_login(tmpdir)
         test_accounts_are_created_by_admins_only(tmpdir)
         test_permissions_are_stored_per_feature(tmpdir)
