@@ -3533,6 +3533,31 @@ def test_hosting_hardening(tmpdir):
     check("with a TLS listener per address given",
           len(re.findall(r"listen [0-9.]+:443 ssl;", rendered)) == 2)
 
+    # A CA certificate is public and must be fetchable — every office machine
+    # needs a copy before the padlock means anything. Locking the directory to
+    # 700 made the one file people need impossible to get without root.
+    make_cert = (ROOT / "deploy" / "make-cert.sh").read_text()
+    check("the certificate directory can be read",
+          'chmod 755 "$CERT_DIR"' in make_cert)
+    check("but the private keys cannot",
+          'chmod 600 "$CERT_DIR/fanzart-ca.key" "$CERT_DIR/server.key"' in make_cert)
+    check("nginx hands the CA out so nobody carries a USB stick",
+          "location = /fanzart-ca.pem" in ssl_conf)
+
+    # The part the usual advice gets wrong: on Linux, Chrome and Brave do NOT
+    # read /usr/local/share/ca-certificates. They keep their own NSS database,
+    # so update-ca-certificates alone leaves them still warning — which looks
+    # exactly like the certificate not working.
+    trust = (ROOT / "deploy" / "trust-ca.sh").read_text()
+    check("the client installer covers the system store",
+          "update-ca-certificates" in trust)
+    check("and the browser's own NSS store",
+          "certutil" in trust and ".pki/nssdb" in trust)
+    check("and says how to do Firefox, which has neither",
+          "Firefox" in trust)
+    check("and verifies afterwards rather than assuming",
+          "verifies — the padlock will be clean" in trust)
+
     install = (ROOT / "deploy" / "install.sh").read_text()
     # install.sh rewrites the nginx site every run. It used to write the
     # plain-HTTP one unconditionally, so every update silently dropped the
