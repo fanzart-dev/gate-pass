@@ -8,12 +8,35 @@ unbreakable serial number. Replaces the handwritten gate pass book at Fanzart.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python3 app.py                      # http://127.0.0.1:8090
-                                    # first person to sign up becomes the admin
-python3 tests/test_flow.py          # 678 checks, must all pass before shipping
+GATE_PASS_DEBUG=1 python3 app.py    # http://127.0.0.1:8090
+
+python3 tests/test_flow.py          # 871 checks, all must pass before shipping
 python3 tests/benchmark.py          # timings + concurrency proof at 100k passes
+python3 tests/loadtest.py           # HTTP load against a running instance
 python3 tests/verify_real_invoice.py   # end-to-end on a real supplier invoice
 ```
+
+Or through pytest, which some tooling expects:
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ --verbose             # the same suite, via tests/test_suite.py
+playwright install chromium
+pytest tests/ui --verbose           # 7 browser tests, JavaScript only
+```
+
+**`tests/test_flow.py` is deliberately NOT collected by pytest** — see
+`tests/conftest.py`. Its functions are named `test_*` and take a `tmpdir`, so
+pytest picks them up happily, but they report through `check()`, which records
+and carries on rather than raising. A function whose every check failed still
+returns normally, so pytest marks it **passed**: sixty-four green ticks over
+hundreds of broken assertions. `tests/test_suite.py` runs it as a subprocess
+and fails on its real exit code instead.
+
+`tests/ui/` covers only what cannot be tested without a browser — the drop
+zone's file counter, the item table's keyboard navigation, and a rendered
+pass. Everything else belongs in `test_flow.py`, which is faster; a slow suite
+is a skipped suite.
 
 `tests/test_flow.py` is a plain script, not pytest — run it directly.
 It builds its own temp database, so it never touches `storage/`.
@@ -75,6 +98,12 @@ These are the reason the app exists. Do not "simplify" them away.
    empty, **and a pass issues fine with cartons blank** — the column prints
    empty to be written on by hand. The field is still accepted if someone does
    type a count.
+
+   **Remarks are not the same case, and are typed.** A remark is a note about
+   the consignment, not a count of how the goods were physically packed, so it
+   *can* be known at the keyboard — it is entered on the review screen and
+   stored on the pass. The printed box still prints empty when nobody typed one,
+   so it remains something to write on.
 6. **Who prepared a pass is part of the record.** `prepared_by` is snapshotted
    onto the row at issue time and covered by the immutability trigger alongside
    the serial. Renaming or disabling an account never rewrites an old pass.
@@ -383,6 +412,28 @@ that has the PDFs it is 698/698. See `tests/sample_invoices/README.md`.
 | `mangaldeep_scan.pdf` | A scan with no text layer at all |
 
 Add the supplier's invoice here whenever the parser changes.
+
+## The review screen's item table
+
+Down and Up move between rows **in the same column**. Tab goes sideways along a
+row, which is the wrong direction for the job — cartons and quantities are typed
+down a delivery, not across one. Enter does the same as Down.
+
+**Enter must never submit the form**, including on the last row where there is
+nowhere to move to: this screen's submit button issues a gate pass, and a stray
+keystroke would spend a number. `e.preventDefault()` therefore runs *before* the
+"no next row" return, not after it.
+
+## Optional elements in templates need guarding
+
+`addFiles()` on the upload page set `.hidden` on `#pick-hint`, which had been
+removed from the markup. Setting a property on `null` throws, and because the
+throw happened inside the change handler **before `render()`**, picking files
+updated nothing at all — no count, no list, no button change. The drop zone
+looked inert and the code looked fine.
+
+Hints are optional; the file list is not. `toggle(id, hidden)` no-ops on a
+missing element so an absent hint can never take the feature down with it.
 
 ## Stylesheets are cache-busted
 
@@ -1047,6 +1098,39 @@ thanks to WAL, but there is no reason to add them at this size.
 
 There is still no HTTPS; see the note in "Signing in".
 
+### Load testing and capacity
+
+`python3 tests/loadtest.py --url http://fanzart-server.local --users 10` signs
+in as real accounts and drives the pages an operator actually sits on.
+
+**`ab -n 100 -c 5 http://127.0.0.1:8090/` measures almost nothing here** —
+every one of those requests is unauthenticated, so it benchmarks how fast the
+app can redirect to the login page. The load test signs in first, which is why
+it is Python and not `ab`. It is standard-library only, so there is nothing to
+install on the server.
+
+It looks at the slow tail rather than the average — one nine-second page ruins
+a morning while a good mean hides it — and it counts `database is locked`,
+which is the failure this app is built to make impossible.
+
+Measured at 5 concurrent users: 120 requests in 0.7s, median 17ms, p95 33ms,
+no failures, no locks. Gunicorn is 3 workers x 2 threads, which is six
+requests in flight against an office of four.
+
+### Exporting the book
+
+`sudo -u gatepass deploy/export-db.sh` writes a binary snapshot, a `.sql` dump,
+one CSV per table, and a `MANIFEST.txt` carrying row counts, a checksum per
+file, and the two integrity answers an auditor asks for: whether any item row
+has lost its gate pass, and whether the serial run has gaps.
+
+Verified restorable three ways — the dump into an empty database, the snapshot
+opened as a working book, and the CSVs read back. See `deploy/MIGRATING.md`,
+which also explains why moving off SQLite is a decision with costs rather than
+an upgrade: the immutability triggers and `BEGIN IMMEDIATE` serial allocation
+are both SQLite-specific, and a careless port loses the guarantees the app
+exists to provide.
+
 ### Backups
 
 `storage/` is the book and is gitignored, so committing does **not** back it up.
@@ -1069,6 +1153,51 @@ all four triggers intact.
 
 It drives Python from `.venv` rather than the `sqlite3` command line, which is
 not installed on this machine.
+
+## HTTPS
+
+`sudo deploy/enable-https.sh` issues the certificate, installs the TLS nginx
+site, sets `GATE_PASS_HTTPS=1` so the session cookie becomes Secure, and then
+checks that HTTPS actually answers before it finishes.
+`sudo deploy/disable-https.sh` puts plain HTTP back, and exists because a
+certificate problem must never be the reason the office cannot issue a pass.
+
+**The certificate is signed by a local CA, and that is the whole subtlety.**
+No public authority will vouch for `fanzart-server.local` — it is not a real
+domain and nobody can prove they own it. So `deploy/make-cert.sh` creates a
+small authority of its own and signs a server certificate with it, which is
+precisely what `mkcert` does, using openssl because mkcert is not installed.
+
+The difference that matters:
+
+| | |
+|---|---|
+| A bare self-signed cert | every browser warns, every time, on every machine, for ever |
+| A local CA | warns until `fanzart-ca.pem` is installed once per machine, then never again |
+
+Same encryption either way. The warning is the browser saying it cannot verify
+*who* it is talking to, and installing the CA is the only answer to that.
+Verified: a client trusting the CA gets TLS 1.3 and a clean verify; one that
+does not gets `CERTIFICATE_VERIFY_FAILED`, which is exactly the padlock warning.
+
+The certificate covers `<hostname>.local`, the bare hostname, `localhost`, the
+LAN IP and the Tailscale IP. **Reissue it when the LAN IP changes** — a
+certificate is only valid for the names inside it, and DHCP has already moved
+this server once.
+
+Deliberately absent: **HSTS**. On a public site it is correct; here it would
+pin every browser to HTTPS for this hostname for months, including after a
+certificate expires, with no way for a user to click past it. That is a lockout
+waiting to happen on a LAN.
+
+`return 301`, not the `311` in the original request — 311 is not an HTTP status
+code and browsers treat an unknown 3xx as an error rather than a redirect.
+
+**There is a better option if the office is on Tailscale.** `tailscale cert`
+issues a real, publicly-trusted Let's Encrypt certificate for the machine's
+MagicDNS name, with nothing to install on any client. It only covers the
+`.ts.net` name and only works for tailnet devices, so it does not replace the
+local CA for LAN access — but where it fits, it is strictly better.
 
 ## Hosting
 
