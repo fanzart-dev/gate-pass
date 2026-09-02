@@ -999,6 +999,15 @@ def _draft_from_upload(app, file):
         parsed = {"supplier_name": "", "customer_name": "", "invoice_no": "",
                   "invoice_date": "", "items": [], "notes": [f"could not be read: {exc}"]}
     notes = "; ".join(parsed["notes"])
+
+    # Carton counts come from the master list rather than being counted by
+    # hand, which was the slowest part of writing a gate pass. Done here, once,
+    # as the draft is created: the answer is then saved, survives a reload, and
+    # is never re-applied over a correction somebody made on the review page.
+    # Items with no match — and every spare, freight or service line — are left
+    # blank on purpose. See db.fill_cartons.
+    parsed["items"] = db.fill_cartons(g.db, parsed["items"])
+
     relpath = str(dest.relative_to(app.config["STORAGE_DIR"]))
     try:
         draft_id = db.create_draft(

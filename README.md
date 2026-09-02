@@ -6,8 +6,10 @@ book at the warehouse door.
 
 Upload the invoice PDF, check what was read off it, issue. The pass gets the
 next number in the book and prints two-up on A4 for the cut line down the middle.
-The number of cartons is left blank on purpose: it is written by hand at the
-door, because one fan can be two cartons and the spares can share a third.
+Carton counts fill themselves in from the master packing list — eight fans is
+eight boxes, a fandelier is two. Anything not on that list, and every spare or
+freight line, is left blank on purpose for someone to write in at the door.
+Every box stays editable either way.
 
 ---
 

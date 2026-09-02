@@ -701,38 +701,136 @@ def test_service_line_invoice():
 
 
 @needs_fixtures
-def test_cartons_are_never_prefilled(tmpdir):
-    """Rule 5, end to end. Cartons depend on how the goods are actually packed —
-    one fan can ship in two cartons, several spares can share a box — so no code
-    path may put a number in that box, and no button may offer to."""
-    flask_app, client = logged_in_app(tmpdir, "cartons_storage")
+def test_cartons_come_from_the_master_list(tmpdir):
+    """Carton counts are looked up, not counted by hand — and never guessed.
 
+    This replaces the old rule that nothing may ever pre-fill the carton box.
+    That rule existed because the code had no way to know how a fan is packed;
+    the Box Qty master list is exactly that knowledge, so the rule now is
+    narrower: fill it in when the master list actually says, and leave it
+    visibly empty when it does not. An empty box asks a question. A wrong
+    number is an assertion, on a document somebody signs at the gate.
+    """
+    flask_app, client = logged_in_app(tmpdir, "cartons_storage")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    db.upsert_carton_mappings(conn, [
+        ("MICRON MODREN OAK", 1), ("PHOENIX 52 WALNUT", 1),
+        ("NIZAM ANTIQUE BRASS", 1), ("CHAKRA 28", 1),
+        ("WINDFLOWER - FANDELIER", 1), ("AVALON - MATTE SILVER", 1),
+        ("RACE (AC) MATTE WHITE", 1), ("CRYSTAL - FANDELIER", 2),
+    ])
+
+    # No parser invents a carton count; every value comes from the master list.
     for fixture in (SAMPLE_INVOICE, TWO_PAGE_INVOICE, SERVICE_LINE_INVOICE, SCANNED_INVOICE):
         parsed = invoice_parser.parse_invoice(fixture)
-        check(f"{fixture.name}: parser returns no carton value",
+        check(f"{fixture.name}: the parser itself returns no carton value",
               all(not item.get("cartons") for item in parsed["items"]))
 
-        with open(fixture, "rb") as f:
-            resp = client.post("/upload", data={"invoice": (f, fixture.name)},
-                                content_type="multipart/form-data")
-        draft_id = int(resp.headers["Location"].rstrip("/").rsplit("/", 1)[-1])
-        review = client.get(f"/review/{draft_id}").data
+    with open(TWO_PAGE_INVOICE, "rb") as f:
+        resp = client.post("/upload", data={"invoice": (f, TWO_PAGE_INVOICE.name)},
+                            content_type="multipart/form-data")
+    draft_id = int(resp.headers["Location"].rstrip("/").rsplit("/", 1)[-1])
+    review = client.get(f"/review/{draft_id}").data
+    draft = db.get_draft(conn, draft_id)
+    by_name = {i["item_name"]: i for i in draft["items"]}
 
-        rendered = review.count(b'name="cartons" value=')
-        blank = review.count(b'name="cartons" value=""')
-        check(f"{fixture.name}: every cartons box renders empty",
-              rendered > 0 and rendered == blank)
+    # The master sheet counts cartons per UNIT, so eight fans is eight boxes.
+    # Taking the sheet value literally would print 1 against 8 fans, and
+    # understating boxes is how a box goes missing without anyone noticing.
+    check("a line for 8 fans gets 8 cartons, not the per-unit 1",
+          by_name["MICRON MODREN OAK"]["cartons"] == "8")
+    check("a line for 4 fans gets 4", by_name["PHOENIX 52 WALNUT"]["cartons"] == "4")
+    check("a line for 1 fan gets 1", by_name["CHAKRA 28"]["cartons"] == "1")
 
-        conn = db.connect(flask_app.config["DB_PATH"])
-        draft = db.get_draft(conn, draft_id)
-        check(f"{fixture.name}: no carton value is stored on the draft",
-              all(not item["cartons"] for item in draft["items"]))
-        conn.close()
+    # Remotes are not in the master list, so nobody has said how they pack.
+    check("an item missing from the master list is left blank",
+          by_name["REMOTE VENETIAN"]["cartons"] == "")
+    check("even when several of it were bought",
+          by_name["REMOTE AVALON"]["cartons"] == "")
 
+    check("the review page shows the looked-up values",
+          b'name="cartons" value="8"' in review)
+    check("and shows empty boxes for the unmatched ones",
+          b'name="cartons" value=""' in review)
+    check("every carton box stays editable",
+          b"readonly" not in review.split(b'name="cartons"')[1][:80]
+          and b"disabled" not in review.split(b'name="cartons"')[1][:80])
     check("no control offers to derive cartons from quantity",
           b"Cartons = Quantity" not in review and b"cartons-equal-qty" not in review)
     check("the cartons column is still there to type into",
           b"No. of Cartons" in review)
+
+    # Spares and service lines: blank whatever the master list says, because
+    # they travel inside somebody else's box or are not goods at all.
+    with open(SERVICE_LINE_INVOICE, "rb") as f:
+        resp = client.post("/upload", data={"invoice": (f, SERVICE_LINE_INVOICE.name)},
+                            content_type="multipart/form-data")
+    service_draft = db.get_draft(conn, int(resp.headers["Location"].rstrip("/").rsplit("/", 1)[-1]))
+    service = {i["item_name"]: i["cartons"] for i in service_draft["items"]}
+    check("a real fan on the same invoice is still filled in",
+          service["RACE (AC) MATTE WHITE"] == "3")
+    check("the installation services line is left blank",
+          all(v == "" for k, v in service.items() if "ERECTION" in k))
+    conn.close()
+
+
+def test_carton_lookup_rules(tmpdir):
+    """The matching itself: what counts as the same item, and what stays blank."""
+    storage = Path(tmpdir) / "carton_rules"
+    flask_app = create_app(db_path=storage / "gate_pass.db", storage_dir=storage)
+    conn = db.connect(flask_app.config["DB_PATH"])
+
+    added, updated, unchanged = db.upsert_carton_mappings(
+        conn, [("AARI - APRICOT GOLD", 1), ("CRYSTAL - FANDELIER", 2)])
+    check("loading the master list reports what it did", (added, updated, unchanged) == (2, 0, 0))
+    check("reloading the same rows changes nothing",
+          db.upsert_carton_mappings(conn, [("AARI - APRICOT GOLD", 1)]) == (0, 0, 1))
+    check("a corrected count updates in place",
+          db.upsert_carton_mappings(conn, [("AARI - APRICOT GOLD", 3)]) == (0, 1, 0))
+    check("and does not add a second row", db.carton_mapping_count(conn) == 2)
+    db.upsert_carton_mappings(conn, [("AARI - APRICOT GOLD", 1)])
+
+    # Invoices spell the same fan several ways. All of these are one item.
+    for spelling in ("AARI - APRICOT GOLD", "aari - apricot gold", "AARI-APRICOT GOLD",
+                     "AARI  -  APRICOT  GOLD", "  AARI - APRICOT GOLD  ",
+                     "AARI \u2013 APRICOT GOLD", "AARI \u2014 APRICOT GOLD"):
+        check(f"matches {spelling!r}", db.carton_count_for(conn, spelling) == 1)
+
+    check("a different model does not match", db.carton_count_for(conn, "AARI - MATTE WHITE") is None)
+    check("an empty name does not match", db.carton_count_for(conn, "") is None)
+    check("a two-carton item reads back as 2",
+          db.carton_count_for(conn, "CRYSTAL - FANDELIER") == 2)
+    check("and scales: three of them is six boxes",
+          db.cartons_for_line(conn, "CRYSTAL - FANDELIER", "3") == 6)
+
+    # Spares are blank even if some future master row happens to match them.
+    db.upsert_carton_mappings(conn, [("SPARE BLADE SET", 1)])
+    check("a spare stays blank despite being in the master list",
+          db.carton_count_for(conn, "SPARE BLADE SET") is None)
+    for phrase in ("SPARE PART", "SPARES", "SERVICE", "INSTALLATION SERVICES",
+                   "FREIGHT", "FREIGHT CHARGES", "HARDWARE KIT", "ACCESSORY",
+                   "ACCESSORIES BOX"):
+        check(f"treated as non-stock: {phrase}", db.is_non_stock_item(phrase))
+    # Whole words only, or a model name would be caught by accident.
+    for phrase in ("SERVICEABLE FAN", "SPAREBLADE", "AARI - APRICOT GOLD"):
+        check(f"not caught by a substring: {phrase}", not db.is_non_stock_item(phrase))
+
+    # An unreadable quantity means the arithmetic cannot be done, so the box is
+    # left for a human rather than filled with a number nobody worked out.
+    check("a blank quantity leaves it blank", db.cartons_for_line(conn, "AARI - APRICOT GOLD", "") is None)
+    check("a non-numeric quantity leaves it blank",
+          db.cartons_for_line(conn, "AARI - APRICOT GOLD", "a few") is None)
+    check("a zero quantity leaves it blank",
+          db.cartons_for_line(conn, "AARI - APRICOT GOLD", "0") is None)
+
+    # A count the document itself carries beats the master list.
+    filled = db.fill_cartons(conn, [
+        {"item_name": "AARI - APRICOT GOLD", "quantity": "2", "cartons": "9"},
+        {"item_name": "AARI - APRICOT GOLD", "quantity": "2", "cartons": ""},
+    ])
+    check("an existing carton value is never overwritten", filled[0]["cartons"] == "9")
+    check("a blank one is filled in", filled[1]["cartons"] == "2")
+    conn.close()
 
 
 def test_starting_a_new_numbering_run(tmpdir):
@@ -3801,7 +3899,8 @@ def main():
         test_stock_transfer_memo(tmpdir)
         test_real_transfer_memos()
         test_a_gate_pass_uploaded_as_an_invoice(tmpdir)
-        test_cartons_are_never_prefilled(tmpdir)
+        test_cartons_come_from_the_master_list(tmpdir)
+        test_carton_lookup_rules(tmpdir)
         test_sequence_derives_from_the_book(tmpdir)
         test_batch_issue_keeps_the_run_unbroken(tmpdir)
         test_batch_rolls_back_as_one(tmpdir)

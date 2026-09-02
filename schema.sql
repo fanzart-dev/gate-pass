@@ -222,3 +222,21 @@ CREATE TABLE IF NOT EXISTS login_attempts (
 -- Both lookups are "how many in the last N minutes", so time leads each index.
 CREATE INDEX IF NOT EXISTS idx_login_attempts_user ON login_attempts(username, at);
 CREATE INDEX IF NOT EXISTS idx_login_attempts_ip   ON login_attempts(ip, at);
+
+-- The master carton list: how many boxes one unit of each item ships in.
+--
+-- Seeded from the company's "Box Qty" sheet via manage_cartons.py. Kept in the
+-- database rather than read from the spreadsheet at request time so that the
+-- office can correct a wrong count without editing a file on the server, and so
+-- the nightly backup carries it.
+--
+-- `normalized` is the match key, not `item_name`: invoices spell the same fan
+-- with different spacing and different kinds of dash, and the raw name is kept
+-- only so a human can see what the master sheet actually said.
+CREATE TABLE IF NOT EXISTS item_carton_mappings (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_name  TEXT NOT NULL,
+    normalized TEXT NOT NULL UNIQUE,
+    cartons    INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
