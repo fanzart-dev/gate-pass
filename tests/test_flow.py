@@ -304,15 +304,18 @@ def test_settings(tmpdir):
 
     defaults = db.get_settings(conn)
     check("default paper mode is a4x2", defaults["paper_mode"] == "a4x2")
-    check("totals are off by default", defaults["show_totals"] == "0")
+    check("both totals are off by default, and are separate settings",
+          defaults["show_total_qty"] == "0" and defaults["show_total_cartons"] == "0")
+    check("the old combined setting is gone", "show_totals" not in defaults)
     # No show_vehicle setting: the vehicle prints when one was recorded.
     check("there is no vehicle tick box to get wrong",
           "show_vehicle" not in defaults)
 
-    db.update_settings(conn, paper_mode="a5", show_totals="1")
+    db.update_settings(conn, paper_mode="a5", show_total_qty="1")
     updated = db.get_settings(conn)
     check("paper_mode persists", updated["paper_mode"] == "a5")
-    check("show_totals persists", updated["show_totals"] == "1")
+    check("show_total_qty persists", updated["show_total_qty"] == "1")
+    check("and the other one is untouched by it", updated["show_total_cartons"] == "0")
     check("unrelated setting keeps its default", updated["company_name"] == "fanzart")
 
     conn.close()
@@ -865,12 +868,24 @@ def test_totals_sit_between_the_items_and_the_signatures(tmpdir):
     """
     flask_app, client = logged_in_app(tmpdir, "totals_pos")
     conn = db.connect(flask_app.config["DB_PATH"])
-    db.update_settings(conn, show_totals="1")
+    db.update_settings(conn, show_total_qty="1", show_total_cartons="1")
     gp = db.create_gate_pass(conn, None, "S", "C", "I", "01-01-2026", "KA 01 AB 1234",
                               [{"item_name": "MICRON", "quantity": "3", "cartons": "2"},
                                {"item_name": "PHOENIX", "quantity": "4", "cartons": "1"}],
                               prepared_by="Ravi Kumar")
     page = client.get(f"/print/{gp['id']}").get_data(as_text=True)
+
+    # No rule between the items and their totals: the item table's own frame
+    # used to close right above them, which boxed them in as a trapped extra
+    # row. The strip closes the box instead.
+    print_css_now = (ROOT / "static" / "css" / "print.css").read_text()
+    check("the item table does not close above the totals",
+          "border-bottom: none" in re.search(
+              r"\.pass\.with-totals table\.items-table \{[^}]*\}", print_css_now).group())
+    totals_rule = re.search(r"^\.pass-totals \{(.*?)\}", print_css_now, re.S | re.M).group(1)
+    check("and the totals strip carries no rule above them either",
+          "border-top: none" in totals_rule)
+    check("but the box still closes below them", "border: 1px solid" in totals_rule)
 
     check("the totals are on the pass", "Total Qty" in page and ">7<" in page)
     check("cartons are totalled when some were typed",
@@ -891,12 +906,95 @@ def test_totals_sit_between_the_items_and_the_signatures(tmpdir):
 
     # A blank carton column must not be totalled as a confident 0.
     blank = db.create_gate_pass(conn, None, "S", "C", "I2", "01-01-2026", "",
-                                 sample_items(), prepared_by="Ravi Kumar")
+                                 sample_items(cartons=""), prepared_by="Ravi Kumar")
     page = client.get(f"/print/{blank['id']}").get_data(as_text=True)
     check("cartons nobody counted are not totalled as 0",
           "Total Cartons" not in page)
     check("but the quantity still is", "Total Qty" in page)
     conn.close()
+
+
+def test_the_two_totals_are_independent(tmpdir):
+    """Quantity and cartons are separate ticks.
+
+    An office that counts cartons by hand at the gate wants the quantity
+    totalled and the carton column left alone. One combined setting could not
+    say that.
+    """
+    flask_app, client = logged_in_app(tmpdir, "two_totals")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    gp = db.create_gate_pass(conn, None, "S", "C", "I", "01-01-2026", "",
+                              [{"item_name": "MICRON", "quantity": "3", "cartons": "2"},
+                               {"item_name": "PHOENIX", "quantity": "4", "cartons": "1"}],
+                              prepared_by="Ravi Kumar")
+
+    def printed():
+        return client.get(f"/print/{gp['id']}").get_data(as_text=True)
+
+    check("both off prints neither",
+          "Total Qty" not in printed() and "Total Cartons" not in printed())
+
+    db.update_settings(conn, show_total_qty="1", show_total_cartons="0")
+    page = printed()
+    check("quantity alone prints the quantity", "Total Qty" in page and ">7<" in page)
+    check("and not the cartons", "Total Cartons" not in page)
+
+    db.update_settings(conn, show_total_qty="0", show_total_cartons="1")
+    page = printed()
+    check("cartons alone prints the cartons", "Total Cartons" in page and ">3<" in page)
+    check("and not the quantity", "Total Qty" not in page)
+
+    db.update_settings(conn, show_total_qty="1", show_total_cartons="1")
+    page = printed()
+    check("both on prints both", "Total Qty" in page and "Total Cartons" in page)
+    check("with a gap between them rather than running together",
+          'class="totals-gap"' in page)
+
+    # Cartons nobody typed are still not totalled as a confident 0, whatever
+    # the tick box says.
+    blank = db.create_gate_pass(conn, None, "S", "C", "I2", "01-01-2026", "",
+                                 sample_items(cartons=""), prepared_by="Ravi Kumar")
+    page = client.get(f"/print/{blank['id']}").get_data(as_text=True)
+    check("an untouched carton column is not totalled as 0",
+          "Total Cartons" not in page)
+
+    # Both tick boxes exist on the settings page and post independently.
+    settings_page = client.get("/settings").get_data(as_text=True)
+    check("the settings page offers two separate ticks",
+          'name="show_total_qty"' in settings_page
+          and 'name="show_total_cartons"' in settings_page)
+    check("and no longer offers the combined one",
+          'name="show_totals"' not in settings_page)
+    client.post("/settings", headers={"Origin": "http://localhost"},
+                data={"company_name": "fanzart", "paper_mode": "a4x2",
+                      "show_total_qty": "on"})
+    saved = db.get_settings(db.connect(flask_app.config["DB_PATH"]))
+    check("posting one tick turns only that one on",
+          saved["show_total_qty"] == "1" and saved["show_total_cartons"] == "0")
+    conn.close()
+
+
+def test_upgrading_keeps_a_totals_preference(tmpdir):
+    """Splitting the setting must not silently switch it off.
+
+    Someone who had totals printing keeps both halves; the pass they print the
+    day after an update looks like the one they printed the day before.
+    """
+    path = Path(tmpdir) / "old_totals.db"
+    conn = db.connect(path)
+    db.update_settings(conn, show_total_qty="1", show_total_cartons="1")
+    # Put the database back the way version 13 left it.
+    with db.writing(conn):
+        conn.execute("DELETE FROM settings WHERE key LIKE 'show_total_%'")
+        conn.execute("INSERT INTO settings (key, value) VALUES ('show_totals', '1')")
+    conn.execute("PRAGMA user_version = 13")
+    conn.close()
+
+    upgraded = db.get_settings(db.connect(path))
+    check("an upgraded database keeps the quantity total on",
+          upgraded["show_total_qty"] == "1")
+    check("and the carton total on", upgraded["show_total_cartons"] == "1")
+    check("and the old key is cleared away", "show_totals" not in upgraded)
 
 
 def test_a_two_page_pass_signs_off_only_at_the_end(tmpdir):
@@ -907,7 +1005,7 @@ def test_a_two_page_pass_signs_off_only_at_the_end(tmpdir):
     """
     flask_app, client = logged_in_app(tmpdir, "twopage")
     conn = db.connect(flask_app.config["DB_PATH"])
-    db.update_settings(conn, show_totals="1")
+    db.update_settings(conn, show_total_qty="1", show_total_cartons="1")
     many = [{"item_name": f"ITEM {i}", "quantity": "1", "cartons": "1"}
             for i in range(db.ITEMS_PER_PAGE + 4)]
     gp = db.create_gate_pass(conn, None, "S", "C", "I", "01-01-2026", "KA 01 AB 1234",
@@ -924,7 +1022,7 @@ def test_a_two_page_pass_signs_off_only_at_the_end(tmpdir):
           page.count('class="pass-foot"') == 2)
     check("and so do the totals", page.count('class="pass-totals"') == 2)
     check("every page still has the end block, so the geometry does not shift",
-          page.count('class="pass-end"') == page.count('class="pass"'))
+          page.count('class="pass-end"') == len(re.findall(r'class="pass[ "]', page)))
     conn.close()
 
 
@@ -940,8 +1038,9 @@ def test_printed_sheet_has_no_rule_between_the_copies(tmpdir):
     check("no border is drawn between the copies",
           "border" not in cut_rule)
     check("but they are still held apart", "margin" in cut_rule)
+    without_comments = re.sub(r"/\*.*?\*/", "", print_css, flags=re.S)
     check("and nothing anywhere draws a dashed or dotted rule",
-          "dashed" not in print_css and "dotted" not in print_css)
+          not re.search(r"border[^;:]*:[^;]*(dashed|dotted)", without_comments))
 
 
 def test_remarks_print_on_more_than_one_line(tmpdir):
@@ -3610,7 +3709,7 @@ def test_prepared_by_is_recorded_and_printed(tmpdir):
     # With cartons blank there is no box count to total, so the label is dropped
     # rather than printed with nothing after it.
     conn = db.connect(flask_app.config["DB_PATH"])
-    db.update_settings(conn, show_totals="1")
+    db.update_settings(conn, show_total_qty="1", show_total_cartons="1")
     conn.close()
     with_totals = client.get(f"/print/{gate_pass_id}").data
     check("the totals line still shows the quantity", b"Total Qty" in with_totals)
@@ -3907,7 +4006,7 @@ def test_full_app_flow(tmpdir):
     conn = db.connect(flask_app.config["DB_PATH"])
     check("settings POST persists paper_mode", db.get_settings(conn)["paper_mode"] == "a5")
     check("settings POST turns off an unchecked checkbox",
-          db.get_settings(conn)["show_totals"] == "0")
+          db.get_settings(conn)["show_total_qty"] == "0")
     conn.close()
 
     another_draft_id = None
@@ -4174,9 +4273,29 @@ def test_hosting_hardening(tmpdir):
           "debug=True" not in source and "GATE_PASS_DEBUG" in source)
 
 
+def test_every_test_is_actually_run():
+    """Every test_* in this file must be called by main().
+
+    There is no collector here — main() lists the tests by hand — so a test
+    that is written and never added to that list reports nothing, passes
+    nothing, and looks exactly like a test that works. Six had accumulated,
+    including one guarding a print layout that had already regressed once.
+    """
+    source = Path(__file__).read_text()
+    defined = set(re.findall(r"^def (test_\w+)\(", source, re.M))
+    body = source[source.index("def main():"):]
+    called = set(re.findall(r"^\s+(test_\w+)\(", body, re.M))
+    missing = sorted(defined - called - {"test_every_test_is_actually_run"})
+    check("every test in this file is called by main()", not missing)
+    if missing:
+        for name in missing:
+            print(f"    never run: {name}")
+
+
 def main():
     tmpdir = tempfile.mkdtemp(prefix="gate-pass-test-")
     try:
+        test_every_test_is_actually_run()
         test_serial_format()
         test_triggers(tmpdir)
         test_serial_allocation(tmpdir)
@@ -4196,6 +4315,12 @@ def main():
         test_cartons_come_from_the_master_list(tmpdir)
         test_parsing_a_batch(tmpdir)
         test_remarks_print_on_more_than_one_line(tmpdir)
+        test_printed_sheet_has_no_rule_between_the_copies(tmpdir)
+        test_vehicle_prints_only_when_there_is_one(tmpdir)
+        test_totals_sit_between_the_items_and_the_signatures(tmpdir)
+        test_the_two_totals_are_independent(tmpdir)
+        test_upgrading_keeps_a_totals_preference(tmpdir)
+        test_a_two_page_pass_signs_off_only_at_the_end(tmpdir)
         test_carton_lookup_rules(tmpdir)
         test_sequence_derives_from_the_book(tmpdir)
         test_batch_issue_keeps_the_run_unbroken(tmpdir)

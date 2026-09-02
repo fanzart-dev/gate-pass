@@ -280,6 +280,8 @@ table.items-table {
   width: 100% !important;
   border-collapse: collapse !important;
   border: 1px solid #000;
+  /* see .pass.with-totals table.items-table — the bottom rule moves down under
+     the totals when there are any */
   font-size: 7pt;
   flex: none !important;
   table-layout: fixed !important;
@@ -444,8 +446,17 @@ table.items-table td.col-item {
   display: flex;
   align-items: baseline;
   gap: 4mm;
-  padding: 0.8mm 2mm;
-  border-bottom: 1px solid #000;
+  /* The strip CLOSES the item table's box rather than sitting in a band of its
+     own. The table draws a full frame, so its bottom rule ran right above
+     "Vehicle" and "Total Qty" and made them look like one more table row
+     boxed in by two lines. That bottom rule is dropped (below) and redrawn
+     under the totals, so there is no line between the items and their totals
+     and the box still closes.
+     Side padding matches the table cells' 1.5mm, so the figures line up with
+     the No. of Cartons column above them rather than sitting 0.5mm inside it. */
+  padding: 0.8mm 1.5mm;
+  border: 1px solid #000;
+  border-top: none;
   font-size: 7.5pt;
 }
 
@@ -484,6 +495,13 @@ table.items-table td.col-item {
    vehicle and totals switched off keeps the full 15mm. */
 .pass.with-totals .pass-foot {
   min-height: 11mm;
+}
+
+/* The totals strip continues the box, so the table must not also close it —
+   two rules 4mm apart with the totals between them is what made them read as a
+   trapped extra row. */
+.pass.with-totals table.items-table {
+  border-bottom: none;
 }
 
 .foot-side { text-align: center; flex: none; }

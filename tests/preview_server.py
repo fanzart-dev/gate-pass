@@ -40,7 +40,7 @@ def main():
     conn = db.connect(app.config["DB_PATH"])
     # Totals on, so the preview shows the block that sits between the item
     # table and the signatures. Off by default in a real install.
-    db.update_settings(conn, show_totals="1")
+    db.update_settings(conn, show_total_qty="1", show_total_cartons="1")
     db.create_user(conn, "demo", "Dinesh D", "demo-preview-only")          # admin
     db.create_user(conn, "staff", "Asha Nair", "demo-preview-only",         # no extras
                     status=db.APPROVED)
@@ -51,7 +51,11 @@ def main():
     db.create_gate_pass(
         conn, None, "Golden Touch Exports", "MR Sample Buyer", "FR 262702176",
         "05-08-2026", "KA 01 AB 1234",
-        [{"item_name": name, "quantity": qty, "cartons": ""} for name, qty in DEMO_ITEMS],
+        # Cartons filled in on this one, so the preview shows both totals.
+        # The others leave them blank, which is the commoner case and the one
+        # that must NOT print a bold 0.
+        [{"item_name": name, "quantity": qty, "cartons": qty}
+         for name, qty in DEMO_ITEMS],
         prepared_by="Dinesh D",
         # Two lines, because a remark that wraps is what the hanging indent in
         # the Remarks box exists for — the second line must sit under the start

@@ -203,7 +203,11 @@ DEFAULT_SETTINGS = {
     # as a real one.
     "serial_min_seq": "0",
     "paper_mode": "a4x2",  # "a4x2" (two A5 passes on A4 landscape) or "a5" (one per sheet)
-    "show_totals": "0",
+    # Two settings, not one. An office that counts cartons by hand at the gate
+    # wants the quantity totalled and the carton column left alone; the single
+    # "show totals" tick could not express that.
+    "show_total_qty": "0",
+    "show_total_cartons": "0",
     # There is no "show_vehicle": the vehicle prints whenever one was recorded
     # and is absent when one was not, which is what the setting was really for.
     # A tick box that only ever HIDES something already written on the pass is
@@ -215,7 +219,7 @@ DEFAULT_SETTINGS = {
 # Bump when schema.sql or ADDED_COLUMNS changes. Stored in the file as
 # PRAGMA user_version, so a connection can tell in one cheap read whether the
 # schema script needs running at all.
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 # How long a writer waits for another writer before giving up. Four people
 # clicking Issue at the same moment are serialised in milliseconds, so this is
@@ -291,12 +295,36 @@ UTC_TIMESTAMP_COLUMNS = [
 ]
 
 
+def _table_exists(conn, name):
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+    ).fetchone() is not None
+
+
 def _migrate_data(conn, previous_version):
     """One-off data corrections, keyed to the version the file was last at.
 
     `previous_version` is 0 for a database that did not exist yet, which is why
     these are skipped on a fresh install — there is nothing to correct.
     """
+    if previous_version and previous_version < 14 and _table_exists(conn, "settings"):
+        # show_totals split into show_total_qty and show_total_cartons. Anyone
+        # who had it on keeps both, so nothing disappears off a printed pass
+        # without somebody choosing to turn it off.
+        #
+        # The table check is not paranoia: this runs BEFORE schema.sql creates
+        # anything, so a database old enough to predate the settings table
+        # reaches here with no table to read.
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = 'show_totals'").fetchone()
+        if row is not None:
+            for key in ("show_total_qty", "show_total_cartons"):
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (key, row["value"]))
+            conn.execute("DELETE FROM settings WHERE key = 'show_totals'")
+
     if previous_version and previous_version < 10:
         # can_search_register and can_filter_register merged into the first.
         # Anyone who held either keeps the combined one; nobody gains anything

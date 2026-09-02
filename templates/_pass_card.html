@@ -8,8 +8,10 @@
     {# Whether this page carries the totals strip decides how much room is left
        for the signature, so it is worked out once here and put on the pass as
        a class. Only a page that actually shows the strip pays for it. #}
-    {% set totals_on = settings.show_totals == '1' %}
-    {% set has_totals = page_no == page_total and (totals_on or gate_pass.vehicle_no) %}
+    {% set qty_on = settings.show_total_qty == '1' %}
+    {% set cartons_on = settings.show_total_cartons == '1' %}
+    {% set has_totals = page_no == page_total
+                        and (qty_on or cartons_on or gate_pass.vehicle_no) %}
     <div class="pass{% if has_totals %} with-totals{% endif %}">
       <div class="pass-head">
         <img class="logo" src="{{ url_for('static', filename='img/fanzart-logo.png') }}"
@@ -117,13 +119,13 @@
               {% if gate_pass.vehicle_no %}
                 <span class="totals-vehicle">Vehicle&nbsp;<strong>{{ gate_pass.vehicle_no }}</strong></span>
               {% endif %}
-              {% if totals_on %}
+              {% if qty_on or cartons_on %}
                 <span class="totals-figures">
-                  Total Qty&nbsp;<strong>{{ gate_pass.total_qty }}</strong>{#
+                  {% if qty_on %}Total Qty&nbsp;<strong>{{ gate_pass.total_qty }}</strong>{% endif %}{#
                   Cartons are often written on by hand at the gate, so they are
                   only totalled when some were actually typed — a bold 0 next to
                   a column of blanks reads as a count, not as "not counted yet".
-                  #}{% if gate_pass.total_cartons != '' %}<span class="totals-gap"></span>Total Cartons&nbsp;<strong>{{ gate_pass.total_cartons }}</strong>{% endif %}
+                  #}{% if cartons_on and gate_pass.total_cartons != '' %}{% if qty_on %}<span class="totals-gap"></span>{% endif %}Total Cartons&nbsp;<strong>{{ gate_pass.total_cartons }}</strong>{% endif %}
                 </span>
               {% endif %}
             </div>
