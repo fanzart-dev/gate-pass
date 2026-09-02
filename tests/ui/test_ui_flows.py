@@ -18,7 +18,9 @@ What is here is exactly the behaviour that lives in the page:
     arrows moving down a column, and Enter never submitting the form — the
     submit button issues a gate pass, so a stray keystroke spends a number;
   * Remarks being a textarea that starts one line tall and takes Shift+Enter;
-  * a printed pass rendering with its serial, its items and both signatures.
+  * a printed pass rendering with its serial, its items and both signatures,
+    no rule drawn between the two copies, and a multi-line remark whose lines
+    all start after the colon rather than sliding back under the label.
 
 By default this starts its own instance on a spare port with its own database,
 so it never touches the real book. Point BASE_URL at a running server to test
@@ -268,6 +270,99 @@ class TestPrintedPass:
         overflow = page.locator(".pass").first.evaluate(
             "el => el.scrollHeight - el.clientHeight")
         assert overflow <= 1, f"the pass overflows by {overflow}px"
+
+    def test_no_line_is_drawn_between_the_two_copies(self, page, base_url):
+        """The gap between the copies is white space, not a dashed rule.
+
+        It used to draw a cut guide down the middle. On a printed document that
+        line reads as part of the pass rather than as an instruction to whoever
+        is holding the scissors.
+        """
+        page.goto(f"{base_url}/print/1")
+        page.wait_for_selector(".sheet")
+        gap = page.locator(".cut-line").first
+        if gap.count() == 0:
+            pytest.skip("one pass per sheet on this instance")
+        drawn = gap.evaluate("""el => {
+          const cs = getComputedStyle(el);
+          return ['Top','Right','Bottom','Left']
+            .filter(s => cs['border' + s + 'Style'] !== 'none'
+                      && parseFloat(cs['border' + s + 'Width']) > 0);
+        }""")
+        assert drawn == [], f"a line is still drawn between the copies: {drawn}"
+
+    def test_a_multi_line_remark_lines_up_after_the_colon(self, page, base_url):
+        """Every line of a remark starts in the same place.
+
+        Without the hanging indent the second and later lines slide back under
+        the word "Remarks", which reads as a different field rather than a
+        continuation of the same one.
+        """
+        page.goto(f"{base_url}/print/1")
+        page.wait_for_selector(".sheet")
+        body = page.locator(".remarks-body").first
+        if body.count() == 0 or not body.inner_text().strip():
+            pytest.skip("this pass has no remark to wrap")
+
+        starts = body.evaluate("""el => {
+          const range = document.createRange();
+          const lefts = [];
+          const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+          let node;
+          while ((node = walk.nextNode())) {
+            if (!node.textContent.trim()) continue;
+            range.selectNodeContents(node);
+            for (const r of range.getClientRects()) lefts.push(Math.round(r.left * 10) / 10);
+          }
+          return lefts;
+        }""")
+        assert starts, "no text found in the remark"
+        assert max(starts) - min(starts) < 1.0, \
+            f"remark lines start at different places: {starts}"
+
+        # And the label must stay inside its own cell rather than hanging out
+        # over the box next to it, which is what a negative text-indent did.
+        placed = page.locator(".remarks-cell").first.evaluate("""td => {
+          const label = td.querySelector('.remarks-label');
+          return {cell: td.getBoundingClientRect().left,
+                  label: label.getBoundingClientRect().left};
+        }""")
+        assert placed["label"] >= placed["cell"] - 0.5, \
+            "the Remarks label is hanging outside its cell"
+
+    def test_a_long_remark_cannot_push_the_pass_off_the_page(self, page, base_url):
+        """However much is typed, the printed box stays two lines.
+
+        The Remarks box shares a table row with the Document No / Date box,
+        which is two lines tall. A third line grows the row, pushes the item
+        table down and overflows the pass — and .pass is overflow:hidden, so
+        the bottom of the last item row and part of the signature line simply
+        disappear without a word. Found exactly that way, by adding a
+        three-line remark to the preview data and watching the overflow check
+        fail by 12px.
+        """
+        page.goto(f"{base_url}/print/1")
+        page.wait_for_selector(".sheet")
+        body = page.locator(".remarks-body").first
+        if body.count() == 0:
+            pytest.skip("no remarks box on this pass")
+
+        page.evaluate("""() => {
+          const el = document.querySelector('.remarks-body');
+          el.innerHTML = ['Delivered to site gate by', 'FANZART LLP',
+                          'received in good order', 'by the store keeper',
+                          'and checked twice against the invoice'].join('<br>');
+        }""")
+        page.wait_for_timeout(50)
+
+        height = body.evaluate("el => el.getBoundingClientRect().height")
+        line = body.evaluate("el => parseFloat(getComputedStyle(el).lineHeight)")
+        assert height <= line * 2 + 1, \
+            f"the remarks box grew to {height}px, more than two {line}px lines"
+
+        overflow = page.locator(".pass").first.evaluate(
+            "el => el.scrollHeight - el.clientHeight")
+        assert overflow <= 1, f"a long remark pushed the pass {overflow}px off the page"
 
     def test_two_copies_on_an_a4_sheet(self, page, base_url):
         page.goto(f"{base_url}/print/1")

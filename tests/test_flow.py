@@ -826,6 +826,22 @@ def test_parsing_a_batch(tmpdir):
           == [[i["item_name"] for i in r["items"]] for r in one_by_one])
 
 
+def test_printed_sheet_has_no_rule_between_the_copies(tmpdir):
+    """The gap between the two copies is white space, not a cut guide.
+
+    A dashed rule down the middle of a printed document reads as part of the
+    pass rather than as an instruction to whoever is holding the scissors.
+    """
+    print_css = (ROOT / "static" / "css" / "print.css").read_text()
+    cut_rule = print_css[print_css.index(".cut-line {"):]
+    cut_rule = cut_rule[:cut_rule.index("}")]
+    check("no border is drawn between the copies",
+          "border" not in cut_rule)
+    check("but they are still held apart", "margin" in cut_rule)
+    check("and nothing anywhere draws a dashed or dotted rule",
+          "dashed" not in print_css and "dotted" not in print_css)
+
+
 def test_remarks_print_on_more_than_one_line(tmpdir):
     """A typed newline becomes a line break on the printed pass, safely."""
     flask_app, client = logged_in_app(tmpdir, "remarks_lines")
@@ -849,6 +865,28 @@ def test_remarks_print_on_more_than_one_line(tmpdir):
                            ("cartons", ""), ("action", "issue")]))
     printed = client.get(resp.headers["Location"]).get_data(as_text=True)
     check("the printed pass breaks the line", "line one<br>line two" in printed)
+
+    # A hanging indent, so line two sits under line one rather than under the
+    # word "Remarks". Done with a float: the obvious padding-left plus negative
+    # text-indent silently half-worked, because `tbody td` sets padding with
+    # !important, and the label ended up hanging outside its own cell.
+    check("the label and the text are separate elements",
+          'class="remarks-label"' in printed and 'class="remarks-body"' in printed)
+    print_css = (ROOT / "static" / "css" / "print.css").read_text()
+    # Matched on the rule itself, not the first mention of the name — the
+    # selector is also referred to in a comment further up.
+    body_rule = re.search(r"^\.remarks-body\s*\{(.*?)\}", print_css, re.S | re.M)
+    body_rule = body_rule.group(1) if body_rule else ""
+    check("the label floats out of the text flow", ".remarks-label { float: left;" in print_css)
+    check("and the text keeps its own block, so every line starts together",
+          "display: block;" in body_rule and "overflow: hidden;" in body_rule)
+    check("the indent does not depend on padding that !important overrides",
+          not re.search(r"^\s*text-indent\s*:", print_css, re.M))
+    # The Remarks box shares its table row with the Document No / Date box,
+    # which is two lines tall. A third line grows the row and pushes the bottom
+    # of the pass off the page, silently, because .pass is overflow:hidden.
+    check("the printed remark is capped so it cannot grow the header",
+          "max-height" in body_rule)
     check("and does not print a literal backslash-n", "line one\\nline two" not in printed)
 
     # The remark is typed by a person and printed on a document the company
@@ -1358,7 +1396,8 @@ def test_print_layout_rules(tmpdir):
     # Prints what was typed on the review screen, and stays empty when nothing
     # was — so the box is still there to write in by hand at the gate.
     check("Remarks prints what was typed, and nothing when it was not",
-          "Remarks : {% if gate_pass.remarks %}" in card)
+          '>Remarks :</span>' in card
+          and '<span class="remarks-body">{% if gate_pass.remarks %}' in card)
     tall = re.search(r"table\.meta-box-tall td \{[^}]*\}", css)
     check("that box is given room", tall is not None and "min-height" in tall.group())
 
