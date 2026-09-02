@@ -49,7 +49,7 @@
              when nothing was — so the box is still there to be written in by
              hand at the gate. Never parsed from the invoice: a remark is a note
              about the consignment, and no invoice carries one. #}
-          <td class="remarks-cell">Remarks : {% if gate_pass.remarks %}<strong>{{ gate_pass.remarks | line_breaks }}</strong>{% endif %}</td>
+          <td class="remarks-cell"><span class="remarks-label">Remarks :</span><span class="remarks-body">{% if gate_pass.remarks %}<strong>{{ gate_pass.remarks | line_breaks }}</strong>{% endif %}</span></td>
         </tr>
       </table>
 

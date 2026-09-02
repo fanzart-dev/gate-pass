@@ -5,8 +5,9 @@
 
 Builds its own database in a temp directory and serves on port 8091, so it can
 run alongside the real app without touching storage/. The demo pass carries the
-longest item names we have ever seen on a real invoice, because those are what
-the print geometry has to survive.
+longest item names we have ever seen on a real invoice, and a remark that
+wraps to a second line, because those are what the print geometry has to
+survive.
 
 Sign in as demo / demo-preview-only.
 """
@@ -48,7 +49,12 @@ def main():
         conn, None, "Golden Touch Exports", "MR Sample Buyer", "FR 262702176",
         "05-08-2026", "KA 01 AB 1234",
         [{"item_name": name, "quantity": qty, "cartons": ""} for name, qty in DEMO_ITEMS],
-        prepared_by="Dinesh D")
+        prepared_by="Dinesh D",
+        # Two lines, because a remark that wraps is what the hanging indent in
+        # the Remarks box exists for — the second line must sit under the start
+        # of the first, not back under the word "Remarks". Two is also all the
+        # printed box holds: see .remarks-body in print.css.
+        remarks="Delivered to site gate by\nFANZART LLP")
     db.close(conn)
 
     # A second pass filled to the brim, because the tight case is what the
@@ -84,7 +90,7 @@ def main():
     db.close(conn)
 
     print(f"preview at http://127.0.0.1:{port}/print/1  (demo / demo-preview-only)")
-    print(f"  /print/1  a normal pass (6 items)")
+    print(f"  /print/1  a normal pass (6 items), with a two-line remark")
     print(f"  /print/2  a full page ({db.ITEMS_PER_PAGE} items) — the tight case")
     print(f"  /print/3  a 20-item pass — the busy end of a normal day")
     print(f"  /print/4  a 32-item pass — one number, printed over 2 pages")

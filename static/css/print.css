@@ -113,8 +113,12 @@ body {
   width: 100%;
 }
 
+/* The gap between the two copies, and nothing else.
+   It used to draw a dashed line down the middle as a cut guide. On a printed
+   pass that line reads as part of the document rather than an instruction to
+   the person holding the scissors, so it is now plain white space. The element
+   stays: it is what holds the two copies apart. */
 .cut-line {
-  border-left: 1px dashed #999;
   margin: 4mm 0;
 }
 
@@ -227,11 +231,39 @@ table.meta-box-tall td {
   /* Typed newlines arrive as <br>, so the cell must be allowed to wrap — but
      not without limit. The pass is a FIXED height and the footer sits at the
      bottom of it; an unbounded remark would push the signature line off the
-     page and take the cut line with it. Four lines is more than anyone writes
-     by hand, and anything past that is clipped rather than allowed to break
-     the geometry the whole sheet depends on. */
-  max-height: 16mm;
+     page and take the cut line with it. The real cap is on .remarks-body
+     below, which is what actually holds the table row to its height; this is
+     a backstop. */
   overflow: hidden;
+}
+
+/* A hanging indent for a remark that runs to more than one line, so the later
+   lines sit under the start of the text instead of sliding back under the word
+   "Remarks".
+   Done with a float rather than padding-left plus a negative text-indent. That
+   is the usual trick, and here it silently half-worked: `tbody td` sets its
+   padding with !important, so the padding half was ignored while the indent
+   half was not, and the label ended up hanging outside the cell entirely,
+   overlapping its neighbour. It measured almost correct, which is worse than
+   measuring wrong.
+   Floating the label needs no width for it and nothing to keep in step. The
+   body sits beside the float and, because overflow starts a new block
+   formatting context, EVERY one of its lines starts at the same place. */
+/* The gap after the colon is padding, not a non-breaking space in the
+   markup: the pass text is read back by tests and by exports, and a
+   stray \u00a0 in it is invisible on paper and wrong everywhere else. */
+.remarks-label { float: left; padding-right: 1mm; }
+.remarks-body  {
+  display: block;
+  overflow: hidden;
+  /* Two lines, and no more, because this box shares a table row with the
+     Document No / Date box beside it and that box is two lines tall. A third
+     line grows the row, pushes the item table down, and overflows the pass by
+     about 12px — the bottom of the last item row and part of the signature
+     line simply vanish, because .pass is overflow:hidden and says nothing.
+     Caught by the browser test that checks the pass does not overflow.
+     1.45em is the line-height set above, so this is exactly two lines. */
+  max-height: 2.9em;
 }
 
 /* The item table is rigid on purpose.
