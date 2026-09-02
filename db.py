@@ -966,6 +966,27 @@ def _insert_gate_pass(conn, scope, seq, supplier_name, customer_name, invoice_no
     return gate_pass_id
 
 
+def gate_pass_from_draft(conn, draft_id):
+    """The pass a draft became, or None if it was discarded instead.
+
+    A draft is deleted by the transaction that issues it, so /review/<id> is a
+    dead link the moment the pass exists — which is exactly where the browser's
+    Back button lands after issuing. The audit row written at issue ends with
+    "from draft 51" (or "from batch, draft 51"), so the link survives even
+    though the draft row does not.
+
+    The LIKE has no trailing wildcard on purpose: the id is the last thing in
+    the string, so 'draft 5' cannot match a row written for draft 51.
+    """
+    row = conn.execute(
+        "SELECT gate_pass_id FROM audit_log "
+        "WHERE action = 'issue' AND details LIKE '%draft ' || ? "
+        "ORDER BY id DESC LIMIT 1",
+        (str(draft_id),),
+    ).fetchone()
+    return row["gate_pass_id"] if row else None
+
+
 def get_gate_pass(conn, gate_pass_id):
     row = conn.execute("SELECT * FROM gate_passes WHERE id = ?", (gate_pass_id,)).fetchone()
     if row is None:

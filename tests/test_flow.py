@@ -2730,6 +2730,72 @@ def test_item_table_keyboard_navigation(tmpdir):
           and page.index("e.preventDefault();") < page.index("if (!target) return;"))
 
 
+def test_back_button_after_issuing(tmpdir):
+    """Going Back to a draft that has been issued finds the pass, not a 404.
+
+    Issuing DELETES the draft, so /review/<id> dies the moment the pass exists
+    — and that is exactly where the browser's Back button lands afterwards. A
+    bare 404 tells the operator nothing and appears to have lost the pass they
+    just made. The audit row written at issue ends with "from draft 51", so the
+    link survives even though the row does not.
+    """
+    flask_app, client = logged_in_app(tmpdir, "backbutton")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    H = {"Origin": "http://localhost"}
+
+    def a_draft(invoice_no):
+        return db.create_draft(conn, supplier_name="Golden Touch Exports",
+                                customer_name="FANZART LLP", invoice_no=invoice_no,
+                                invoice_date="01-01-2026", items=sample_items())
+
+    # Issued one at a time.
+    draft_id = a_draft("FR 1")
+    resp = client.post(f"/review/{draft_id}", headers=H, data=MultiDict([
+        ("supplier_name", "Golden Touch Exports"), ("customer_name", "FANZART LLP"),
+        ("invoice_no", "FR 1"), ("invoice_date", "01-01-2026"), ("vehicle_no", ""),
+        ("remarks", ""), ("item_name", "MICRON MODREN OAK"), ("quantity", "1"),
+        ("cartons", ""), ("action", "issue")]))
+    gate_pass_id = int(resp.headers["Location"].rstrip("/").rsplit("/", 1)[-1])
+
+    back = client.get(f"/review/{draft_id}")
+    check("Back after issuing redirects rather than 404ing", back.status_code == 302)
+    check("and lands on the pass that draft became",
+          back.headers.get("Location", "").endswith(f"/print/{gate_pass_id}"))
+
+    # Issued as part of a batch — a different audit wording, same link.
+    batch_id = a_draft("FR 2")
+    client.post("/drafts/issue", data={"draft_id": str(batch_id)}, headers=H)
+    issued = conn.execute("SELECT id FROM gate_passes ORDER BY id DESC LIMIT 1").fetchone()["id"]
+    back = client.get(f"/review/{batch_id}")
+    check("a batch-issued draft is found too",
+          back.headers.get("Location", "").endswith(f"/print/{issued}"))
+
+    # Discarded, not issued: it must NOT claim a pass exists.
+    gone = a_draft("FR 3")
+    client.post(f"/drafts/{gone}/delete", headers=H)
+    back = client.get(f"/review/{gone}")
+    check("a discarded draft does not point at somebody else's pass",
+          "/print/" not in back.headers.get("Location", ""))
+    check("and says what happened to it",
+          b"issued or discarded" in client.get(f"/review/{gone}",
+                                                follow_redirects=True).data)
+
+    # The lookup matches on the id at the END of the audit line, so a draft
+    # numbered 5 must never be confused with one numbered 51.
+    check("a draft that never existed finds nothing",
+          db.gate_pass_from_draft(conn, 99999) is None)
+
+    # print.html renders no flash messages, so a message set on that redirect
+    # would sit in the session and surface later on an unrelated screen.
+    printed = (ROOT / "templates" / "print.html").read_text()
+    check("the print page renders no flashes, so none is set for it",
+          "get_flashed_messages" not in printed)
+    later = client.get("/register", follow_redirects=True).data
+    check("nothing is left hanging for the next page",
+          b"Already issued" not in later)
+    conn.close()
+
+
 def test_stylesheets_are_cache_busted(tmpdir):
     """Every stylesheet link carries the file's modification time.
 
@@ -3355,7 +3421,15 @@ def test_full_app_flow(tmpdir):
     check("vehicle is off by default", b"Vehicle :" not in print_resp.data)
 
     check("print page for unknown id is 404", client.get("/print/999999").status_code == 404)
-    check("review page for unknown draft is 404", client.get("/review/999999").status_code == 404)
+    # A draft, unlike a pass, legitimately stops existing — issuing deletes it.
+    # So an unknown draft id is a redirect with an explanation rather than a
+    # 404: the Back button after issuing lands here, and a dead end there looks
+    # like the pass was lost. See test_back_button_after_issuing.
+    gone = client.get("/review/999999")
+    check("an unknown draft redirects rather than 404ing", gone.status_code == 302)
+    check("and explains itself",
+          b"issued or discarded" in client.get("/review/999999",
+                                                follow_redirects=True).data)
 
     register_resp = client.get("/register")
     check("register lists the issued gate pass", gp["serial_no"].encode() in register_resp.data)
@@ -3699,6 +3773,7 @@ def main():
         test_admin_powers_and_guardrails(tmpdir)
         test_remarks_are_typed_and_printed(tmpdir)
         test_item_table_keyboard_navigation(tmpdir)
+        test_back_button_after_issuing(tmpdir)
         test_stylesheets_are_cache_busted(tmpdir)
         test_printed_issue_date_is_the_pass_date(tmpdir)
         test_the_parse_is_the_record(tmpdir)
