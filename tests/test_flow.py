@@ -3604,6 +3604,13 @@ def test_hosting_hardening(tmpdir):
     install = (ROOT / "deploy" / "install.sh").read_text()
     check("and so does the one install.sh writes inline",
           "location = /fanzart-ca.pem" in install)
+    # With HTTPS on, port 80 is a 301 by design. Demanding 200 there declared a
+    # perfectly healthy server broken, moments after enable-https.sh had
+    # finished setting it up.
+    check("the health check asks over whatever scheme is actually serving",
+          'BASE="https://127.0.0.1"' in install and 'BASE="http://127.0.0.1"' in install)
+    check("and it checks the CA is still fetchable without TLS",
+          "fanzart-ca.pem returned" in install)
     # install.sh rewrites the nginx site every run. It used to write the
     # plain-HTTP one unconditionally, so every update silently dropped the
     # server back off TLS.
