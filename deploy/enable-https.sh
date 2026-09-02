@@ -147,10 +147,26 @@ redirect=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 8 "
 note "http://$FIRST/login -> $redirect"
 
 TS_IP="$(tailscale ip -4 2>/dev/null | head -1)"
+TS_NAME="$(tailscale status --json 2>/dev/null \
+           | python3 -c 'import json,sys; print((json.load(sys.stdin).get("Self") or {}).get("DNSName","").rstrip("."))' 2>/dev/null)"
 if [ -n "$TS_IP" ]; then
     ts=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "http://$TS_IP/login")
-    [ "$ts" = "200" ] || note "WARNING: http://$TS_IP/login returned '${ts:-no response}'"
-    [ "$ts" = "200" ] && note "http://$TS_IP/login -> 200 (Tailscale, still plain HTTP by design)"
+    # A 301 is the RIGHT answer once enable-public-link.sh is set up: the plain
+    # HTTP address redirects to the public HTTPS one. This check used to demand
+    # a 200 and warned about the correct behaviour, which on a launch day reads
+    # as though something is broken.
+    #
+    # A 200 is the one worth warning about: it means the redirect is missing
+    # while GATE_PASS_HTTPS is set, so the session cookie is Secure, the browser
+    # will not keep it, and sign-in fails on that address with no error at all.
+    case "$ts" in
+        301|302) note "http://$TS_IP/login -> $ts to the tailnet HTTPS address" ;;
+        200)     note "WARNING: http://$TS_IP/login serves plain HTTP (200)."
+                 note "         With GATE_PASS_HTTPS set nobody can sign in there —"
+                 note "         the cookie is Secure and the page is not. Run:"
+                 note "           sudo deploy/enable-public-link.sh --replace" ;;
+        *)       note "WARNING: http://$TS_IP/login returned '${ts:-no response}'" ;;
+    esac
 fi
 
 # Anything else nginx was serving must keep serving.
@@ -170,9 +186,12 @@ cat <<DONE
         https://$(hostname).local
         https://$FIRST
 
-    Over Tailscale, plain HTTP by design — tailscaled owns 443 there for
-    Funnel, and WireGuard has already encrypted the connection:
-        http://${TS_IP:-<tailscale ip>}
+    Away from the office, if enable-public-link.sh has been run — a real
+    certificate, nothing to install on the machine using it:
+        https://${TS_NAME:-<tailnet name>}
+
+    http://${TS_IP:-<tailscale ip>} redirects there, so old bookmarks keep
+    working. Do not hand that IP out: it only resolves inside the tailnet.
 
     Browsers warn until deploy/certs/fanzart-ca.pem is installed on each
     machine — see the notes from deploy/make-cert.sh. Traffic is encrypted
