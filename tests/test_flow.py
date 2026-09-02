@@ -875,17 +875,23 @@ def test_totals_sit_between_the_items_and_the_signatures(tmpdir):
                               prepared_by="Ravi Kumar")
     page = client.get(f"/print/{gp['id']}").get_data(as_text=True)
 
-    # No rule between the items and their totals: the item table's own frame
-    # used to close right above them, which boxed them in as a trapped extra
-    # row. The strip closes the box instead.
+    # The totals are not in a box. They sat inside the item table's frame first,
+    # then closed that frame from underneath; both read as a box bolted to the
+    # bottom of the table rather than as a summary of it. The table closes
+    # itself, as it always did, and the figures sit in the white space between
+    # it and the signatures.
     print_css_now = (ROOT / "static" / "css" / "print.css").read_text()
-    check("the item table does not close above the totals",
-          "border-bottom: none" in re.search(
-              r"\.pass\.with-totals table\.items-table \{[^}]*\}", print_css_now).group())
     totals_rule = re.search(r"^\.pass-totals \{(.*?)\}", print_css_now, re.S | re.M).group(1)
-    check("and the totals strip carries no rule above them either",
-          "border-top: none" in totals_rule)
-    check("but the box still closes below them", "border: 1px solid" in totals_rule)
+    totals_rule = re.sub(r"/\*.*?\*/", "", totals_rule, flags=re.S)
+    check("the totals carry no border on any side",
+          "border" not in totals_rule)
+    check("and nothing else draws one around them either",
+          not re.search(r"\.pass-totals[^{]*\{[^}]*border(?!-)", 
+                        re.sub(r"/\*.*?\*/", "", print_css_now, flags=re.S)))
+    # The table must still close itself, or removing the strip's border leaves
+    # the item box hanging open at the bottom.
+    check("the item table keeps its own frame",
+          not re.search(r"\.pass\.with-totals table\.items-table", print_css_now))
 
     check("the totals are on the pass", "Total Qty" in page and ">7<" in page)
     check("cartons are totalled when some were typed",

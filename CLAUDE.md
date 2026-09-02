@@ -283,20 +283,25 @@ disappears off a printed pass without somebody choosing to turn it off.
 A bold `0` beside a column of blanks reads as a count, not as "not counted
 yet".
 
-**No rule between the items and their totals.** The item table draws a full
-frame, so its bottom rule ran directly above the totals and boxed them in as a
-trapped extra row. On a pass that shows totals the table's bottom border is
-dropped and the strip redraws it underneath (`.pass.with-totals
-table.items-table`), so the box still closes.
+**The totals are not in a box.** `.pass-totals` carries no border on any side.
+It sat inside the item table's frame first, then closed that frame from
+underneath; both read as a box bolted to the bottom of the table rather than as
+a summary of it. The table closes itself, as it always did, and the figures sit
+in the white space between it and the signatures.
 
 **The pass has no spare vertical room.** Adding the totals strip overflowed it
 by 17px. That is paid for out of `.pass-foot`'s `min-height`, the only part of
 the layout that is blank on purpose, and only on pages that actually carry the
-strip (`.pass.with-totals`): 15mm normally, 11mm with totals. Taking it from
-the item table instead would have cost a row and re-paginated passes that have
-already been issued. The measured signing gap drops from 13.26mm to 6.83mm when
-totals are on, which is tight — if that matters more than the totals, the space
-has to come from `ITEM_BODY_MM` and `ITEMS_PER_PAGE` instead.
+strip (`.pass.with-totals`): 15mm normally, **11.8mm** with totals. Taking it
+from the item table instead would have cost a row and re-paginated passes that
+have already been issued.
+
+11.8mm is a measured ceiling, not a round number: 12mm overflows some passes by
+1px and 12.5mm by 2px. It leaves 7.63mm to sign in, against 13.26mm on a pass
+with no totals. Anything more has to come out of `ITEM_BODY_MM` and
+`ITEMS_PER_PAGE`. **Re-measure before changing it** — `.pass` is
+`overflow: hidden`, so going over does not look wrong, it silently clips the
+bottom of the last item row and part of the signature line.
 
 **Numbering does not reset by itself.** There is no fiscal-year rollover — the
 count runs on until an admin deliberately restarts it under Settings →
