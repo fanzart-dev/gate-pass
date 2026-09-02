@@ -13,3 +13,9 @@ tests/sample_invoices/*.pdf
 # certificate the office machines will trust.
 deploy/certs/
 .pytest_cache/
+
+# Real environment files never go in a public repository. deploy/env.example is
+# the committed template; the live one is written on the server only.
+.env
+*.env
+!deploy/env.example

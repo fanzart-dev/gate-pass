@@ -1,26 +1,45 @@
 [Unit]
+# Installed by deploy/install.sh, which fills in the paths and the account.
+# Do not edit the copy under /etc/systemd — the next install overwrites it.
+#
+# This file used to be a second, hand-maintained copy of a unit that install.sh
+# also wrote inline, and the two had drifted: this one still said User=fanzart
+# and WorkingDirectory=/home/fanzart/gate-pass, while the machine has been
+# running as `gatepass` out of /opt/gate-pass for weeks. Anyone reading it
+# during an incident would have been reading fiction. There is now one copy,
+# and install.sh renders it.
 Description=Fanzart Gate Pass
 After=network.target
 
 [Service]
 Type=notify
-User=fanzart
-Group=fanzart
-WorkingDirectory=/home/fanzart/gate-pass
-Environment="PATH=/home/fanzart/gate-pass/.venv/bin"
-# The signing key lives in storage/secret_key (mode 600) and is generated on
-# first run, so nothing secret is set here. Set GATE_PASS_HTTPS=1 only once the
-# site is actually served over TLS — it makes the session cookie HTTPS-only,
-# and setting it on a plain-HTTP site logs everyone out at the door.
-# Environment="GATE_PASS_HTTPS=1"
-ExecStart=/home/fanzart/gate-pass/.venv/bin/gunicorn -c deploy/gunicorn.conf.py app:app
-ExecReload=/bin/kill -s HUP $MAINPID
-Restart=always
-RestartSec=3
+User=__APP_USER__
+Group=__APP_USER__
+WorkingDirectory=__APP_DIR__
+Environment="PATH=__APP_DIR__/.venv/bin"
 
-# The service needs to write exactly one directory. Everything else is read-only
-# to it, so a bug or a bad upload cannot touch the rest of the machine.
-ReadWritePaths=/home/fanzart/gate-pass/storage
+# Optional, and optional on purpose — the leading "-" means the service still
+# starts when the file is absent, which is the normal case. Nothing secret is
+# REQUIRED here: the signing key is generated into storage/secret_key (mode
+# 600) on first run. Use it to override settings without editing this unit:
+#   GATE_PASS_SECRET_KEY=...    reuse one key across a rebuild
+#   GATE_PASS_HTTPS=1           set by enable-https.sh once a cert is live
+# See deploy/env.example. The file must be 600 and owned by the service account.
+EnvironmentFile=-__APP_DIR__/.env
+
+# GATE_PASS_HTTPS is set here by enable-https.sh once a certificate is live. On
+# plain HTTP it marks the session cookie HTTPS-only and nobody can sign in.
+ExecStart=__APP_DIR__/.venv/bin/gunicorn -c deploy/gunicorn.conf.py app:app
+ExecReload=/bin/kill -s HUP $MAINPID
+
+# Always come back, including after a power cut — the machine boots, the book
+# is open again without anybody logging in to start it.
+Restart=always
+RestartSec=5
+
+# The book is the only thing this service may write to. Everything else on the
+# machine is read-only to it, so a bug or a bad upload cannot reach further.
+ReadWritePaths=__APP_DIR__/storage
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
