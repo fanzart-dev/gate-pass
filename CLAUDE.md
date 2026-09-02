@@ -273,8 +273,21 @@ typed. An empty `Vehicle :` also makes a different claim from no label at all:
 it reads as a vehicle nobody bothered to record. (`Remarks :` is the deliberate
 exception — it prints empty on purpose, to be written in by hand at the gate.)
 
-**Cartons are only totalled when some were typed.** A bold `0` beside a column
-of blanks reads as a count, not as "not counted yet".
+**Two totals settings, not one:** `show_total_qty` and `show_total_cartons`.
+An office that counts cartons by hand at the gate wants the quantity totalled
+and the carton column left alone, which one combined tick could not say.
+Schema 14 splits the old `show_totals`, carrying its value onto both so nothing
+disappears off a printed pass without somebody choosing to turn it off.
+
+**Cartons are only totalled when some were typed**, whatever the tick box says.
+A bold `0` beside a column of blanks reads as a count, not as "not counted
+yet".
+
+**No rule between the items and their totals.** The item table draws a full
+frame, so its bottom rule ran directly above the totals and boxed them in as a
+trapped extra row. On a pass that shows totals the table's bottom border is
+dropped and the strip redraws it underneath (`.pass.with-totals
+table.items-table`), so the box still closes.
 
 **The pass has no spare vertical room.** Adding the totals strip overflowed it
 by 17px. That is paid for out of `.pass-foot`'s `min-height`, the only part of
@@ -502,6 +515,13 @@ files were chosen so serial numbers are allocated in that order.
 The browser uploads **four at a time** (`CONCURRENT_UPLOADS` in `upload.html`)
 rather than one after another, because each file is its own request and the
 server runs three workers. Results are stored by index so the order survives.
+
+`main()` lists the tests by hand — there is no collector — so
+`test_every_test_is_actually_run()` checks that every `test_*` defined in the
+file is called from it. Six had accumulated that were written, never
+registered, and therefore never ran; one of them was guarding a print layout
+that had already regressed once. A test nobody runs looks exactly like a test
+that passes.
 
 Sample invoices under `tests/sample_invoices/`, each covering a different trap.
 **They are not in git** — they are real supplier invoices carrying a GSTIN, IRN

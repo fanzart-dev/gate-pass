@@ -27,8 +27,12 @@
     <fieldset>
       <legend>Below the item table</legend>
       <label class="checkbox">
-        <input type="checkbox" name="show_totals" {% if settings.show_totals == '1' %}checked{% endif %}>
-        <span>Show total quantity and cartons</span>
+        <input type="checkbox" name="show_total_qty" {% if settings.show_total_qty == '1' %}checked{% endif %}>
+        <span>Show total quantity</span>
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" name="show_total_cartons" {% if settings.show_total_cartons == '1' %}checked{% endif %}>
+        <span>Show total cartons</span>
       </label>
     </fieldset>
 

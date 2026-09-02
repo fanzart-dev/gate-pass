@@ -882,7 +882,8 @@ def register_routes(app):
             db.update_settings(
                 g.db,
                 paper_mode="a5" if request.form.get("paper_mode") == "a5" else "a4x2",
-                show_totals="1" if request.form.get("show_totals") else "0",
+                show_total_qty="1" if request.form.get("show_total_qty") else "0",
+                show_total_cartons="1" if request.form.get("show_total_cartons") else "0",
                 company_name=request.form.get("company_name", "fanzart").strip() or "fanzart",
             )
             flash("Settings saved.", "ok")
