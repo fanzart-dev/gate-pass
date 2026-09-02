@@ -1,0 +1,10 @@
+# Only for running the tests, never installed on the server.
+# The app itself needs nothing beyond requirements.txt.
+#
+#   pip install -r requirements-dev.txt
+#   playwright install chromium        # ~115MB, for tests/ui only
+#
+# tests/test_flow.py needs NONE of this — it is a plain script and is still the
+# fastest way to run the suite:  python3 tests/test_flow.py
+pytest==9.1.1
+pytest-playwright==0.9.0
