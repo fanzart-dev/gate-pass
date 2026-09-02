@@ -14,9 +14,10 @@ What is here is exactly the behaviour that lives in the page:
   * the drop zone counting and listing files (this silently broke once, when a
     `null` element threw inside the change handler BEFORE the list was drawn —
     the count, the list and the button all froze and the page looked inert);
-  * Down/Up moving between rows in the items table, and Enter never submitting
-    the form — the submit button issues a gate pass, so a stray keystroke
-    spends a number;
+  * Enter moving ACROSS the items table and wrapping into the next row, the
+    arrows moving down a column, and Enter never submitting the form — the
+    submit button issues a gate pass, so a stray keystroke spends a number;
+  * Remarks being a textarea that starts one line tall and takes Shift+Enter;
   * a printed pass rendering with its serial, its items and both signatures.
 
 By default this starts its own instance on a spare port with its own database,
@@ -173,24 +174,82 @@ class TestItemTableKeyboard:
         assert rows.nth(1).locator("input[name=cartons]").evaluate(
             "el => el === document.activeElement")
 
-    def test_enter_moves_down_and_never_submits(self, page, base_url):
+    def test_enter_moves_across_the_row_and_never_submits(self, page, base_url):
+        """Enter follows the line as it is read: item, quantity, cartons.
+
+        It used to move DOWN, which meant typing a row needed the mouse or Tab
+        between every cell.
+        """
         self._open_a_draft(page, base_url)
         for _ in range(2):
             page.click("#add-row")
         rows = page.locator("#items-table tbody tr")
         was = page.url
 
-        rows.nth(0).locator("input[name=quantity]").click()
+        def focused(locator):
+            return locator.evaluate("el => el === document.activeElement")
+
+        rows.nth(0).locator("input[name=item_name]").click()
         page.keyboard.press("Enter")
-        assert rows.nth(1).locator("input[name=quantity]").evaluate(
-            "el => el === document.activeElement")
+        assert focused(rows.nth(0).locator("input[name=quantity]")), "item -> quantity"
+        page.keyboard.press("Enter")
+        assert focused(rows.nth(0).locator("input[name=cartons]")), "quantity -> cartons"
+
+        # The end of a row falls into the start of the next one, so a whole
+        # delivery is typed without ever leaving the keyboard.
+        page.keyboard.press("Enter")
+        assert focused(rows.nth(1).locator("input[name=item_name]")), \
+            "the last column wraps to the next row"
+
         # The submit button on this screen issues a gate pass. Enter must never
-        # reach it — including on the last row, where there is nowhere to move.
+        # reach it — including in the very last cell, where there is nowhere
+        # left to move to.
         last = rows.nth(rows.count() - 1).locator("input[name=cartons]")
         last.click()
         page.keyboard.press("Enter")
         page.wait_for_timeout(400)
         assert page.url == was, "Enter submitted the form and issued a pass"
+
+    def test_arrows_still_move_straight_down_the_column(self, page, base_url):
+        """The other way of working: one column at a time, down the delivery."""
+        self._open_a_draft(page, base_url)
+        for _ in range(3):
+            page.click("#add-row")
+        rows = page.locator("#items-table tbody tr")
+
+        rows.nth(0).locator("input[name=quantity]").click()
+        page.keyboard.press("ArrowDown")
+        assert rows.nth(1).locator("input[name=quantity]").evaluate(
+            "el => el === document.activeElement"), "Down keeps the column"
+        page.keyboard.press("ArrowUp")
+        assert rows.nth(0).locator("input[name=quantity]").evaluate(
+            "el => el === document.activeElement"), "Up keeps the column"
+
+
+class TestRemarks:
+    def _open_a_draft(self, page, base_url):
+        TestItemTableKeyboard._open_a_draft(self, page, base_url)
+
+    def test_remarks_takes_several_lines_and_is_not_a_tall_empty_box(self, page, base_url):
+        self._open_a_draft(page, base_url)
+        remarks = page.locator("textarea[name=remarks]")
+        assert remarks.count() == 1, "Remarks should be a textarea, not a one-line input"
+
+        # It must start no taller than the single-line fields beside it. The
+        # complaint was a two-line gap sitting in the middle of the form.
+        height = remarks.evaluate("el => el.getBoundingClientRect().height")
+        assert height < 56, f"Remarks box is {height}px tall before anything is typed"
+        assert remarks.evaluate("el => getComputedStyle(el).resize") == "vertical"
+
+        # Shift+Enter puts in a real newline rather than submitting.
+        was = page.url
+        remarks.click()
+        page.keyboard.type("first line")
+        page.keyboard.press("Shift+Enter")
+        page.keyboard.type("second line")
+        page.wait_for_timeout(200)
+        assert page.url == was, "Shift+Enter submitted the form"
+        assert remarks.input_value() == "first line\nsecond line"
 
 
 class TestPrintedPass:

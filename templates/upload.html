@@ -174,27 +174,50 @@
       progressWrap.hidden = false;
       setProgress(0, chosen.length);
 
+      // Several at a time, not one after another. Each file is its own
+      // request, and the server runs three worker processes, so sending them
+      // one by one left two of the three idle while the browser waited —
+      // fifty invoices took about fifty times one invoice.
+      //
+      // Four, not more: past the number of server workers the extra requests
+      // only queue, and every one of them is holding an uploaded file in
+      // memory while it waits.
+      const CONCURRENT_UPLOADS = 4;
       let failures = 0;
-      const draftIds = [];
-      for (let i = 0; i < chosen.length; i++) {
-        const body = new FormData();
-        body.append("invoice", chosen[i]);
-        try {
-          const res = await fetch("{{ url_for('upload_one') }}", { method: "POST", body });
-          const data = await res.json();
-          if (!data.ok) {
-            markRow(i, "failed", data.error || "could not be read");
+      let started = 0, finished = 0;
+      // Indexed rather than appended, so the drafts stay in the order the
+      // files were chosen however the responses come back. Issuing spends
+      // serial numbers in this order, and a gate pass book that jumps about
+      // is a gate pass book nobody trusts.
+      const draftIdByIndex = new Array(chosen.length).fill(null);
+
+      async function uploadNext() {
+        while (true) {
+          const i = started++;
+          if (i >= chosen.length) return;
+          const body = new FormData();
+          body.append("invoice", chosen[i]);
+          try {
+            const res = await fetch("{{ url_for('upload_one') }}", { method: "POST", body });
+            const data = await res.json();
+            if (!data.ok) {
+              markRow(i, "failed", data.error || "could not be read");
+              failures++;
+            } else {
+              markRow(i, data.problem ? "attention" : "done", data.problem || "");
+              draftIdByIndex[i] = data.draft_id;
+            }
+          } catch (err) {
+            markRow(i, "failed", String(err));
             failures++;
-          } else {
-            markRow(i, data.problem ? "attention" : "done", data.problem || "");
-            draftIds.push(data.draft_id);
           }
-        } catch (err) {
-          markRow(i, "failed", String(err));
-          failures++;
+          setProgress(++finished, chosen.length);
         }
-        setProgress(i + 1, chosen.length);
       }
+
+      await Promise.all(
+        Array.from({ length: Math.min(CONCURRENT_UPLOADS, chosen.length) }, uploadNext));
+      const draftIds = draftIdByIndex.filter((id) => id !== null);
 
       progressText.textContent = failures
         ? `Finished — ${failures} could not be read`

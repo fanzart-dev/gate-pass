@@ -774,6 +774,92 @@ def test_cartons_come_from_the_master_list(tmpdir):
     conn.close()
 
 
+@needs_fixtures
+def test_parsing_a_batch(tmpdir):
+    """A batch is parsed several files at a time, in worker PROCESSES.
+
+    pdfplumber is Python nearly all the way down, so a thread pool is measurably
+    SLOWER than doing nothing (2.21s sequential against 3.16s on four threads,
+    for eight copies of a two-page invoice). Processes give about 3.7x on fifty.
+    """
+    fixtures = [SAMPLE_INVOICE, TWO_PAGE_INVOICE, SERVICE_LINE_INVOICE,
+                SAMPLE_INVOICE, TWO_PAGE_INVOICE, SERVICE_LINE_INVOICE]
+    one_by_one = [invoice_parser.parse_invoice(f) for f in fixtures]
+    together = invoice_parser.parse_many(fixtures)
+
+    check("a batch returns one result per file", len(together) == len(fixtures))
+    check("in the order it was given, not the order they finished",
+          [r["invoice_no"] for r in together] == [r["invoice_no"] for r in one_by_one])
+    check("with the same items as parsing them one at a time",
+          [[i["item_name"] for i in r["items"]] for r in together]
+          == [[i["item_name"] for i in r["items"]] for r in one_by_one])
+
+    # Small batches skip the pool entirely: starting worker processes costs
+    # about 100ms each, which is most of the work for two files.
+    check("a small batch still parses correctly",
+          len(invoice_parser.parse_many(fixtures[:2])) == 2)
+    check("an empty batch is not an error", invoice_parser.parse_many([]) == [])
+
+    # One unreadable file must cost only itself.
+    bad = Path(tmpdir) / "not-a-pdf.pdf"
+    bad.write_bytes(b"this is not a PDF at all")
+    mixed = invoice_parser.parse_many(list(fixtures) + [bad])
+    check("a broken file in the batch still yields a result", len(mixed) == len(fixtures) + 1)
+    check("and it is marked unreadable rather than silently empty",
+          bool(mixed[-1]["notes"]) and not mixed[-1]["items"])
+    check("while the good ones parsed fine", all(r["items"] for r in mixed[:len(fixtures)]))
+
+    # If the pool cannot start, EVERY file fails and the failures look exactly
+    # like unreadable PDFs — which would turn a batch of fifty good invoices
+    # into fifty drafts marked "could not be read". It must fall back instead.
+    import concurrent.futures
+    broken = concurrent.futures.ProcessPoolExecutor
+    class Unusable:
+        def __init__(self, *a, **k): raise OSError("no processes available")
+    concurrent.futures.ProcessPoolExecutor = Unusable
+    try:
+        fallback = invoice_parser.parse_many(fixtures)
+    finally:
+        concurrent.futures.ProcessPoolExecutor = broken
+    check("a pool that will not start falls back to parsing in order",
+          [[i["item_name"] for i in r["items"]] for r in fallback]
+          == [[i["item_name"] for i in r["items"]] for r in one_by_one])
+
+
+def test_remarks_print_on_more_than_one_line(tmpdir):
+    """A typed newline becomes a line break on the printed pass, safely."""
+    flask_app, client = logged_in_app(tmpdir, "remarks_lines")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    draft_id = db.create_draft(conn, supplier_name="S", customer_name="C",
+                                invoice_no="I", invoice_date="01-01-2026",
+                                items=sample_items(),
+                                remarks="line one\nline two\n<b>three</b>")
+    review = client.get(f"/review/{draft_id}").get_data(as_text=True)
+    check("remarks is a textarea, so more than one line can be typed",
+          '<textarea id="remarks"' in review)
+    check("and the existing newlines survive the round trip",
+          "line one\nline two" in review)
+
+    resp = client.post(f"/review/{draft_id}", headers={"Origin": "http://localhost"},
+                       data=MultiDict([
+                           ("supplier_name", "S"), ("customer_name", "C"),
+                           ("invoice_no", "I"), ("invoice_date", "01-01-2026"),
+                           ("vehicle_no", ""), ("remarks", "line one\nline two"),
+                           ("item_name", "MICRON MODREN OAK"), ("quantity", "1"),
+                           ("cartons", ""), ("action", "issue")]))
+    printed = client.get(resp.headers["Location"]).get_data(as_text=True)
+    check("the printed pass breaks the line", "line one<br>line two" in printed)
+    check("and does not print a literal backslash-n", "line one\\nline two" not in printed)
+
+    # The remark is typed by a person and printed on a document the company
+    # signs. Markup in it must appear as text, not be interpreted.
+    escaped = flask_app.jinja_env.filters["line_breaks"]("<script>x</script>\nnext")
+    check("markup in a remark is escaped, not rendered",
+          "&lt;script&gt;" in str(escaped) and "<script>" not in str(escaped))
+    check("while the newline still becomes a break", "<br>" in str(escaped))
+    conn.close()
+
+
 def test_carton_lookup_rules(tmpdir):
     """The matching itself: what counts as the same item, and what stays blank."""
     storage = Path(tmpdir) / "carton_rules"
@@ -2805,10 +2891,15 @@ def test_remarks_are_typed_and_printed(tmpdir):
 
 
 def test_item_table_keyboard_navigation(tmpdir):
-    """Down and Up move between rows in the same column.
+    """Enter goes across the row; the arrows go down the column.
 
-    Tab goes sideways along a row, which is the wrong direction for typing a
-    column of cartons or quantities down a delivery.
+    Enter used to do the same as Down. That is the wrong direction for reading
+    a line off an invoice — item, then quantity, then cartons — so it now moves
+    along the row and falls into the next row at the end of one. The arrows
+    keep the vertical movement, for filling one column down a whole delivery.
+
+    Asserted against the template source here; test_ui_flows.py drives it in a
+    real browser, which is what actually proves the focus moves.
     """
     flask_app, client = logged_in_app(tmpdir, "keys")
     conn = db.connect(flask_app.config["DB_PATH"])
@@ -2818,14 +2909,19 @@ def test_item_table_keyboard_navigation(tmpdir):
     page = client.get(f"/review/{draft_id}").get_data(as_text=True)
 
     check("the items table listens for keys", 'tbody.addEventListener("keydown"' in page)
-    check("Down and Up both move", '"ArrowDown"' in page and '"ArrowUp"' in page)
-    check("Enter moves down as well", '=== "Enter"' in page)
+    check("the arrows are handled", '"ArrowDown"' in page and '"ArrowUp"' in page)
+    check("Enter is handled", '"Enter"' in page)
+    check("Enter walks the inputs in document order, so it crosses rows",
+          'tbody.querySelectorAll("input")' in page)
+    check("the arrows still move by row, keeping the column",
+          "rowIndex + vertical" in page)
+
     # Enter inside a form submits it by default. On a review screen that issues
     # a gate pass on a stray keystroke, so it has to be stopped every time —
-    # including on the last row, where there is nowhere to move to.
+    # including in the very last cell, where there is nowhere to move to.
     check("Enter can never submit the form",
           "e.preventDefault();" in page
-          and page.index("e.preventDefault();") < page.index("if (!target) return;"))
+          and page.index("e.preventDefault();") < page.index("let next = null;"))
 
 
 def test_login_cannot_be_brute_forced(tmpdir):
@@ -3900,6 +3996,8 @@ def main():
         test_real_transfer_memos()
         test_a_gate_pass_uploaded_as_an_invoice(tmpdir)
         test_cartons_come_from_the_master_list(tmpdir)
+        test_parsing_a_batch(tmpdir)
+        test_remarks_print_on_more_than_one_line(tmpdir)
         test_carton_lookup_rules(tmpdir)
         test_sequence_derives_from_the_book(tmpdir)
         test_batch_issue_keeps_the_run_unbroken(tmpdir)

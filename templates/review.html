@@ -22,12 +22,20 @@
      input: a greyed-out box invites people to try to type in it. Only what the
      parser could not read is offered as a box to fill. Enforced server-side in
      _fill_blanks_only() — this macro is the courtesy, not the control. #}
-  {% macro field(name, label, value, placeholder="", required=False, note="") %}
+  {% macro field(name, label, value, placeholder="", required=False, note="", multiline=False) %}
     <div class="field">
       <label for="{{ name }}">{{ label }}{% if note %}
         <span style="text-transform:none;letter-spacing:0">{{ note }}</span>{% endif %}</label>
       {% if value and not may_edit %}
         <p class="read-field" title="Read from the invoice">{{ value }}</p>
+      {% elif multiline %}
+        {# A textarea, not an input: remarks run to more than one line often
+           enough that a single-line box silently hides the end of them. Shift
+           and Enter inserts a real newline, which the printed pass renders as
+           a line break. #}
+        <textarea id="{{ name }}" name="{{ name }}" rows="2" class="multiline"
+                  placeholder="{{ placeholder }}"
+                  {% if required %}required{% endif %}>{{ value }}</textarea>
       {% else %}
         <input type="text" id="{{ name }}" name="{{ name }}" value="{{ value }}"
                placeholder="{{ placeholder }}" {% if required %}required{% endif %}>
@@ -53,7 +61,7 @@
       {{ field("vehicle_no", "Vehicle No", draft.vehicle_no, "KA 01 AB 1234",
                False, "(optional)") }}
       {{ field("remarks", "Remarks", draft.remarks, "Anything to note about this consignment",
-               False, "(optional)") }}
+               False, "(optional)", multiline=True) }}
     </div>
 
     <div class="table-wrap">
@@ -167,27 +175,42 @@
 
     // Down/Up move between rows in the SAME column, which is how a column of
     // cartons or quantities actually gets typed — Tab goes sideways along the
-    // row, which is the wrong direction for the job. Enter does the same as
-    // Down so the whole column can be entered without leaving the keyboard,
-    // and is stopped from submitting the form on the way past.
+    // row, which is the wrong direction for the job.
+    //
+    // Enter goes ACROSS: item -> quantity -> cartons -> the next row's item.
+    // That is the order the line is actually read off the invoice, so a whole
+    // row is typed without reaching for the mouse or the Tab key.
+    //
+    // The arrows go DOWN the column instead, for the other way of working:
+    // filling every carton count in one pass once the names are in.
+    //
+    // Enter is always swallowed, on every cell including the last. Letting it
+    // through would submit the form, and on this page that issues a gate pass
+    // and spends a serial number on a stray keystroke.
     tbody.addEventListener("keydown", (e) => {
       const cell = e.target;
       if (cell.tagName !== "INPUT") return;
-      const step = e.key === "ArrowDown" || e.key === "Enter" ? 1
-                 : e.key === "ArrowUp" ? -1 : 0;
-      if (!step) return;
-
-      const row = cell.closest("tr");
-      const column = [...row.children].indexOf(cell.closest("td"));
-      const rows = [...tbody.querySelectorAll("tr")];
-      const target = rows[rows.indexOf(row) + step];
-
-      // Enter must not submit the form even on the last row, or a stray
-      // keystroke issues a gate pass.
+      const isEnter = e.key === "Enter";
+      const vertical = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+      if (!isEnter && !vertical) return;
       e.preventDefault();
-      if (!target) return;
-      const next = target.children[column] &&
-                   target.children[column].querySelector("input");
+
+      const rows = [...tbody.querySelectorAll("tr")];
+      const row = cell.closest("tr");
+      const rowIndex = rows.indexOf(row);
+
+      let next = null;
+      if (isEnter) {
+        // Every input in document order, so "the next one" crosses the row
+        // boundary by itself and no wrapping arithmetic is needed.
+        const all = [...tbody.querySelectorAll("input")];
+        next = all[all.indexOf(cell) + 1] || null;
+      } else {
+        const target = rows[rowIndex + vertical];
+        const column = [...row.children].indexOf(cell.closest("td"));
+        next = target && target.children[column]
+             ? target.children[column].querySelector("input") : null;
+      }
       if (next) { next.focus(); next.select(); }
     });
 

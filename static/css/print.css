@@ -222,7 +222,17 @@ table.meta-box-tall td {
 
 /* Nothing is printed in it: remarks are added by hand at the gate, like the
    cartons column. The label sits at the top so the space below is clear. */
-.remarks-cell { vertical-align: top; }
+.remarks-cell {
+  vertical-align: top;
+  /* Typed newlines arrive as <br>, so the cell must be allowed to wrap — but
+     not without limit. The pass is a FIXED height and the footer sits at the
+     bottom of it; an unbounded remark would push the signature line off the
+     page and take the cut line with it. Four lines is more than anyone writes
+     by hand, and anything past that is clipped rather than allowed to break
+     the geometry the whole sheet depends on. */
+  max-height: 16mm;
+  overflow: hidden;
+}
 
 /* The item table is rigid on purpose.
    It used to be `flex: 1`, which let the browser share the leftover page height
