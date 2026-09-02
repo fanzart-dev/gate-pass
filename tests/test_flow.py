@@ -4310,6 +4310,85 @@ def test_a_fetched_copy_can_be_opened_without_touching_the_live_book(tmpdir):
     check("and the live service never sets it", "GATE_PASS_STORAGE" not in unit)
 
 
+def test_emptying_the_register_for_a_fresh_start(tmpdir):
+    """manage_reset.py wipes the book and puts the protection back.
+
+    It deliberately breaks the guarantee the whole app is built on — that a
+    gate pass can never be deleted — so the parts that matter are that it will
+    not fire by accident, that it keeps what nobody wants to set up again, and
+    that the delete protection is genuinely working afterwards rather than
+    merely present by name.
+    """
+    import manage_reset
+
+    storage = Path(tmpdir) / "reset"
+    (storage / "invoices").mkdir(parents=True)
+    (storage / "invoices" / "old.pdf").write_bytes(b"%PDF-1.4 old upload")
+    path = storage / "gate_pass.db"
+    conn = db.connect(path)
+    make_user(conn, "ravi", "Ravi Kumar")
+    db.upsert_carton_mappings(conn, [("MICRON MODREN OAK", 1)])
+    db.update_settings(conn, company_name="fanzart", show_total_qty="1")
+    for i in range(3):
+        db.create_gate_pass(conn, None, "S", "C", f"I{i}", "01-01-2026", "",
+                            sample_items(), prepared_by="Ravi Kumar")
+    db.create_draft(conn, supplier_name="S", customer_name="C", invoice_no="D",
+                    invoice_date="01-01-2026", items=sample_items())
+    # Numbering jumped forward, to prove the floor is cleared too — otherwise
+    # the "fresh" book would start at 500, not 1.
+    db.start_new_run(conn, "FZ", 500, started_by="Ravi Kumar")
+    db.create_gate_pass(conn, None, "S", "C", "J", "01-01-2026", "",
+                        sample_items(), prepared_by="Ravi Kumar")
+    check("the book has passes before the reset", len(db.list_gate_passes(conn)) == 4)
+    conn.close()
+
+    # Without --wipe it must change nothing at all.
+    manage_reset.main(["--db", str(path)])
+    conn = db.connect(path)
+    check("a dry run changes nothing", len(db.list_gate_passes(conn)) == 4)
+    conn.close()
+
+    manage_reset.main(["--db", str(path), "--wipe", "--yes"])
+    conn = db.connect(path)
+
+    check("every gate pass is gone", len(db.list_gate_passes(conn)) == 0)
+    check("every draft is gone", len(db.list_drafts(conn)) == 0)
+    check("the uploaded invoices are gone",
+          not list((storage / "invoices").glob("*.pdf")))
+    check("numbering restarts at 00001, ignoring the earlier jump to 500",
+          db.next_serial_preview(conn) == "FZ-00001")
+    check("and the first pass issued really is FZ-00001",
+          db.create_gate_pass(conn, None, "S", "C", "NEW", "01-01-2026", "",
+                              sample_items(), prepared_by="Ravi Kumar")["serial_no"]
+          == "FZ-00001")
+
+    # Kept, or somebody spends the morning of go-live setting it all up again.
+    check("accounts survive", db.get_user_by_username(conn, "ravi") is not None)
+    check("the carton master list survives", db.carton_mapping_count(conn) == 1)
+    check("settings survive", db.get_settings(conn)["company_name"] == "fanzart")
+
+    # The reset is itself recorded, in the log it just emptied.
+    reset_rows = conn.execute(
+        "SELECT details FROM audit_log WHERE action = 'register_reset'").fetchall()
+    check("the reset writes its own audit line", len(reset_rows) == 1)
+    check("naming how much it removed", "gate passes" in reset_rows[0]["details"])
+
+    # And the protection is BACK — tested by trying, not by looking up a name.
+    # db.connect() alone does not restore it: schema.sql only re-runs when the
+    # user_version differs, and after a wipe it does not.
+    try:
+        with db.writing(conn):
+            conn.execute("DELETE FROM gate_passes")
+        check("deleting a gate pass is refused again", False)
+    except sqlite3.IntegrityError:
+        check("deleting a gate pass is refused again", True)
+    triggers = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+    check("every trigger in the schema is back",
+          set(manage_reset.TRIGGERS) <= triggers)
+    conn.close()
+
+
 def test_the_deployment_config_holds_together():
     """The bits of the server setup that break quietly when they drift.
 
@@ -4393,6 +4472,7 @@ def main():
     try:
         test_every_test_is_actually_run()
         test_the_deployment_config_holds_together()
+        test_emptying_the_register_for_a_fresh_start(tmpdir)
         test_a_fetched_copy_can_be_opened_without_touching_the_live_book(tmpdir)
         test_serial_format()
         test_triggers(tmpdir)
