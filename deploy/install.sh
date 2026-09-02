@@ -351,12 +351,28 @@ fi
 IP=$(hostname -I | awk '{print $1}')
 HOST=$(hostname)
 TS_IP=$(tailscale ip -4 2>/dev/null | head -1 || true)
+TS_NAME=$(tailscale status --json 2>/dev/null \
+          | python3 -c 'import json,sys; print((json.load(sys.stdin).get("Self") or {}).get("DNSName","").rstrip("."))' 2>/dev/null || true)
+# Is the public link actually serving? Only then is it the address to hand out.
+PUBLIC=""
+if [ -n "$TS_NAME" ] && tailscale serve status --json 2>/dev/null \
+     | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if any((d.get("AllowFunnel") or {}).values()) else 1)' 2>/dev/null; then
+    PUBLIC="https://$TS_NAME"
+fi
 
 say "Done"
-printf "\n    The app is at:  \033[1mhttp://%s\033[0m          (office LAN)\n" "$IP"
-printf "                    \033[1mhttp://%s.local\033[0m   (by name on the LAN)\n" "$HOST"
-[ -n "$TS_IP" ] && \
-printf "                    \033[1mhttp://%s\033[0m     (Tailscale, from anywhere)\n" "$TS_IP"
+printf "\n"
+# The public link first when there is one: it is the address the logistics team
+# uses, and the only one that works from a machine with no Tailscale and no
+# certificate installed. The LAN addresses still want fanzart-ca.pem.
+[ -n "$PUBLIC" ] && \
+printf "    The app is at:  \033[1m%s\033[0m   (anywhere, no VPN, real certificate)\n" "$PUBLIC"
+printf "%s\033[1mhttps://%s\033[0m        (office LAN)\n" \
+       "$([ -n "$PUBLIC" ] && printf '                    ' || printf '    The app is at:  ')" "$IP"
+printf "                    \033[1mhttps://%s.local\033[0m  (by name on the LAN)\n" "$HOST"
+# Deliberately NOT the Tailscale IP: it resolves only inside the tailnet, and
+# handing it out is how somebody ends up on an address that cannot reach the
+# app at all. It redirects to the public link anyway.
 printf "\n"
 
 if sudo -u "$APP_USER" "$APP_DIR/.venv/bin/python3" -c "
