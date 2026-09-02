@@ -2730,6 +2730,63 @@ def test_item_table_keyboard_navigation(tmpdir):
           and page.index("e.preventDefault();") < page.index("if (!target) return;"))
 
 
+def test_login_cannot_be_brute_forced(tmpdir):
+    """A password cannot be guessed indefinitely.
+
+    Only matters once the site is on the public internet, which it now is: a
+    Funnel hostname is published in Certificate Transparency logs the moment
+    its certificate is issued, so scanners find it within hours.
+    """
+    storage = Path(tmpdir) / "bruteforce"
+    flask_app = create_app(db_path=storage / "gate_pass.db", storage_dir=storage)
+    conn = db.connect(flask_app.config["DB_PATH"])
+    make_user(conn, "victim", "Victim", "the-real-password-99")
+    client = flask_app.test_client()
+
+    def guess(password, ip="203.0.113.9", username="victim"):
+        return client.post("/login", data={"username": username, "password": password},
+                           headers={"X-Forwarded-For": ip})
+
+    codes = [guess("wrong-%d" % i).status_code for i in range(db.LOGIN_MAX_PER_USERNAME)]
+    check("guessing is allowed up to the limit", all(c == 401 for c in codes))
+
+    blocked = guess("wrong-again")
+    check("then it is refused with 429", blocked.status_code == 429)
+    check("and says how long to wait", b"Try again in about" in blocked.data)
+
+    # The point of checking the lockout BEFORE the password: a locked-out
+    # attacker must not be able to tell a right guess from a wrong one, or the
+    # lockout becomes an oracle that confirms the password for later.
+    right = guess("the-real-password-99")
+    check("the CORRECT password is refused too while locked out",
+          right.status_code == 429)
+    check("and does not sign them in", db.get_user_by_username(conn, "victim") is not None
+          and b"Sign in" in right.data)
+
+    # A different account is unaffected — one person under attack must not lock
+    # the rest of the office out.
+    make_user(conn, "colleague", "Colleague", "another-password-77")
+    other = guess("nope", username="colleague")
+    check("a different username is not caught by it", other.status_code == 401)
+
+    # Getting it right clears the slate, so three typos this morning plus five
+    # this afternoon is not a lockout.
+    fresh = flask_app.test_client()
+    for i in range(3):
+        fresh.post("/login", data={"username": "colleague", "password": "no-%d" % i},
+                   headers={"X-Forwarded-For": "203.0.113.10"})
+    ok = fresh.post("/login", data={"username": "colleague", "password": "another-password-77"},
+                    headers={"X-Forwarded-For": "203.0.113.10"})
+    check("a correct password still works after a few typos", ok.status_code in (302, 200))
+    check("and the failures are forgotten",
+          db.login_lockout(conn, "colleague", "203.0.113.10") == 0)
+
+    check("attempts are recorded against the forwarded address, not the proxy",
+          conn.execute("SELECT COUNT(*) FROM login_attempts WHERE ip = '127.0.0.1'"
+                       ).fetchone()[0] == 0)
+    conn.close()
+
+
 def test_back_button_after_issuing(tmpdir):
     """Going Back to a draft that has been issued finds the pass, not a 404.
 
@@ -3602,8 +3659,14 @@ def test_hosting_hardening(tmpdir):
         depth += line.count("{") - line.count("}")
     check("the rendered config has no directive outside a block", not stray)
     check("and its braces balance", depth == 0)
-    check("it defines both a plain and a TLS server",
-          len(re.findall(r"^server \{", rendered, re.M)) == 2)
+    # Three: plain HTTP on 80, TLS on the LAN, and the loopback front door
+    # that tailscaled proxies into so the Tailscale entrance gets the same
+    # static handling, body limit and export timeouts as the LAN one.
+    check("it defines a plain, a TLS and a Tailscale-facing server",
+          len(re.findall(r"^server \{", rendered, re.M)) == 3)
+    check("the Tailscale front door is loopback only, never on a real address",
+          "listen 127.0.0.1:8091;" in rendered
+          and not re.search(r"listen (?!127\.0\.0\.1)[0-9.]*:?8091", rendered))
     check("with a TLS listener per address given",
           len(re.findall(r"listen [0-9.]+:443 ssl;", rendered)) == 2)
 
@@ -3773,6 +3836,7 @@ def main():
         test_admin_powers_and_guardrails(tmpdir)
         test_remarks_are_typed_and_printed(tmpdir)
         test_item_table_keyboard_navigation(tmpdir)
+        test_login_cannot_be_brute_forced(tmpdir)
         test_back_button_after_issuing(tmpdir)
         test_stylesheets_are_cache_busted(tmpdir)
         test_printed_issue_date_is_the_pass_date(tmpdir)

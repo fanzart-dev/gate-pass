@@ -5,7 +5,7 @@ import re
 import sqlite3
 import time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -205,7 +205,7 @@ DEFAULT_SETTINGS = {
 # Bump when schema.sql or ADDED_COLUMNS changes. Stored in the file as
 # PRAGMA user_version, so a connection can tell in one cheap read whether the
 # schema script needs running at all.
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # How long a writer waits for another writer before giving up. Four people
 # clicking Issue at the same moment are serialised in milliseconds, so this is
@@ -656,6 +656,87 @@ def authenticate(conn, username, password):
     if not check_password_hash(user["password_hash"], password or ""):
         return None
     return user
+
+
+# --- guarding the sign-in form against guessing --------------------------
+#
+# Needed the moment the site is reachable from the public internet. A Tailscale
+# Funnel hostname is published in Certificate Transparency logs as soon as its
+# certificate is issued, so it is found by scanners within hours and tried.
+# Without this, /login accepts unlimited guesses at whatever rate the network
+# allows.
+#
+# Two counters, deliberately very different sizes:
+#
+#   Per USERNAME is the real defence. Nobody legitimately gets a password wrong
+#   eight times in a quarter of an hour, and an attacker cannot dodge it: they
+#   must name the account they are attacking.
+#
+#   Per ADDRESS is a backstop against spraying one password across many
+#   usernames. Its limit is deliberately loose because the whole office can sit
+#   behind a single NAT address, and locking one address could lock out
+#   everybody at once. It is also the weaker of the two: the address is read
+#   from a forwarded header, which a determined caller can lie about. The
+#   username counter cannot be lied about, which is why it is the tight one.
+#
+# Nothing here locks an account permanently — the window simply passes. An
+# admin cannot be locked out of their own system by somebody else's attempt for
+# longer than that.
+LOGIN_WINDOW_MINUTES = 15
+LOGIN_MAX_PER_USERNAME = 8
+LOGIN_MAX_PER_IP = 40
+
+
+def _lockout_seconds(conn, column, value, limit):
+    row = conn.execute(
+        f"SELECT COUNT(*) AS n, MIN(at) AS first FROM login_attempts "
+        f"WHERE {column} = ? AND at > datetime(?, ?)",
+        (value, _now(), f"-{LOGIN_WINDOW_MINUTES} minutes"),
+    ).fetchone()
+    if row["n"] < limit:
+        return 0
+    # Unblocks once the OLDEST attempt in the window ages out, so it is a
+    # rolling window rather than a fixed one — each further guess pushes the
+    # release later, and a patient user is let back in as soon as it is fair.
+    started = datetime.strptime(row["first"], "%Y-%m-%d %H:%M:%S")
+    free_at = started + timedelta(minutes=LOGIN_WINDOW_MINUTES)
+    return max(1, int((free_at - datetime.now()).total_seconds()))
+
+
+def login_lockout(conn, username, ip):
+    """Seconds before this username or address may try a password again.
+
+    0 means go ahead. Checked BEFORE the password is verified, so a locked-out
+    caller cannot even learn whether their guess was right.
+    """
+    return max(
+        _lockout_seconds(conn, "username", (username or "").strip().lower(),
+                         LOGIN_MAX_PER_USERNAME),
+        _lockout_seconds(conn, "ip", ip or "?", LOGIN_MAX_PER_IP),
+    )
+
+
+def record_failed_login(conn, username, ip):
+    with writing(conn):
+        conn.execute(
+            "INSERT INTO login_attempts (username, ip, at) VALUES (?, ?, ?)",
+            ((username or "").strip().lower(), ip or "?", _now()))
+        # Pruned here rather than on a timer: this is the only place rows are
+        # created, so the table cannot grow while nobody is failing to sign in.
+        conn.execute(
+            "DELETE FROM login_attempts WHERE at <= datetime(?, ?)",
+            (_now(), f"-{LOGIN_WINDOW_MINUTES * 4} minutes"))
+
+
+def clear_login_attempts(conn, username):
+    """Wipe a username's failures after a correct password.
+
+    Someone who mistypes a few times and then gets it right must not carry
+    those failures towards a lockout for the next quarter of an hour.
+    """
+    with writing(conn):
+        conn.execute("DELETE FROM login_attempts WHERE username = ?",
+                     ((username or "").strip().lower(),))
 
 
 def password_is_correct(conn, username, password):
