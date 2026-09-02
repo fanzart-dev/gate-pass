@@ -895,19 +895,32 @@ def register_routes(app):
     @app.route("/settings/new-run", methods=["POST"])
     @requires("can_access_settings")
     def new_serial_run():
-        """Restart numbering at 00001 under a new prefix. Nothing is deleted —
-        every pass already issued keeps its number and stays in the register."""
-        prefix = request.form.get("prefix", "")
+        """Set the numbering to a prefix and a starting number.
+
+        Nothing is deleted — every pass already issued keeps its number and
+        stays in the register. A prefix that has been used before is allowed:
+        it carries on from the last number issued under it rather than starting
+        again, which is what makes reuse safe.
+        """
         if request.form.get("confirm") != "yes":
-            flash("Tick the confirmation box to restart numbering.", "error")
+            flash("Tick the confirmation box to change the numbering.", "error")
             return redirect(url_for("settings"))
         try:
-            new_prefix = db.start_new_run(g.db, prefix, started_by=g.user["display_name"])
+            # "FZ-", "FZ27-" or a whole example such as "FZ-00001".
+            prefix, start_at = db.parse_run_spec(request.form.get("prefix", ""))
+            typed = request.form.get("start_at", "").strip()
+            if typed:
+                if not typed.isdigit():
+                    raise ValueError("the starting number must be digits only")
+                start_at = int(typed)
+            prefix, start_at = db.start_new_run(
+                g.db, prefix, start_at, started_by=g.user["display_name"])
         except ValueError as exc:
             flash(str(exc)[0].upper() + str(exc)[1:] + ".", "error")
             return redirect(url_for("settings"))
-        flash(f"Numbering restarted. The next gate pass will be "
-              f"{db.serial_for(new_prefix, 1)}. Everything already issued is untouched.", "ok")
+        flash(f"Numbering set. The next gate pass will be "
+              f"{db.serial_for(prefix, start_at)}. Everything already issued is "
+              f"untouched.", "ok")
         return redirect(url_for("settings"))
 
     @app.route("/invoices/<path:relpath>")
