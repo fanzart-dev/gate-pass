@@ -55,9 +55,30 @@ if [ -d "$APP_DIR/.git" ]; then
     # tells git to ignore the mismatch rather than removing it. Running git as
     # the owner has no mismatch to ignore, and keeps root from leaving
     # root-owned objects behind in a tree the service has to write to.
+    # This script is IN the tree it is about to update, so the next two lines
+    # can rewrite the file bash is currently reading. Bash reads a script by
+    # byte offset and re-reads from that offset as it goes, so a file that
+    # changes length underneath it carries on executing from the wrong place —
+    # in the middle of a line, or in a block it already ran. That is not
+    # theoretical: this is what turned one bad edit into
+    # "install.sh: line 102: [Unit]: command not found".
+    #
+    # So: note what the script looked like, update, and if the script itself
+    # changed, start the new one over from the top. The environment variable
+    # stops that becoming a loop.
+    before_update="$(sha256sum "$0" | cut -d' ' -f1)"
     sudo -u "$APP_USER" git -C "$APP_DIR" fetch --quiet origin
     sudo -u "$APP_USER" git -C "$APP_DIR" reset --quiet --hard origin/master
     note "updated to $(sudo -u "$APP_USER" git -C "$APP_DIR" log --oneline -1)"
+
+    if [ "$(sha256sum "$0" | cut -d' ' -f1)" != "$before_update" ]; then
+        if [ "${GP_INSTALL_RESTARTED:-}" = "1" ]; then
+            die "$0 changed again after restarting — something is rewriting it
+       in a loop. Check the branch it is being updated from."
+        fi
+        note "this installer updated itself — starting the new one"
+        GP_INSTALL_RESTARTED=1 exec bash "$0" "$@"
+    fi
 else
     # First install: the directory is either absent or the empty home adduser
     # made, so this one runs as root and the chown below tidies up after it.
