@@ -3471,6 +3471,13 @@ def test_hosting_hardening(tmpdir):
     # The Werkzeug debugger is a Python console on an error page. It must never
     # be switched on by merely starting the file.
     source = (ROOT / "app.py").read_text()
+    # A shell script that is not executable fails at the moment somebody needs
+    # it, with a permission error that reads like a security problem rather
+    # than a missing mode bit. git tracks the bit; it just has to be set.
+    for script in sorted((ROOT / "deploy").glob("*.sh")):
+        check(f"deploy/{script.name} is executable",
+              os.access(script, os.X_OK))
+
     check("the debugger is off unless explicitly asked for",
           "debug=True" not in source and "GATE_PASS_DEBUG" in source)
 
