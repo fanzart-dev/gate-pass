@@ -47,7 +47,14 @@ def create_app(db_path=None, storage_dir=None):
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32MB, plenty for a scanned invoice
 
-    storage_dir = Path(storage_dir) if storage_dir else BASE_DIR / "storage"
+    # GATE_PASS_STORAGE points the app at a different book. Production never
+    # sets it — the systemd unit does not, and the default is the storage/
+    # beside the code. It exists so a copy fetched off the server
+    # (deploy/fetch-db.sh) can be opened with the real app instead of read
+    # through sqlite3 by hand, without going anywhere near the live one.
+    if storage_dir is None:
+        storage_dir = os.environ.get("GATE_PASS_STORAGE") or BASE_DIR / "storage"
+    storage_dir = Path(storage_dir)
     invoices_dir = storage_dir / "invoices"
     invoices_dir.mkdir(parents=True, exist_ok=True)
     app.config["STORAGE_DIR"] = storage_dir

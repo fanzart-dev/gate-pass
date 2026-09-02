@@ -4279,6 +4279,37 @@ def test_hosting_hardening(tmpdir):
           "debug=True" not in source and "GATE_PASS_DEBUG" in source)
 
 
+def test_a_fetched_copy_can_be_opened_without_touching_the_live_book(tmpdir):
+    """GATE_PASS_STORAGE opens a different book, and only when asked.
+
+    It exists so a copy pulled off the server can be read with the real app.
+    The danger of such a switch is that it fires when nobody meant it to, so
+    the default must be untouched when it is unset — production never sets it.
+    """
+    elsewhere = Path(tmpdir) / "fetched"
+    os.environ["GATE_PASS_STORAGE"] = str(elsewhere)
+    try:
+        moved = create_app()
+        check("the override moves the whole storage directory",
+              Path(moved.config["STORAGE_DIR"]) == elsewhere)
+        check("and the database with it",
+              moved.config["DB_PATH"] == str(elsewhere / "gate_pass.db"))
+        check("uploaded invoices go beside it, not into the live folder",
+              Path(moved.config["INVOICES_DIR"]) == elsewhere / "invoices")
+        # An explicit argument still wins, or the test suite itself would be
+        # reading whatever this variable happened to be set to.
+        explicit = Path(tmpdir) / "explicit"
+        check("an explicit storage_dir still beats the environment",
+              Path(create_app(storage_dir=explicit).config["STORAGE_DIR"]) == explicit)
+    finally:
+        del os.environ["GATE_PASS_STORAGE"]
+
+    check("unset, it falls back to the storage beside the code",
+          str(create_app().config["STORAGE_DIR"]).endswith("gate-pass/storage"))
+    unit = (ROOT / "deploy" / "gate-pass.service").read_text()
+    check("and the live service never sets it", "GATE_PASS_STORAGE" not in unit)
+
+
 def test_the_deployment_config_holds_together():
     """The bits of the server setup that break quietly when they drift.
 
@@ -4362,6 +4393,7 @@ def main():
     try:
         test_every_test_is_actually_run()
         test_the_deployment_config_holds_together()
+        test_a_fetched_copy_can_be_opened_without_touching_the_live_book(tmpdir)
         test_serial_format()
         test_triggers(tmpdir)
         test_serial_allocation(tmpdir)
