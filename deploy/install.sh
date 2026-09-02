@@ -99,36 +99,6 @@ template = open(f"{os.environ['APP_DIR']}/deploy/gate-pass.service").read()
 print(template.replace("__APP_DIR__", os.environ["APP_DIR"])
               .replace("__APP_USER__", os.environ["APP_USER"]), end="")
 PY
-[Unit]
-Description=Fanzart Gate Pass
-After=network.target
-
-[Service]
-Type=notify
-User=$APP_USER
-Group=$APP_USER
-WorkingDirectory=$APP_DIR
-Environment="PATH=$APP_DIR/.venv/bin"
-# Set GATE_PASS_HTTPS=1 only once a certificate is live. On plain HTTP it marks
-# the session cookie HTTPS-only, and nobody can sign in.
-ExecStart=$APP_DIR/.venv/bin/gunicorn -c deploy/gunicorn.conf.py app:app
-ExecReload=/bin/kill -s HUP \$MAINPID
-Restart=always
-RestartSec=3
-
-# The book is the only thing this service may write to.
-ReadWritePaths=$APP_DIR/storage
-ProtectSystem=strict
-ProtectHome=read-only
-PrivateTmp=true
-NoNewPrivileges=true
-ProtectKernelTunables=true
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-
-[Install]
-WantedBy=multi-user.target
-UNIT
 systemctl daemon-reload
 systemctl enable --quiet gate-pass
 systemctl restart gate-pass

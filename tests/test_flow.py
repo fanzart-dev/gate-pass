@@ -4389,6 +4389,44 @@ def test_emptying_the_register_for_a_fresh_start(tmpdir):
     conn.close()
 
 
+def test_the_deploy_scripts_have_no_dangling_heredocs():
+    """Every here-document in the deploy scripts is closed.
+
+    This shipped broken. An edit to install.sh matched the delimiter on the
+    `cat <<UNIT` line ITSELF rather than on the terminator, deleted only that
+    first line, and left thirty lines of systemd unit sitting in the script as
+    shell commands. It ran on the server as:
+
+        install.sh: line 102: [Unit]: command not found
+
+    `bash -n` does not catch it — `[Unit]` is a syntactically valid command —
+    so a syntax check passed both before and after the damage. This looks at
+    the structure instead.
+    """
+    for script in sorted((ROOT / "deploy").glob("*.sh")) + [ROOT / "deploy" / "install.sh"]:
+        text = script.read_text()
+        lines = text.splitlines()
+        for number, line in enumerate(lines, 1):
+            for delim in re.findall(r"<<-?\s*[\'\"]?([A-Za-z_][A-Za-z0-9_]*)[\'\"]?", line):
+                closed = any(later.strip() == delim for later in lines[number:])
+                check(f"{script.name}:{number} closes its <<{delim}", closed)
+
+        # Nothing that belongs inside a unit file may sit at the top level of a
+        # shell script, which is exactly what the orphaned body looked like.
+        stray = [f"{script.name}:{n}: {l}" for n, l in enumerate(lines, 1)
+                 if re.match(r"^(\[(Unit|Service|Install)\]|ExecStart=|WantedBy=)", l)]
+        check(f"{script.name} has no loose systemd directives", not stray)
+        if stray:
+            for one in stray[:3]:
+                print(f"    {one}")
+
+    # And the scripts still parse.
+    import subprocess
+    for script in sorted((ROOT / "deploy").glob("*.sh")):
+        result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+        check(f"{script.name} parses", result.returncode == 0)
+
+
 def test_the_deployment_config_holds_together():
     """The bits of the server setup that break quietly when they drift.
 
@@ -4471,6 +4509,7 @@ def main():
     tmpdir = tempfile.mkdtemp(prefix="gate-pass-test-")
     try:
         test_every_test_is_actually_run()
+        test_the_deploy_scripts_have_no_dangling_heredocs()
         test_the_deployment_config_holds_together()
         test_emptying_the_register_for_a_fresh_start(tmpdir)
         test_a_fetched_copy_can_be_opened_without_touching_the_live_book(tmpdir)
