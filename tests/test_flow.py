@@ -4279,6 +4279,65 @@ def test_hosting_hardening(tmpdir):
           "debug=True" not in source and "GATE_PASS_DEBUG" in source)
 
 
+def test_the_deployment_config_holds_together():
+    """The bits of the server setup that break quietly when they drift.
+
+    Every one of these has either bitten already or would bite silently: a
+    wrong path in a unit file is only read during an incident, and a body limit
+    below the app's own rejects an upload with no explanation.
+    """
+    unit = (ROOT / "deploy" / "gate-pass.service").read_text()
+    install = (ROOT / "deploy" / "install.sh").read_text()
+
+    # One copy of the unit. There were two, and they had drifted on the user
+    # and the working directory.
+    check("install.sh renders the unit from the template, not a second copy",
+          "deploy/gate-pass.service" in install
+          and "cat > /etc/systemd/system/gate-pass.service <<UNIT" not in install)
+    check("the template is parameterised, so it cannot hardcode a stale path",
+          "__APP_DIR__" in unit and "__APP_USER__" in unit)
+    # Directives only: the comment above them explains the stale path that used
+    # to be here, and naming it is the point of that comment.
+    directives = "\n".join(l for l in unit.splitlines() if l and not l.startswith("#"))
+    check("no directive names a developer's home directory",
+          "/home/" not in directives)
+
+    # A power cut must leave the office with a working book.
+    check("it restarts on failure", "Restart=always" in unit)
+    check("with a delay, so a crash loop does not spin",
+          re.search(r"^RestartSec=[1-9]", unit, re.M))
+    check("and it is enabled at install, so it survives a reboot",
+          re.search(r"systemctl enable[^\n]*gate-pass", install))
+
+    # Optional env file: the leading "-" is what keeps a missing file from
+    # stopping the service.
+    check("an environment file is referenced", "EnvironmentFile=" in unit)
+    check("and optionally, so an absent one is not a failure to boot",
+          "EnvironmentFile=-" in unit)
+    check("a template for it is committed", (ROOT / "deploy" / "env.example").exists())
+    ignored = (ROOT / ".gitignore").read_text()
+    check("but real env files never reach this public repository",
+          ".env" in ignored and "!deploy/env.example" in ignored)
+
+    # The service may write to the book and nothing else.
+    check("the service can only write to storage/", "ReadWritePaths=__APP_DIR__/storage" in unit)
+    check("and the rest of the machine is read-only to it", "ProtectSystem=strict" in unit)
+
+    # nginx must not reject an upload the app would have accepted.
+    app_limit = int(re.search(r"MAX_CONTENT_LENGTH\"\]\s*=\s*(\d+)", (ROOT / "app.py").read_text()).group(1))
+    for conf in ("nginx-gate-pass.conf", "nginx-gate-pass-ssl.conf"):
+        text = (ROOT / "deploy" / conf).read_text()
+        for size in re.findall(r"client_max_body_size\s+(\d+)M", text):
+            check(f"{conf} accepts at least what the app does ({size}M >= {app_limit}MB)",
+                  int(size) >= app_limit)
+
+    # Backups, and something to stop their log eating the disk.
+    check("a nightly backup is scheduled", "/etc/cron.d/gate-pass-backup" in install)
+    check("and its log is rotated", "/etc/logrotate.d/gate-pass" in install)
+    check("there is a preflight check to run before handing it over",
+          (ROOT / "deploy" / "preflight.sh").exists())
+
+
 def test_every_test_is_actually_run():
     """Every test_* in this file must be called by main().
 
@@ -4302,6 +4361,7 @@ def main():
     tmpdir = tempfile.mkdtemp(prefix="gate-pass-test-")
     try:
         test_every_test_is_actually_run()
+        test_the_deployment_config_holds_together()
         test_serial_format()
         test_triggers(tmpdir)
         test_serial_allocation(tmpdir)

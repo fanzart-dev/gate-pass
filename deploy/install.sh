@@ -90,7 +90,15 @@ sudo -u "$APP_USER" "$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requir
 note "$("$APP_DIR/.venv/bin/python3" --version), dependencies installed"
 
 say "systemd service"
-cat > /etc/systemd/system/gate-pass.service <<UNIT
+# Rendered from deploy/gate-pass.service rather than written out again here.
+# There used to be two copies of this unit — one in the repo and one inline in
+# this script — and they had drifted apart on the user and the paths.
+APP_DIR="$APP_DIR" APP_USER="$APP_USER" python3 - <<'PY' > /etc/systemd/system/gate-pass.service
+import os
+template = open(f"{os.environ['APP_DIR']}/deploy/gate-pass.service").read()
+print(template.replace("__APP_DIR__", os.environ["APP_DIR"])
+              .replace("__APP_USER__", os.environ["APP_USER"]), end="")
+PY
 [Unit]
 Description=Fanzart Gate Pass
 After=network.target
@@ -278,6 +286,23 @@ CRON
 chmod 644 /etc/cron.d/gate-pass-backup
 touch /var/log/gate-pass-backup.log
 chown "$APP_USER:$APP_USER" /var/log/gate-pass-backup.log
+
+# Rotate it. A nightly append with nothing trimming it is a file that grows
+# quietly for years and is then discovered by a full disk — on the machine that
+# holds the book, which is the worst place to run out of room.
+cat > /etc/logrotate.d/gate-pass <<'ROTATE'
+/var/log/gate-pass-backup.log {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 __APP_USER__ __APP_USER__
+}
+ROTATE
+sed -i "s/__APP_USER__/$APP_USER/g" /etc/logrotate.d/gate-pass
+note "backup log rotates weekly, 12 kept"
 note "21:00 daily into $APP_DIR/storage/backups (90 days kept)"
 
 say "Firewall"
