@@ -23,6 +23,25 @@ BASE_DIR = Path(__file__).parent
 PUBLIC_ENDPOINTS = {"login", "static"}
 
 
+def client_ip():
+    """The caller's address as best it can be known.
+
+    nginx appends to X-Forwarded-For, and over the public Funnel tailscaled
+    has already put the real client at the front, so the first entry is the
+    browser and the rest are our own hops.
+
+    Treat it as a hint, never as proof: a caller can send an
+    X-Forwarded-For of their own and the proxies in front will append to it
+    rather than replace it. That is why the per-address limit is only a
+    backstop, and the per-username one — which cannot be forged, because
+    the attacker has to name the account — does the real work.
+    """
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()[:64]
+    return (request.remote_addr or "?")[:64]
+
+
 def create_app(db_path=None, storage_dir=None):
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32MB, plenty for a scanned invoice
@@ -201,8 +220,20 @@ def register_routes(app):
         if request.method == "POST":
             username = request.form.get("username", "")
             password = request.form.get("password", "")
+
+            # Before the password is even looked at, so a locked-out caller
+            # cannot learn from the reply whether their guess was right.
+            waiting_for = db.login_lockout(g.db, username, client_ip())
+            if waiting_for:
+                minutes = max(1, round(waiting_for / 60))
+                flash(f"Too many failed sign-ins. Try again in about "
+                      f"{minutes} minute{'s' if minutes != 1 else ''}.", "error")
+                return render_template("login.html", username=username,
+                                       next_url=request.args.get("next", "")), 429
+
             user = db.authenticate(g.db, username, password)
             if user is None:
+                db.record_failed_login(g.db, username, client_ip())
                 # Someone whose own password is right is told why they can't get
                 # in; everyone else gets a vague message that reveals nothing
                 # about whether the username exists.
@@ -219,6 +250,7 @@ def register_routes(app):
                 return render_template("login.html", username=username,
                                         no_users=db.count_users(g.db) == 0), 401
             session.clear()
+            db.clear_login_attempts(g.db, username)
             session["user_id"] = user["id"]
             session.permanent = False
             target = request.args.get("next") or url_for("upload")

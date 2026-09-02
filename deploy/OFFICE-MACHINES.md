@@ -1,29 +1,41 @@
 # Setting up an office machine
 
-There are two ways to reach the gate pass server, and they are not equally
-good. Read the first one before doing any of the work in the second.
+The gate pass server has **one public link that works from anywhere**:
 
-## The easy way: Tailscale (no certificate to install)
+    https://faniq.tailaf7188.ts.net
 
-    https://faniq.tailaf7188.ts.net:9443
+Open it on any machine — Windows, Mac, phone, office broadband or home. There
+is nothing to install: no certificate, no VPN, no Kaspersky exclusion. The
+padlock is clean because that name has a genuine Let's Encrypt certificate,
+the same kind a bank uses, and it renews itself.
 
-Install Tailscale on the machine, sign in, and open that address. **Nothing
-else.** The padlock is clean immediately, on any device.
+**This is the link to give the logistics team.** They are on Windows machines
+that are not on the office LAN, so it is the only one that works for them.
 
-This works because Tailscale issues a genuine Let's Encrypt certificate for
-that name — the same kind of certificate a bank uses. Every browser, phone and
-antivirus product on earth already trusts it, so there is no file to install,
-no Kaspersky exclusion to add, and no warning to click past. It also renews
-itself, and it works from home and from a phone, not only in the office.
+Set up on the server with `sudo deploy/enable-public-link.sh --replace`.
 
-Set up on the server with `sudo deploy/enable-tailscale-https.sh`. It is
-`tailscale serve`, not `tailscale funnel`: reachable inside the tailnet only,
-never published to the public internet.
+### What being public means
 
-**If a machine can be put on Tailscale, stop here.** Everything below is the
-harder path, needed only for machines that cannot be.
+The sign-in page is reachable by anyone on the internet. The data is not —
+every page behind it needs a password — but the door is now in public, so:
 
-## The other way: `https://fanzart-server.local` on the LAN
+* Passwords have to be long and unique. Anything shared or reused is now
+  exposed to the whole internet rather than to people who can walk into the
+  building.
+* Accounts for people who have left must actually be removed.
+* The app throttles password guessing: eight wrong attempts on one account
+  within fifteen minutes and that account stops accepting guesses, correct
+  password included, until the window passes. A different account is not
+  affected, so one person under attack cannot lock out the office.
+
+When there is time, the stronger version is Cloudflare Access in front of it,
+so only a company email address reaches the sign-in page at all.
+
+## In the office: `https://fanzart-server.local`
+
+Slightly faster on the LAN because it does not leave the building, but each
+machine needs the certificate installed once. **If that is a nuisance, just use
+the public link above** — it works on the LAN too.
 
 Each machine needs the server's certificate installed **once**. Until it is,
 the browser says "Not secure" and staff have to click through a security

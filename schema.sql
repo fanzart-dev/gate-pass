@@ -200,3 +200,25 @@ FOR EACH ROW
 BEGIN
     SELECT RAISE(ABORT, 'audit log is append-only');
 END;
+
+-- Failed sign-in attempts, so a password cannot be guessed indefinitely.
+--
+-- Only needed once the site is reachable from the public internet: a Funnel
+-- hostname appears in Certificate Transparency logs the moment its certificate
+-- is issued, so scanners find it within hours and start trying passwords. On a
+-- LAN this table stays empty.
+--
+-- Deliberately NOT the audit log. The audit log is append-only and permanent
+-- because it is the register's evidence; this is throwaway operational noise
+-- that gets pruned, and mixing the two would either bloat the evidence or put
+-- a delete trigger where one must never be.
+CREATE TABLE IF NOT EXISTS login_attempts (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    ip       TEXT NOT NULL,
+    at       TEXT NOT NULL
+);
+
+-- Both lookups are "how many in the last N minutes", so time leads each index.
+CREATE INDEX IF NOT EXISTS idx_login_attempts_user ON login_attempts(username, at);
+CREATE INDEX IF NOT EXISTS idx_login_attempts_ip   ON login_attempts(ip, at);
