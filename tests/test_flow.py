@@ -22,6 +22,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 import db  # noqa: E402
+import app as appmod  # noqa: E402
 import invoice_parser  # noqa: E402
 from app import create_app  # noqa: E402
 
@@ -1170,8 +1171,10 @@ def test_print_layout_rules(tmpdir):
           ">Document No</span>" in card and ">Date</span>" in card
           and card.index(">Document No</span>") < card.index("Remarks :"))
     check("Remarks is the right-hand box", 'class="remarks-cell"' in card)
-    check("Remarks prints empty, to be written at the gate",
-          "Remarks :</td>" in card or "Remarks :\n" in card)
+    # Prints what was typed on the review screen, and stays empty when nothing
+    # was — so the box is still there to write in by hand at the gate.
+    check("Remarks prints what was typed, and nothing when it was not",
+          "Remarks : {% if gate_pass.remarks %}" in card)
     tall = re.search(r"table\.meta-box-tall td \{[^}]*\}", css)
     check("that box is given room", tall is not None and "min-height" in tall.group())
 
@@ -2646,6 +2649,87 @@ def test_admin_powers_and_guardrails(tmpdir):
           staff.get("/upload").status_code == 302)
 
 
+def test_remarks_are_typed_and_printed(tmpdir):
+    """Remarks are entered on the review screen and printed on the pass.
+
+    Unlike cartons (rule 5) a remark CAN be known at the keyboard — it is a note
+    about the consignment, not a count of how it was packed — so it is captured
+    with the pass. The printed box still prints empty when nobody typed
+    anything, so it can be written on by hand at the gate.
+    """
+    flask_app, client = logged_in_app(tmpdir, "remarks")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    draft_id = db.create_draft(conn, supplier_name="Golden Touch Exports",
+                                customer_name="FANZART LLP", invoice_no="FR 1",
+                                invoice_date="01-01-2026", items=sample_items())
+    conn.close()
+
+    page = client.get(f"/review/{draft_id}").get_data(as_text=True)
+    check("the review screen offers a Remarks field", 'name="remarks"' in page)
+    check("and marks it optional", "Remarks" in page and "(optional)" in page)
+
+    note = "Fragile — 2 boxes short-shipped, balance to follow"
+    resp = client.post(f"/review/{draft_id}", headers={"Origin": "http://localhost"},
+                       data=MultiDict([
+                           ("supplier_name", "Golden Touch Exports"),
+                           ("customer_name", "FANZART LLP"), ("invoice_no", "FR 1"),
+                           ("invoice_date", "01-01-2026"), ("vehicle_no", ""),
+                           ("remarks", note),
+                           ("item_name", "MICRON MODREN OAK"), ("quantity", "1"),
+                           ("cartons", ""), ("action", "issue"),
+                       ]))
+    gate_pass_id = int(resp.headers["Location"].rstrip("/").rsplit("/", 1)[-1])
+    conn = db.connect(flask_app.config["DB_PATH"])
+    check("the remark is stored on the pass",
+          db.get_gate_pass(conn, gate_pass_id)["remarks"] == note)
+    conn.close()
+
+    printed = " ".join(re.sub(r"<[^>]+>", " ",
+                              client.get(f"/print/{gate_pass_id}").get_data(as_text=True)).split())
+    check("and printed in the Remarks box", f"Remarks : {note}" in printed)
+
+    # Nothing typed: the box still prints, empty, to be written in.
+    conn = db.connect(flask_app.config["DB_PATH"])
+    blank = db.create_gate_pass(conn, None, "S", "C", "I", "01-01-2026", "",
+                                 sample_items(), prepared_by="Ravi Kumar")
+    conn.close()
+    printed = " ".join(re.sub(r"<[^>]+>", " ",
+                              client.get(f"/print/{blank['id']}").get_data(as_text=True)).split())
+    check("an empty remark still prints the box",
+          "Remarks :" in printed and note not in printed)
+
+    # Never parsed from an invoice, so always the operator's to type — the same
+    # reason vehicle_no is always editable.
+    draft = {"supplier_name": "S", "customer_name": "C", "invoice_no": "I",
+             "invoice_date": "D", "vehicle_no": "", "items": [], "parse_notes": ""}
+    fields, _items = appmod._fill_blanks_only(draft, MultiDict([("remarks", "typed")]))
+    check("remarks is not something the parser can lock", "remarks" not in fields)
+
+
+def test_item_table_keyboard_navigation(tmpdir):
+    """Down and Up move between rows in the same column.
+
+    Tab goes sideways along a row, which is the wrong direction for typing a
+    column of cartons or quantities down a delivery.
+    """
+    flask_app, client = logged_in_app(tmpdir, "keys")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    draft_id = db.create_draft(conn, supplier_name="S", customer_name="C",
+                                invoice_no="I", invoice_date="D", items=sample_items())
+    conn.close()
+    page = client.get(f"/review/{draft_id}").get_data(as_text=True)
+
+    check("the items table listens for keys", 'tbody.addEventListener("keydown"' in page)
+    check("Down and Up both move", '"ArrowDown"' in page and '"ArrowUp"' in page)
+    check("Enter moves down as well", '=== "Enter"' in page)
+    # Enter inside a form submits it by default. On a review screen that issues
+    # a gate pass on a stray keystroke, so it has to be stopped every time —
+    # including on the last row, where there is nowhere to move to.
+    check("Enter can never submit the form",
+          "e.preventDefault();" in page
+          and page.index("e.preventDefault();") < page.index("if (!target) return;"))
+
+
 def test_stylesheets_are_cache_busted(tmpdir):
     """Every stylesheet link carries the file's modification time.
 
@@ -3443,6 +3527,8 @@ def main():
         test_batch_printing(tmpdir)
         test_role_based_access(tmpdir)
         test_admin_powers_and_guardrails(tmpdir)
+        test_remarks_are_typed_and_printed(tmpdir)
+        test_item_table_keyboard_navigation(tmpdir)
         test_stylesheets_are_cache_busted(tmpdir)
         test_printed_issue_date_is_the_pass_date(tmpdir)
         test_the_parse_is_the_record(tmpdir)
