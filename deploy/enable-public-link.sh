@@ -178,8 +178,20 @@ sleep 3
 # No -k: the entire point is that the certificate verifies against the public
 # trust store with nothing installed anywhere, so skipping verification here
 # would prove nothing.
-code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 25 "$URL/login")
-[ "$code" = "200" ] || rollback "$URL/login returned '${code:-no response}'"
+# Retried, not one shot. On a machine that has just been renamed the name is
+# new to DNS and the certificate for it does not exist yet, so the first
+# request can fail for a reason that fixes itself in seconds. A single attempt
+# there sent this straight to rollback — which turns "wait a moment" into
+# "the public link has been deleted", and that is exactly how the gate pass
+# went off the air after a rename.
+code=""
+for attempt in 1 2 3 4 5 6; do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 25 "$URL/login")
+    [ "$code" = "200" ] && break
+    note "waiting for $URL to answer (attempt $attempt, got '${code:-nothing}')"
+    sleep 5
+done
+[ "$code" = "200" ] || rollback "$URL/login returned '${code:-no response}' after six tries"
 note "$URL/login -> 200, certificate verified with nothing installed"
 
 asset=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$URL/static/css/style.css")
