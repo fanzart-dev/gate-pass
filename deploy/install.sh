@@ -299,6 +299,13 @@ note "21:00 daily into $APP_DIR/storage/backups (90 days kept)"
 say "Firewall"
 if ufw status 2>/dev/null | grep -q "Status: active"; then
     ufw allow 80/tcp >/dev/null
+    # 443 as well, or turning the firewall on later kills HTTPS and leaves
+    # port 80 redirecting into a closed door.
+    ufw allow 443/tcp >/dev/null
+    # NOT 8090. Gunicorn is deliberately on loopback behind nginx: opening it
+    # would publish a second copy of the app on the LAN with no TLS, and the
+    # app's same-origin check on every form assumes it is reached through
+    # nginx. The way in is 80 and 443.
     note "opened port 80"
 else
     # Deliberately not enabling ufw here: switching it on without an SSH rule
