@@ -198,58 +198,119 @@ def _to_address_label(words):
     return None
 
 
-def extract_transfer_items(words):
-    """Read the item table, whose columns are held by alignment alone.
+# A row is `Sl.No  HSN  <model name>  <description>  Quantity  Value`, and that
+# STRUCTURE is the same in every one of these documents even when the geometry
+# is not. Anchoring to it rather than to column edges is what makes the parse
+# survive a different page size.
+VALUE_RE = re.compile(r"^\d[\d,]*\.\d{1,2}$")
+INTEGER_RE = re.compile(r"^\d+$")
 
-    There are no drawn rules on this document, so the boundaries come from the
-    heading words: the midpoint between the end of one heading and the start of
-    the next. That is also why the heading has to be found before anything else
-    can be read.
+# Words inside a model name sit 4.2pt apart in every document seen. The gap to
+# the description beside it is 58.7pt when the name is short — and only 19.2pt
+# when the name is long enough to crowd it, as `GRANDMASTER MATTE WHITE 60
+# INCHES` does. So the threshold has to clear a space comfortably and still sit
+# below that 19.2, or the description is silently kept as part of the name.
+# 12pt is a little under three spaces.
+NAME_GAP = 12.0
+
+
+def extract_transfer_items(words):
+    """Read the item table.
+
+    Rows are read by their shape, not by column geometry. Geometry was the
+    first approach and it worked on the documents it was written against, then
+    broke on the next three, because the headings are centred over their
+    columns while the data underneath is not:
+
+      * `Ceiling` (the Description) begins at x=232 while the boundary derived
+        from the `Description` heading sits at 258 — so it was swallowed into
+        the model name, giving `AVALON - MATTE Ceiling SILVER`.
+      * the Quantity `1` sits at x=477 on one document and x=445 on another,
+        either side of a boundary at 469 — so on one of them the quantity
+        landed in the Value column, the row failed its own validity check, and
+        the whole table came back empty with "could not find an item table".
+
+    The shape does not move: the row opens with a serial number and an HSN
+    code and closes with a quantity and a money value, whatever the page size.
     """
     heading = _find_heading(words)
     if heading is None:
         return []
     columns, heading_bottom = heading
-    bounds = _bounds_from_headings(columns)
-
-    labels = [label for label, _x0, _x1 in columns]
-    try:
-        name_idx = labels.index(NAME_HEADING)
-        qty_idx = labels.index(QTY_HEADING)
-    except ValueError:
-        return []
+    name_x0 = next((x0 for label, x0, _x1 in columns if label == NAME_HEADING), None)
 
     items = []
     for _top, line in _lines_below(words, heading_bottom):
-        joined = " ".join(w["text"] for w in line).strip().lower()
-        if any(joined.startswith(m) for m in ITEM_END_MARKERS):
+        joined = " ".join(w["text"] for w in line).strip()
+        lowered = joined.lower()
+        if any(lowered.startswith(marker) for marker in ITEM_END_MARKERS):
             break
-        # The `-----` separators are text, not drawn rules, so they arrive here
-        # as ordinary words. Skipped explicitly rather than trusting them to
-        # land in a harmless column: where the midpoint of that one very wide
-        # word falls depends on how far the rule happens to run, and a shorter
-        # rule drops it straight into the Model Name column, where it is
-        # appended to the item above as part of its name.
-        if _is_separator(joined):
+        # The `-----` rules are text, not drawn lines, so they arrive as
+        # ordinary words and have to be stepped over explicitly.
+        if _is_separator(lowered):
             continue
 
-        cells = {}
-        for w in line:
-            cells.setdefault(_column_of(w, bounds), []).append(w["text"])
-        cells = {i: " ".join(parts).strip() for i, parts in cells.items()}
-
-        name = cells.get(name_idx, "").strip()
-        qty = cells.get(qty_idx, "").strip()
-        sl = cells.get(labels.index(SL_HEADING) if SL_HEADING in labels else 0, "").strip()
-
-        if name and qty and sl.isdigit():
-            items.append({"sl_no": len(items) + 1, "item_name": name, "quantity": qty})
-        elif name and not qty and items:
-            # A model name too long for its column wraps onto the next line,
-            # carrying nothing else. It belongs to the item above it.
-            items[-1]["item_name"] = f"{items[-1]['item_name']} {name}".strip()
+        row = _read_item_row(line)
+        if row:
+            items.append({"sl_no": len(items) + 1, **row})
+        elif items and _is_wrapped_name(line, name_x0):
+            # A model name too long for its column carries on underneath,
+            # alone. It belongs to the item above it.
+            items[-1]["item_name"] = f"{items[-1]['item_name']} {joined}".strip()
 
     return items
+
+
+def _read_item_row(line):
+    """One item row, or None if this line is not one."""
+    cells = sorted(line, key=lambda w: w["x0"])
+    texts = [w["text"] for w in cells]
+    if len(texts) < 5 or not INTEGER_RE.match(texts[0]):
+        return None
+
+    # The money value closes the row. Found from the right, because a model
+    # name can contain digits ("HUGGER 52", "GRANDMASTER 70 INCHES") and would
+    # otherwise be mistaken for one.
+    value_at = next((i for i in range(len(texts) - 1, 1, -1)
+                     if VALUE_RE.match(texts[i])), None)
+    if value_at is None or value_at < 3:
+        return None
+    quantity_at = value_at - 1
+    if not INTEGER_RE.match(texts[quantity_at]):
+        return None
+
+    middle = cells[2:quantity_at]          # past Sl.No and HSN, before Quantity
+    if not middle:
+        return None
+    return {"item_name": _model_name(middle), "quantity": texts[quantity_at]}
+
+
+def _model_name(middle):
+    """The model name, with the description column dropped.
+
+    Split at the widest gap between words. Inside a name the gaps are the width
+    of a space; between the name and the description beside it the gap is an
+    order of magnitude larger, because they are separate columns with nothing
+    drawn between them.
+    """
+    gaps = [(middle[i + 1]["x0"] - middle[i]["x1"], i) for i in range(len(middle) - 1)]
+    if gaps:
+        widest, at = max(gaps)
+        if widest >= NAME_GAP:
+            middle = middle[:at + 1]
+    return " ".join(w["text"] for w in middle).strip()
+
+
+def _is_wrapped_name(line, name_x0):
+    """A continuation line: the rest of a model name, on its own underneath.
+
+    It has to start where the model name column starts. Without that, a stray
+    line anywhere below the table gets glued onto the last item's name.
+    """
+    if name_x0 is None or not line:
+        return False
+    leftmost = min(w["x0"] for w in line)
+    return abs(leftmost - name_x0) < 40 and not INTEGER_RE.match(line[0]["text"])
 
 
 def _is_separator(joined):

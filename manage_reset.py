@@ -38,10 +38,10 @@ Afterwards the next gate pass is <prefix>-00001.
 """
 
 import argparse
+import gzip
 import re
 import shutil
 import sqlite3
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -81,19 +81,41 @@ def counts(conn):
 
 
 def take_backup(db_path):
-    """A verified snapshot before anything is destroyed. Non-negotiable."""
-    script = ROOT / "deploy" / "backup.sh"
-    if not script.exists():
-        return None
+    """A verified snapshot of THIS database before anything is destroyed.
+
+    Done here rather than by calling deploy/backup.sh, which reads a fixed path
+    inside the application directory and ignores the one being reset. With
+    --db pointing anywhere else that meant the safety backup captured a
+    different database than the one about to be emptied — or, on a machine with
+    no default database at all, failed and stopped a legitimate reset.
+
+    VACUUM INTO because the live file is in WAL mode: recent commits sit in the
+    -wal until a checkpoint folds them in, so copying the file would miss them.
+    """
     dest = Path(db_path).parent / "backups"
-    result = subprocess.run(["bash", str(script), str(dest)],
-                            capture_output=True, text=True)
-    if result.returncode != 0:
-        raise SystemExit(
-            "the backup failed, so nothing was deleted:\n"
-            + (result.stderr or result.stdout))
-    made = sorted(dest.glob("gate_pass-*.db.gz"), key=lambda p: p.stat().st_mtime)
-    return made[-1] if made else None
+    dest.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    snapshot = dest / f"gate_pass-{stamp}.db"
+
+    source = sqlite3.connect(db_path, timeout=30)
+    try:
+        source.execute("VACUUM INTO ?", (str(snapshot),))
+    finally:
+        source.close()
+
+    check = sqlite3.connect(snapshot)
+    try:
+        if check.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise SystemExit(f"the backup at {snapshot} failed its integrity "
+                             "check — nothing was deleted")
+    finally:
+        check.close()
+
+    archive = Path(f"{snapshot}.gz")
+    with open(snapshot, "rb") as raw, gzip.open(archive, "wb") as packed:
+        shutil.copyfileobj(raw, packed)
+    snapshot.unlink()
+    return archive
 
 
 def main(argv=None):

@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 
 import db  # noqa: E402
 import app as appmod  # noqa: E402
+import app as app_module  # noqa: E402
 import invoice_parser  # noqa: E402
 from app import create_app  # noqa: E402
 
@@ -43,7 +44,9 @@ SERVICE_LINE_INVOICE = Path(__file__).parent / "sample_invoices" / "golden_touch
 # real PDFs in tests/sample_invoices/ to run the parser tests in full.
 SAMPLE_DIR = Path(__file__).parent / "sample_invoices"
 BI_INVOICE = SAMPLE_DIR / "golden_touch_bi_series.pdf"
-TRANSFER_MEMOS = tuple(SAMPLE_DIR / f"transfer_memo_doc{n}.pdf" for n in (63, 66, 69))
+TRANSFER_MEMOS = tuple(SAMPLE_DIR / f"transfer_memo_doc{n}.pdf" for n in (63, 66, 69)) \
+                 + tuple(SAMPLE_DIR / f"transfer_memo_{n}.pdf"
+                         for n in ("wrapped_name", "short_names", "narrow_page"))
 FIXTURES = (SAMPLE_INVOICE, SCANNED_INVOICE, TWO_PAGE_INVOICE, SERVICE_LINE_INVOICE,
             BI_INVOICE) + TRANSFER_MEMOS
 HAVE_FIXTURES = all(p.exists() for p in FIXTURES)
@@ -572,6 +575,68 @@ def test_stock_transfer_memo(tmpdir):
 
 
 @needs_fixtures
+def test_transfer_rows_are_read_by_shape_not_by_column_edges():
+    """The row parser, without a PDF, so a fresh clone still guards it.
+
+    The fixture PDFs are real documents carrying a GSTIN and are not in git.
+    The logic they broke is small enough to exercise directly, with word boxes
+    laid out at the coordinates the real documents actually use.
+    """
+    def w(text, x0, x1):
+        return {"text": text, "x0": x0, "x1": x1, "top": 0, "bottom": 10}
+
+    # The layout that broke it: description at x=232 and quantity at x=477,
+    # both on the wrong side of boundaries derived from the heading text.
+    row = [w("1", 21.3, 25.5), w("84145120", 58.5, 92.1),
+           w("MUSTANG", 113.8, 143.2), w("WHITE", 147.4, 168.4),
+           w("Ceiling", 230.9, 260.3), w("Fan", 264.5, 277.1),
+           w("1", 477.6, 481.8), w("22872.87", 524.7, 558.3)]
+    got = stock_transfer_parser._read_item_row(row)
+    check("a row is read whatever the columns line up with", got is not None)
+    check("the name stops before the description",
+          got and got["item_name"] == "MUSTANG WHITE")
+    check("the quantity is the integer before the money, not the money",
+          got and got["quantity"] == "1")
+
+    # The long name that crowds its description: only 19.2pt between them,
+    # against 4.2pt between words inside the name.
+    long_row = [w("1", 21, 25), w("84145930", 58, 92),
+                w("GRANDMASTER", 113, 175), w("MATTE", 179.2, 208),
+                w("WHITE", 212.2, 240), w("60", 244.2, 254),
+                w("INCHES", 258.2, 290), w("Industrial", 309.2, 350),
+                w("Fan", 354.2, 370), w("1", 480, 484), w("50838.98", 520, 560)]
+    long_got = stock_transfer_parser._read_item_row(long_row)
+    check("a long name keeps every one of its words",
+          long_got and long_got["item_name"] == "GRANDMASTER MATTE WHITE 60 INCHES")
+    check("and still drops the description beside it",
+          long_got and "Industrial" not in long_got["item_name"])
+
+    # A name with no description at all must survive untouched.
+    bare = [w("2", 21, 25), w("84145120", 58, 92),
+            w("DRIFT", 113, 140), w("DARK", 144.2, 172), w("COFFEE", 176.2, 215),
+            w("5", 480, 484), w("1234.50", 520, 560)]
+    check("a row with no description keeps the whole name",
+          stock_transfer_parser._read_item_row(bare)["item_name"] == "DRIFT DARK COFFEE")
+
+    # Things that are not item rows.
+    check("a total row is not an item",
+          stock_transfer_parser._read_item_row(
+              [w("TOTAL", 113, 150), w("5", 480, 484), w("999.00", 520, 560)]) is None)
+    check("a line with no money value is not an item",
+          stock_transfer_parser._read_item_row(
+              [w("1", 21, 25), w("84145120", 58, 92), w("NAME", 113, 150),
+               w("ONLY", 154, 180), w("HERE", 184, 210)]) is None)
+
+    # A name containing digits must not be mistaken for the money column, which
+    # is why the value is found from the right.
+    digits = [w("1", 21, 25), w("84145120", 58, 92),
+              w("HUGGER", 113, 150), w("52", 154.2, 166),
+              w("1", 480, 484), w("2500.00", 520, 560)]
+    check("digits inside a name do not end the row early",
+          stock_transfer_parser._read_item_row(digits)["item_name"] == "HUGGER 52")
+
+
+@needs_fixtures
 def test_real_transfer_memos():
     """The three real WEBPOS memos, one per branch.
 
@@ -586,6 +651,15 @@ def test_real_transfer_memos():
                                      "04-08-2026", 4, 9),
         "transfer_memo_doc63.pdf": ("TO NO: FR 262700536", "Sadashivanagar",
                                      "06-08-2026", 1, 1),
+        # The three that arrived later and broke the column-geometry parse.
+        # Their description column starts at x=231 where the earlier documents
+        # put it at 272, and one of them is on a 607pt page rather than 612.
+        "transfer_memo_wrapped_name.pdf": ("TO NO: FR 262700652", "Indiranagar",
+                                            "03-09-2026", 5, 5),
+        "transfer_memo_short_names.pdf": ("TO NO: FR 262700644", "Indiranagar",
+                                           "01-09-2026", 3, 3),
+        "transfer_memo_narrow_page.pdf": ("TO NO: FR 262700648", "Sadashivanagar",
+                                           "02-09-2026", 1, 1),
     }
     for name, (to_no, branch, date, count, total_qty) in expected.items():
         result = invoice_parser.parse_invoice(SAMPLE_DIR / name)
@@ -599,6 +673,33 @@ def test_real_transfer_memos():
               sum(int(i["quantity"]) for i in result["items"]) == total_qty)
         check(f"{name} has no empty item name",
               all(i["item_name"].strip() for i in result["items"]))
+
+    # The description column must never end up inside the name. It did: the
+    # boundary derived from the `Description` HEADING sat at x=258 while the
+    # word `Ceiling` underneath it began at x=232, so every wrapped name came
+    # through as "AVALON - MATTE Ceiling SILVER".
+    wrapped = invoice_parser.parse_invoice(SAMPLE_DIR / "transfer_memo_wrapped_name.pdf")
+    names = [i["item_name"] for i in wrapped["items"]]
+    check("a name that wraps is joined with nothing in between",
+          names[0] == "AVALON - MATTE SILVER")
+    check("and no name carries the description column",
+          not any("Ceiling" in n or "Fan" in n for n in names))
+    check("every line is read, including the ones that wrap", len(names) == 5)
+
+    short = invoice_parser.parse_invoice(SAMPLE_DIR / "transfer_memo_short_names.pdf")
+    check("a hyphenated name keeps both halves",
+          [i["item_name"] for i in short["items"]][0] == "HUGGER 52 - MUD BROWN")
+
+    # This one returned nothing at all. Its quantity sits at x=477 where the
+    # others put it at x=445 — across a boundary at 469 — so the quantity was
+    # read as part of the value, the row failed its own check, and the table
+    # came back empty with "could not find an item table".
+    narrow = invoice_parser.parse_invoice(SAMPLE_DIR / "transfer_memo_narrow_page.pdf")
+    check("a narrower page still finds its item table", len(narrow["items"]) == 1)
+    check("and reads the quantity out of it rather than the price",
+          narrow["items"][0]["quantity"] == "1")
+    check("and the name is only the model name",
+          narrow["items"][0]["item_name"] == "MUSTANG WHITE")
 
     # The longest real name, which is what the column boundaries have to clear.
     doc66 = invoice_parser.parse_invoice(SAMPLE_DIR / "transfer_memo_doc66.pdf")
@@ -4304,8 +4405,11 @@ def test_a_fetched_copy_can_be_opened_without_touching_the_live_book(tmpdir):
     finally:
         del os.environ["GATE_PASS_STORAGE"]
 
+    # Relative to the code, not to a directory called "gate-pass" — a clone
+    # checked out under any other name is still a valid clone.
+    fallback = Path(create_app().config["STORAGE_DIR"])
     check("unset, it falls back to the storage beside the code",
-          str(create_app().config["STORAGE_DIR"]).endswith("gate-pass/storage"))
+          fallback == Path(app_module.BASE_DIR) / "storage")
     unit = (ROOT / "deploy" / "gate-pass.service").read_text()
     check("and the live service never sets it", "GATE_PASS_STORAGE" not in unit)
 
@@ -4527,6 +4631,7 @@ def main():
         test_name_column_is_found_by_its_heading()
         test_bi_series_invoice()
         test_stock_transfer_memo(tmpdir)
+        test_transfer_rows_are_read_by_shape_not_by_column_edges()
         test_real_transfer_memos()
         test_a_gate_pass_uploaded_as_an_invoice(tmpdir)
         test_cartons_come_from_the_master_list(tmpdir)
