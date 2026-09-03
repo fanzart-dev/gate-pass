@@ -102,10 +102,33 @@ say "Re-pointing the redirect from the old plain-HTTP address"
 # The nginx snippet names the old host, so without this the Tailscale IP would
 # redirect to an address that no longer exists.
 if [ -x "$APP_DIR/deploy/enable-public-link.sh" ]; then
-    "$APP_DIR/deploy/enable-public-link.sh" --replace >/dev/null 2>&1 \
-        && note "the redirect now points at $TARGET" \
-        || note "WARNING: rerun deploy/enable-public-link.sh --replace by hand"
+    # NOT silenced. Hiding this output is how a failure here looked like a
+    # success: the script rolled back, took port 443 with it, and the only
+    # evidence was a link that no longer answered.
+    "$APP_DIR/deploy/enable-public-link.sh" --replace \
+        || note "WARNING: that failed — the checks below will say what survived"
 fi
+
+# enable-public-link.sh rolls back on failure, and its rollback removes the
+# entry on 443. So confirm every port that was serving before the rename is
+# still serving after it, and put back anything that went missing.
+say "Making sure nothing was lost on the way"
+CURRENT="$(tailscale serve status --json 2>/dev/null || echo '{}')"
+while read -r port public target; do
+    if printf '%s' "$CURRENT" | HOST="$TARGET:$port" python3 -c '
+import json, os, sys
+cfg = json.load(sys.stdin)
+sys.exit(0 if os.environ["HOST"] in (cfg.get("Web") or {}) else 1)' 2>/dev/null; then
+        note "port $port is still served"
+    else
+        note "port $port went missing — putting it back"
+        if [ "$public" = "yes" ]; then
+            tailscale funnel --bg --https="$port" "$target" >/dev/null 2>&1
+        else
+            tailscale serve --bg --https="$port" "$target" >/dev/null 2>&1
+        fi
+    fi
+done <<< "$PLAN"
 
 say "Checking"
 sleep 3
