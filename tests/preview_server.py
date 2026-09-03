@@ -107,6 +107,13 @@ def main():
                for i, (name, qty) in enumerate(DEMO_ITEMS, 1)])
     db.close(conn)
 
+    # A cancelled pass, so the watermark can be looked at. Cancelling keeps the
+    # number and the row — nothing is deleted — which is exactly why the paper
+    # has to say so.
+    conn = db.connect(app.config["DB_PATH"])
+    db.cancel_gate_pass(conn, 3, "printed in error", cancelled_by="Dinesh D")
+    db.close(conn)
+
     print(f"preview at http://127.0.0.1:{port}/print/1  (demo / demo-preview-only)")
     print(f"  /print/1  a normal pass (6 items), with a two-line remark")
     print(f"  /print/2  a full page ({db.ITEMS_PER_PAGE} items) — the tight case")

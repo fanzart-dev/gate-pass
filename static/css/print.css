@@ -128,6 +128,35 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* The watermark is positioned against THIS box. Without it the absolute
+     element escapes to the page and both copies stack their watermark in the
+     middle of the sheet, across the cut line. */
+  position: relative;
+}
+
+/* Says what the paper is. A cancelled pass keeps its number and stays in the
+   register — nothing deletes one — so a printed copy has to carry the fact on
+   its face, or it is indistinguishable from a live pass in a drawer.
+   Sized in pt, not rem: this sheet is measured in millimetres and a rem
+   depends on a root font size that print styling has no reason to fix. */
+.cancelled-watermark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-30deg);
+  font-size: 34pt;
+  font-weight: 800;
+  letter-spacing: 3pt;
+  /* Light enough to read the item names straight through it. */
+  color: rgba(220, 38, 38, .25);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 100;
+  /* Browsers drop colours when printing unless told otherwise, and a
+     watermark that vanishes on paper is worse than none — the screen would
+     say cancelled and the document in somebody's hand would not. */
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
 
 .sheet.single .pass {
