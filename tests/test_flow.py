@@ -1133,6 +1133,61 @@ def test_a_two_page_pass_signs_off_only_at_the_end(tmpdir):
     conn.close()
 
 
+def test_a_cancelled_pass_says_so_on_paper(tmpdir):
+    """Cancelling keeps the number and the row, so the paper must say what it is.
+
+    Nothing deletes a gate pass. A cancelled one still prints, still carries its
+    serial, and would otherwise be indistinguishable from a live pass in a
+    drawer — which is the whole reason for the watermark.
+    """
+    flask_app, client = logged_in_app(tmpdir, "watermark")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    live = db.create_gate_pass(conn, None, "S", "C", "I1", "01-01-2026", "",
+                                sample_items(), prepared_by="Ravi Kumar")
+    doomed = db.create_gate_pass(conn, None, "S", "C", "I2", "01-01-2026", "",
+                                  sample_items(), prepared_by="Ravi Kumar")
+
+    page = client.get(f"/print/{live['id']}").get_data(as_text=True)
+    check("an issued pass carries no watermark", "cancelled-watermark" not in page)
+
+    db.cancel_gate_pass(conn, doomed["id"], "printed in error", cancelled_by="Ravi Kumar")
+    page = client.get(f"/print/{doomed['id']}").get_data(as_text=True)
+    check("a cancelled pass is marked CANCELLED", "cancelled-watermark" in page)
+    check("and the word is on it", ">CANCELLED<" in page)
+    # One per copy: an A4 sheet carries two, to be cut apart. A watermark on
+    # only one half leaves the other looking live.
+    # Counted with a boundary: 'class="pass' also matches pass-head, pass-end
+    # and pass-foot, which would make any number look right.
+    copies = len(re.findall(r'class="pass(?:\s[^"]*)?"', page))
+    check("both copies on the sheet are marked",
+          copies == 2 and page.count("cancelled-watermark") == copies)
+
+    # The stored value is lower case — the column has a CHECK constraint
+    # allowing only 'issued' and 'cancelled'. Testing against 'CANCELLED'
+    # would render nothing at all, on every pass.
+    card = (ROOT / "templates" / "_pass_card.html").read_text()
+    check("the template tests the value the database actually stores",
+          "gate_pass.status == 'cancelled'" in card)
+    check("the row really is stored lower case",
+          db.get_gate_pass(conn, doomed["id"])["status"] == "cancelled")
+
+    css = (ROOT / "static" / "css" / "print.css").read_text()
+    rule = re.search(r"\.cancelled-watermark \{(.*?)\}", css, re.S).group(1)
+    check("it is laid over the pass, not inserted into it", "position: absolute" in rule)
+    check("it cannot be clicked through", "pointer-events: none" in rule)
+    check("it sits above the content", "z-index: 100" in rule)
+    # Browsers drop colours when printing unless told not to. A watermark that
+    # vanishes on paper is worse than none: the screen would say cancelled and
+    # the document in somebody's hand would not.
+    check("its colour survives printing", "print-color-adjust: exact" in rule)
+    # Absolute positioning needs a positioned ancestor, or it escapes to the
+    # page and both copies stack theirs across the cut line.
+    pass_rule = re.search(r"^\.pass \{(.*?)\}", css, re.S | re.M).group(1)
+    check("the pass is the box it is positioned against",
+          "position: relative" in pass_rule)
+    conn.close()
+
+
 def test_printed_sheet_has_no_rule_between_the_copies(tmpdir):
     """The gap between the two copies is white space, not a cut guide.
 
@@ -4637,6 +4692,7 @@ def main():
         test_cartons_come_from_the_master_list(tmpdir)
         test_parsing_a_batch(tmpdir)
         test_remarks_print_on_more_than_one_line(tmpdir)
+        test_a_cancelled_pass_says_so_on_paper(tmpdir)
         test_printed_sheet_has_no_rule_between_the_copies(tmpdir)
         test_vehicle_prints_only_when_there_is_one(tmpdir)
         test_totals_sit_between_the_items_and_the_signatures(tmpdir)

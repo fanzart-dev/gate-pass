@@ -13,6 +13,14 @@
     {% set has_totals = page_no == page_total
                         and (qty_on or cartons_on or gate_pass.vehicle_no) %}
     <div class="pass{% if has_totals %} with-totals{% endif %}">
+      {# A cancelled pass still exists, still holds its number and still prints
+         — the register never deletes one. So the paper has to say what it is,
+         or a cancelled copy in a drawer is indistinguishable from a live one.
+         Stored lower case: the column has a CHECK constraint allowing only
+         'issued' and 'cancelled'. #}
+      {% if gate_pass.status == 'cancelled' %}
+        <div class="cancelled-watermark" aria-hidden="true">CANCELLED</div>
+      {% endif %}
       <div class="pass-head">
         <img class="logo" src="{{ url_for('static', filename='img/fanzart-logo.png') }}"
              alt="{{ settings.company_name }}">
