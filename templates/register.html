@@ -115,13 +115,41 @@
             <td class="reg-from">{{ gp.supplier_name }}</td>
             <td class="reg-customer">{{ gp.customer_name }}</td>
             <td class="reg-invoice invoice-cell">{{ gp.invoice_no }}</td>
-            <td class="reg-status"><span class="pill {{ gp.status }}">{{ gp.status }}</span></td>
+            {# One badge, saying what the pass IS. Whether it has reached paper
+               is on the Print button instead — a second badge in here made
+               every unprinted row look like it had a problem. #}
+            <td class="reg-status">
+              <span class="pill {{ gp.status }}">{{ gp.status }}</span>
+            </td>
             <td class="actions-cell reg-actions">
               {# The flex row lives on this inner div, not on the td: a td with
                  display:flex stops being a table-cell, and table-layout:fixed
                  then cannot give the column its width — it collapsed to 24px. #}
               <div class="actions-inner">
-                <a href="{{ url_for('print_gate_pass', gate_pass_id=gp.id) }}">Print</a>
+                {# The print state, carried by the button that acts on it. Solid
+                   while the paper does not exist yet, quiet once it does — so a
+                   scan down the column shows what is still owed without a badge
+                   in every row. Same word either way: it does the same thing,
+                   and a printed pass can always be printed again.
+
+                   A CANCELLED pass gets neither. Nobody owes paper for one, so
+                   the solid style would be a standing instruction to print
+                   something that should not be printed — and it is not "done"
+                   either. It keeps the ordinary button, because reprinting a
+                   cancelled pass to show the watermark is still a real thing to
+                   want. #}
+                {% if gp.status != 'issued' %}
+                  {% set print_state = '' %}
+                {% elif gp.is_printed %}
+                  {% set print_state = 'print-action is-printed' %}
+                {% else %}
+                  {% set print_state = 'print-action not-printed' %}
+                {% endif %}
+                <a class="{{ print_state }}"
+                   href="{{ url_for('print_gate_pass', gate_pass_id=gp.id) }}"
+                   {% if gp.status != 'issued' %}title="Reprint this cancelled pass"
+                   {% elif gp.is_printed %}title="Printed {{ gp.printed_at }}{% if gp.print_count > 1 %} — {{ gp.print_count }} times{% endif %}"
+                   {% else %}title="Not printed yet"{% endif %}>Print</a>
                 {# Only an issued pass can be corrected. A cancelled one is a
                    closed record: rewriting it would leave the paper in the
                    drawer disagreeing with the book. #}

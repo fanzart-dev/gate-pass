@@ -1255,7 +1255,9 @@ def test_two_drafts_with_one_number_cannot_both_be_issued(tmpdir):
     check("the clean draft is not blocked", clean not in blocked)
 
     page = client.get("/drafts").get_data(as_text=True)
-    check("a blocked draft is marked as such", "Duplicate in batch" in page)
+    # The badge reads "Duplicate" and the line under it carries the rest; the
+    # longer wording did not fit the column.
+    check("a blocked draft is marked as such", "&#9888; Duplicate<" in page)
     check("and says how to clear it", "Delete one of them" in page)
     # No tick for a draft that cannot go — but that is presentation, not a rule.
     check("only the clean draft can be selected",
@@ -1361,6 +1363,112 @@ def test_totals_are_shown_live_and_derived_on_save(tmpdir):
     check("there is no stored total column to drift",
           "total_qty" not in [c[1] for c in conn.execute("PRAGMA table_info(gate_passes)")])
     conn.close()
+
+
+def test_the_register_shows_what_has_reached_paper(tmpdir):
+    """Which passes are printed, and how many times.
+
+    A pass can be issued, hold its number and sit in the register for an hour
+    before anybody prints it. There was no way to see which ones those were.
+    """
+    flask_app, client = logged_in_app(tmpdir, "printed")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    gp = db.create_gate_pass(conn, None, "S", "C", "I", "01-01-2026", "",
+                              sample_items(), prepared_by="Ravi Kumar")
+
+    check("a new pass has not been printed", gp["is_printed"] == 0)
+    check("and has no count", gp["print_count"] == 0)
+    check("and no time", gp["printed_at"] is None)
+
+    page = client.get("/register").get_data(as_text=True)
+    # The state is on the Print button, not on a badge and not on the row. The
+    # register is read by scanning down it, and a mark on every pass that has
+    # not been printed yet — which is every new pass — was a column of warnings
+    # about nothing.
+    check("the register says so", "print-action not-printed" in page)
+    check("and does not tint the row", "awaiting-print" not in page)
+    check("nor add a second badge", "Unprinted" not in page)
+
+    # OPENING the print page is a preview — from the register, from a link, by
+    # somebody checking a number. Marking it there would fill the register with
+    # passes marked printed that nobody put on paper, which is worse than no
+    # marking at all because it looks like information.
+    client.get(f"/print/{gp['id']}")
+    check("opening the print page does NOT mark it printed",
+          db.get_gate_pass(conn, gp["id"])["print_count"] == 0)
+    check("the print page posts only once the dialog finishes",
+          "afterprint" in (ROOT / "templates" / "print.html").read_text())
+
+    resp = client.post(f"/gate-passes/{gp['id']}/printed",
+                       headers={"Origin": "http://localhost"})
+    check("printing it is recorded", resp.get_json()["print_count"] == 1)
+    after = db.get_gate_pass(conn, gp["id"])
+    check("the flag is set", after["is_printed"] == 1)
+    check("and the time", after["printed_at"] is not None)
+    check("the serial is untouched by any of it",
+          after["serial_no"] == gp["serial_no"])
+
+    page = client.get("/register").get_data(as_text=True)
+    check("the register shows it printed", "print-action is-printed" in page)
+    check("and stops asking for paper", "not-printed" not in page)
+
+    # Reprints are worth seeing: a pass run off four times is worth a look, and
+    # the count is the only place that shows.
+    client.post(f"/gate-passes/{gp['id']}/printed", headers={"Origin": "http://localhost"})
+    check("a reprint increments rather than re-flagging",
+          db.get_gate_pass(conn, gp["id"])["print_count"] == 2)
+    check("and the register shows how many",
+          "2 times" in client.get("/register").get_data(as_text=True))
+
+    # A cancelled pass is not waiting for paper, so it is not chased for it.
+    doomed = db.create_gate_pass(conn, None, "S", "C", "I2", "01-01-2026", "",
+                                  sample_items(), prepared_by="Ravi Kumar")
+    db.cancel_gate_pass(conn, doomed["id"], "printed in error", cancelled_by="Ravi Kumar")
+    page = client.get("/register").get_data(as_text=True)
+    check("a cancelled pass is not marked as awaiting print",
+          "awaiting-print" not in page)
+    check("nor labelled unprinted", "Unprinted" not in page)
+    # And its Print button gets neither state: solid would be a standing
+    # instruction to print a pass that should not go out.
+    check("nor is its Print button styled as owed",
+          page.count("print-action not-printed") == 0)
+
+    check("printing an unknown pass is a 404",
+          client.post("/gate-passes/999999/printed",
+                      headers={"Origin": "http://localhost"}).status_code == 404)
+
+    # A batch print marks every pass in it, not only the first.
+    batch = (ROOT / "templates" / "print_batch.html").read_text()
+    check("the batch page marks each pass it printed",
+          "{% for gate_pass in passes %}" in batch
+          and batch.count("mark_gate_pass_printed") == 1)
+    conn.close()
+
+
+def test_the_printed_totals_are_bolder_than_the_rows(tmpdir):
+    """The summary row reads as a summary, and still fits its budgeted height."""
+    css = (ROOT / "static" / "css" / "print.css").read_text()
+    foot = re.search(r"table\.items-table tfoot td \{(.*?)\}", css, re.S).group(1)
+    size = float(re.search(r"font-size: ([\d.]+)pt", foot).group(1))
+    weight = int(re.search(r"font-weight: (\d+)", foot).group(1))
+    rows = re.search(r"table\.items-table \{(.*?)\}", css, re.S).group(1)
+    row_size = float(re.search(r"font-size: ([\d.]+)pt", rows).group(1))
+
+    check("the totals are heavier than normal text", weight >= 700)
+    check("and larger than the item rows", size > row_size)
+    check("the figures inside are heavier still",
+          re.search(r"tfoot strong \{[^}]*font-weight: 800", css))
+    # Weight is dropped along with colour on some print paths unless the page
+    # is rendered as authored.
+    check("and it survives printing", "print-color-adjust: exact" in foot)
+
+    # The row height is fixed and comes out of the table's budget, so bigger
+    # text must still fit inside it or the pass overflows the sheet.
+    height = float(re.search(r"height: ([\d.]+)mm", foot).group(1))
+    line_mm = size * 25.4 / 72 * 1.2
+    check(f"{size}pt still fits the {height}mm row", line_mm < height)
+    check("and the row is still the height the budget allows for",
+          abs(height - db.TOTALS_ROW_MM) < 0.01)
 
 
 def test_correcting_an_issued_pass(tmpdir):
@@ -5029,6 +5137,8 @@ def main():
         test_duplicate_document_numbers_are_flagged_not_blocked(tmpdir)
         test_two_drafts_with_one_number_cannot_both_be_issued(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
+        test_the_register_shows_what_has_reached_paper(tmpdir)
+        test_the_printed_totals_are_bolder_than_the_rows(tmpdir)
         test_correcting_an_issued_pass(tmpdir)
         test_a_cancelled_pass_says_so_on_paper(tmpdir)
         test_printed_sheet_has_no_rule_between_the_copies(tmpdir)

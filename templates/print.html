@@ -36,6 +36,14 @@
     window.addEventListener("afterprint", () => {
       document.getElementById("printed-note").hidden = false;
       document.getElementById("to-register").classList.add("ready");
+      // Tell the register this one reached paper. afterprint rather than the
+      // button's click: the click only opens the dialog, which people cancel.
+      // Fire and forget — a failed fetch must never interrupt somebody who has
+      // just printed, and the worst case is a pass that shows as unprinted
+      // when it is not, which the next print corrects.
+      fetch("{{ url_for('mark_gate_pass_printed', gate_pass_id=gate_pass.id) }}",
+            {method: "POST", headers: {"X-Requested-With": "fetch"}})
+        .catch(() => {});
     });
   </script>
 

@@ -58,7 +58,12 @@
                 {% elif d.duplicate_blocks %}
                   {# Cannot go. Two drafts here carry one number, and issuing
                      both would spend two numbers on one consignment. #}
-                  <span class="pill rejected">&#9888; Duplicate in batch</span>
+                  {# "Duplicate", not "Duplicate in batch": the line underneath
+                     already says what to do about it, the other duplicate state
+                     reads "Already issued" so there is nothing to confuse it
+                     with, and the longer wording did not fit the column — it
+                     ran past the cell and lost its last word. #}
+                  <span class="pill rejected">&#9888; Duplicate</span>
                   <div class="hint" style="margin-top:3px">Delete one of them to continue</div>
                 {% elif d.duplicate %}
                   {# Still ready. A number already issued does not stop a pass —

@@ -83,6 +83,12 @@ CREATE TABLE IF NOT EXISTS gate_passes (
     serial_scope TEXT NOT NULL,
     serial_seq INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'issued' CHECK (status IN ('issued', 'cancelled')),
+    -- Whether the paper exists yet, and how many times it has been run off.
+    -- Set when the browser reports the print dialog finished, not when the
+    -- print page is opened — opening it is only a preview.
+    is_printed INTEGER NOT NULL DEFAULT 0,
+    print_count INTEGER NOT NULL DEFAULT 0,
+    printed_at TEXT,
     supplier_name TEXT NOT NULL DEFAULT '',
     customer_name TEXT NOT NULL DEFAULT '',
     invoice_no TEXT NOT NULL DEFAULT '',

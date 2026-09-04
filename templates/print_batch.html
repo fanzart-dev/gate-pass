@@ -55,6 +55,17 @@
     // from here to the printer. Waiting for `load` rather than DOMContentLoaded
     // so the logo is in place before the dialog snapshots the page.
     window.addEventListener("load", () => window.print());
+
+    // Every pass in the batch reached paper, not just the first. One request
+    // each, fired and forgotten: a failed one leaves a pass showing unprinted,
+    // which the next print corrects, and none of them may interrupt somebody
+    // standing at a printer.
+    window.addEventListener("afterprint", () => {
+      {% for gate_pass in passes %}
+      fetch("{{ url_for('mark_gate_pass_printed', gate_pass_id=gate_pass.id) }}",
+            {method: "POST", headers: {"X-Requested-With": "fetch"}}).catch(() => {});
+      {% endfor %}
+    });
   </script>
 </body>
 </html>
