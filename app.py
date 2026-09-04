@@ -701,16 +701,59 @@ def register_routes(app):
             return redirect(url_for("register"))
         return redirect(_back_to_drafts(draft_ids))
 
-    @app.route("/drafts/<int:draft_id>/delete", methods=["POST"])
+    @app.route("/drafts/<int:draft_id>/delete", methods=["POST", "DELETE"])
     @login_required
     def delete_draft(draft_id):
         draft = db.get_draft(g.db, draft_id)
         if draft is None:
+            # From the ✕ on the Drafts list this is not really an error: the row
+            # is gone, which is what was asked for. Two people clearing the same
+            # duplicate pair at once should not see a 404.
+            if _wants_json():
+                return jsonify(ok=True, deleted=draft_id, already_gone=True,
+                               **_draft_batch_state()), 200
             abort(404)
         db.delete_draft(g.db, draft_id)
         _discard_invoice_file(app, draft["invoice_pdf_path"])
+
+        # The ✕ on the Drafts list, which stays on the page.
+        if _wants_json():
+            return jsonify(ok=True, deleted=draft_id, message="Draft removed",
+                           **_draft_batch_state())
+
+        # The Discard button on the review screen, which navigates away.
         flash("Draft discarded. No gate pass number was used.", "ok")
         return redirect(_back_to_drafts([]))
+
+    def _wants_json():
+        """Whether the caller is the page's own fetch rather than a form post.
+
+        Checked explicitly rather than by sniffing Accept: a browser form post
+        sends `Accept: text/html,...,*/*`, and the wildcard makes a naive
+        accept_mimetypes check answer "yes, JSON is fine" — which would break
+        the review screen's Discard button by returning it JSON instead of
+        sending it somewhere.
+        """
+        return (request.headers.get("X-Requested-With") == "fetch"
+                or request.method == "DELETE")
+
+    def _draft_batch_state():
+        """What the remaining drafts look like now, after one has gone.
+
+        Recomputed on the server rather than adjusted in the page. Whether two
+        drafts block each other is a rule about spending gate pass numbers, and
+        a copy of that rule in JavaScript is a copy that can disagree with the
+        one that actually decides.
+        """
+        rows = db.list_drafts(g.db)
+        for row in rows:
+            row["problem"] = db.draft_problem(db.get_draft(g.db, row["id"]))
+        duplicates = db.duplicate_document_report(g.db, rows)
+        blocked = [r["id"] for r in rows
+                   if (duplicates.get(r["id"]) or {}).get("blocking")]
+        cleared = [r["id"] for r in rows if r["id"] not in blocked
+                   and not r["problem"]]
+        return {"remaining": len(rows), "blocked": blocked, "ready": len(cleared)}
 
     @app.route("/print/<int:gate_pass_id>")
     @login_required

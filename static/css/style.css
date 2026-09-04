@@ -714,21 +714,48 @@ table.list.register-table { min-width: 1040px; }
    less it must hold on to than the register. */
 table.list.drafts-table { min-width: 720px; }
 
-/* The Invoice No column on Drafts carries the duplicate explanation under the
-   number, so it gets the room rather than the equal share a fixed layout would
-   otherwise give it. */
-table.list.drafts-table th:nth-child(5),
-table.list.drafts-table td:nth-child(5) { width: 24%; }
+/* Drafts columns.
+
+   `auto`, not the `fixed` the register uses. Fixed layout hands every column
+   exactly its declared share whether or not the content needs it, which is
+   what left the gap between Invoice No and Items: Invoice No was holding 24%
+   for a duplicate note that most rows do not have. Auto treats these as the
+   proportions to aim for and lets a column give width back when its content is
+   short — and, usefully, a cell can no longer be too narrow for a badge, which
+   is the failure the register had to be measured to find. */
+table.list.drafts-table { table-layout: auto; }
+
+table.list.drafts-table th:nth-child(1),
+table.list.drafts-table td:nth-child(1) { width: 5%;  }
 table.list.drafts-table th:nth-child(2),
-table.list.drafts-table td:nth-child(2) { width: 13%; }
+table.list.drafts-table td:nth-child(2) { width: 15%; }
+table.list.drafts-table th:nth-child(3),
+table.list.drafts-table td:nth-child(3) { width: 18%; }
+table.list.drafts-table th:nth-child(4),
+table.list.drafts-table td:nth-child(4) { width: 22%; }
+table.list.drafts-table th:nth-child(5),
+table.list.drafts-table td:nth-child(5) { width: 18%; }
 table.list.drafts-table th:nth-child(6),
-table.list.drafts-table td:nth-child(6) { width: 7%; }
-/* Status holds the widest badge on the page and Open holds one short link, so
-   the room goes where the words are rather than being split evenly. */
+table.list.drafts-table td:nth-child(6) { width: 8%;  }
 table.list.drafts-table th:nth-child(7),
-table.list.drafts-table td:nth-child(7) { width: 17%; }
+table.list.drafts-table td:nth-child(7) { width: 8%;  }
 table.list.drafts-table th:nth-child(8),
-table.list.drafts-table td:nth-child(8) { width: 8%; }
+table.list.drafts-table td:nth-child(8) { width: 6%;  }
+
+/* Numbers and badges centred under their headings; the words that are read
+   down the column stay left; the buttons sit at the end of the row. */
+table.list.drafts-table th:nth-child(6),
+table.list.drafts-table td:nth-child(6),
+table.list.drafts-table th:nth-child(7),
+table.list.drafts-table td:nth-child(7) { text-align: center; }
+table.list.drafts-table td:nth-child(8) { text-align: right; }
+table.list.drafts-table td.draft-actions .actions-inner { justify-content: flex-end; }
+
+/* One padding for every cell in this table, header and body alike. The base
+   table rules set these per-element with !important, so matching that is the
+   only way the two rows line up. */
+table.list.drafts-table th,
+table.list.drafts-table td { padding: 0.75rem 1rem !important; }
 
 table.items-editor th, table.list th {
   text-align: left;
@@ -908,6 +935,78 @@ table.list .invoice-cell {
 }
 
 .actions-inner button.link-button:hover { color: var(--danger); border-color: var(--danger); }
+
+/* The ✕ that removes a draft. Deliberately not styled like the buttons beside
+   it: it is the only destructive thing on the row and it sits next to Open, so
+   it reads as an icon rather than as a third equal choice, and it takes its red
+   only on hover. */
+.actions-inner button.draft-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.actions-inner button.draft-delete:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.actions-inner button.draft-delete:disabled { opacity: .5; cursor: default; }
+
+/* On a row that is asking to have one of a pair removed, the ✕ is the answer to
+   the question the row is posing — so it stops being quiet. */
+tr.needs-attention .actions-inner button.draft-delete,
+tr.is-duplicate .actions-inner button.draft-delete {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* ------------------------------------------------------------------ toasts */
+/* Confirmation for something that happened without leaving the page. The flash
+   strip at the top of the layout only appears on a navigation, and the ✕
+   deliberately does not navigate. */
+.toast-tray {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.toast {
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  box-shadow: 0 6px 20px rgba(15, 23, 42, .16);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  animation: toast-in .18s ease-out;
+}
+.toast.ok  { border-left-color: var(--ok); }
+.toast.bad { border-left-color: var(--danger); }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+/* Somebody who has asked for less movement gets the toast without the slide. */
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}
 
 /* Whether a pass has reached paper, shown on the button that does it rather
    than as a badge in the status column. The register is read by scanning down

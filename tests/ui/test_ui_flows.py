@@ -540,3 +540,60 @@ class TestPrintButtonState:
               return getComputedStyle(a).backgroundColor === getComputedStyle(b).backgroundColor;
             }""")
             assert not same, f"both states paint the same background in {scheme}"
+
+
+class TestDeleteDraftFromTheRow:
+    def test_the_cross_removes_the_draft_and_says_so(self, page, base_url):
+        """The ✕ on a draft row: confirm, remove, toast, and the list settles.
+
+        In a browser because none of it exists anywhere else — the confirm, the
+        toast and the reload are the feature. The important part is the last
+        one: the page reloads instead of unpicking the duplicate highlighting
+        itself, so what the operator ends up looking at is the server's answer
+        about what still blocks what.
+        """
+        # Two drafts from one file, so they share a document number and block.
+        page.goto(f"{base_url}/upload")
+        page.set_input_files("#invoice", [_fake_pdf("dupe-a.pdf"),
+                                           _fake_pdf("dupe-b.pdf")])
+        page.wait_for_selector("#file-panel:visible")
+        page.click("#submit-btn")
+        page.wait_for_url(re.compile(r"/(review|drafts)"), timeout=30000)
+        page.goto(f"{base_url}/drafts")
+        page.wait_for_selector("table.list")
+
+        rows = page.locator("tbody tr")
+        before = rows.count()
+        if before < 2:
+            pytest.skip("need at least two drafts to delete one")
+
+        page.on("dialog", lambda d: d.accept())
+        page.locator(".draft-delete").first.click()
+
+        toast = page.locator(".toast")
+        toast.wait_for(state="visible", timeout=5000)
+        assert "Draft removed" in toast.inner_text()
+
+        # It reloads, so wait for the settled list rather than the instant one.
+        page.wait_for_load_state("networkidle")
+        page.wait_for_selector("table.list, .empty")
+        after = page.locator("tbody tr").count()
+        assert after == before - 1, f"expected {before - 1} rows, found {after}"
+
+    def test_declining_the_confirmation_changes_nothing(self, page, base_url):
+        """The ✕ sits next to Open, so saying no has to mean no."""
+        page.goto(f"{base_url}/upload")
+        page.set_input_files("#invoice", [_fake_pdf("keep-me.pdf")])
+        page.wait_for_selector("#file-panel:visible")
+        page.click("#submit-btn")
+        page.wait_for_url(re.compile(r"/(review|drafts)"), timeout=30000)
+        page.goto(f"{base_url}/drafts")
+        page.wait_for_selector("table.list")
+
+        before = page.locator("tbody tr").count()
+        page.on("dialog", lambda d: d.dismiss())
+        page.locator(".draft-delete").first.click()
+        page.wait_for_timeout(600)
+
+        assert page.locator(".toast").count() == 0, "toasted a delete that was declined"
+        assert page.locator("tbody tr").count() == before, "removed a row anyway"
