@@ -1192,11 +1192,18 @@ def test_duplicate_document_numbers_are_flagged_not_blocked(tmpdir):
     report = db.duplicate_document_report(conn, db.list_drafts(conn))
     check("a number already issued is caught", already in report)
     check("and the message names the gate pass",
-          issued["serial_no"] in report[already])
+          issued["serial_no"] in report[already]["message"])
+    check("but it does not stop the draft being issued",
+          report[already]["blocking"] is False)
     check("two files in the same batch are caught",
           twin_a in report and twin_b in report)
-    check("and the message names the other file",
-          "TO 3.pdf" in report[twin_a] or "TO 2.pdf" in report[twin_b])
+    check("and the message names both files",
+          "TO 2.pdf" in report[twin_a]["message"]
+          and "TO 3.pdf" in report[twin_a]["message"])
+    # Two drafts in hand with one number cannot both go: the register would
+    # show a consignment leaving twice, and nothing could tell the passes apart.
+    check("and that one DOES stop them being issued",
+          report[twin_a]["blocking"] and report[twin_b]["blocking"])
     check("a number nobody has seen is not flagged", unique not in report)
 
     page = client.get("/drafts").get_data(as_text=True)
@@ -1215,6 +1222,88 @@ def test_duplicate_document_numbers_are_flagged_not_blocked(tmpdir):
     # the operator already unticked is how a prompt becomes noise.
     check("and only for duplicates still selected",
           ".draft-tick:checked" in page)
+    conn.close()
+
+
+def test_two_drafts_with_one_number_cannot_both_be_issued(tmpdir):
+    """A duplicate inside the batch is refused; one already issued is only a warning.
+
+    They are not the same problem. Two drafts in hand carrying one number would
+    spend two gate pass numbers on one consignment, and afterwards nothing
+    could tell the two passes apart — there is no reading of that which is
+    correct. A number that is on an already-issued pass is different: a split
+    delivery against one invoice, or a reissue after a correction, are both
+    ordinary, and the person at the desk knows which it is.
+    """
+    flask_app, client = logged_in_app(tmpdir, "blockdupes")
+    conn = db.connect(flask_app.config["DB_PATH"])
+
+    def draft(number, source):
+        return db.create_draft(conn, supplier_name="S", customer_name="C",
+                                invoice_no=number, invoice_date="01-01-2026",
+                                invoice_pdf_path=f"invoices/20260101120000_{source}",
+                                items=sample_items())
+
+    twin_a, twin_b = draft("FR 262700644", "TO 1_2.pdf"), draft("FR-262700644", "TO 2_2.pdf")
+    clean = draft("FR 262700999", "TO 3.pdf")
+
+    blocked = db.blocking_duplicates(conn, [twin_a, twin_b, clean])
+    check("both halves of the pair are blocked", set(blocked) == {twin_a, twin_b})
+    check("the message names both files",
+          "TO 1_2.pdf" in blocked[twin_a] and "TO 2_2.pdf" in blocked[twin_a])
+    check("and says what to do", "remove one" in blocked[twin_a].lower())
+    check("the clean draft is not blocked", clean not in blocked)
+
+    page = client.get("/drafts").get_data(as_text=True)
+    check("a blocked draft is marked as such", "Duplicate in batch" in page)
+    check("and says how to clear it", "Delete one of them" in page)
+    # No tick for a draft that cannot go — but that is presentation, not a rule.
+    check("only the clean draft can be selected",
+          page.count('class="draft-tick"') == 1)
+
+    # The rule is on the server. A checkbox that was never rendered does not
+    # stop the form being posted with the id in it.
+    before = len(db.list_gate_passes(conn))
+    resp = client.post("/drafts/issue", headers={"Origin": "http://localhost"},
+                       data={"draft_id": [str(twin_a), str(twin_b), str(clean)]})
+    check("posting them anyway is refused", resp.status_code == 302)
+    check("and nothing at all was numbered", len(db.list_gate_passes(conn)) == before)
+    check("not even the clean one in the batch",
+          db.get_draft(conn, clean) is not None)
+    check("and the reason is shown", b"Not issued" in client.get("/drafts").data)
+
+    # Remove one and the rest go through.
+    client.post(f"/drafts/{twin_b}/delete", headers={"Origin": "http://localhost"})
+    resp = client.post("/drafts/issue", headers={"Origin": "http://localhost"},
+                       data={"draft_id": [str(twin_a), str(clean)]})
+    check("with one of them gone the batch issues",
+          len(db.list_gate_passes(conn)) == before + 2)
+
+    # An already-issued number is a warning, and warnings do not block.
+    again = draft("FR 262700644", "TO 4.pdf")
+    report = db.duplicate_document_report(conn, db.list_drafts(conn))
+    check("a number already issued is flagged", again in report)
+    check("but not blocked", report[again]["blocking"] is False)
+    check("and it can still be issued",
+          client.post("/drafts/issue", headers={"Origin": "http://localhost"},
+                      data={"draft_id": str(again)}).status_code == 302)
+    check("and it really was", len(db.list_gate_passes(conn)) == before + 3)
+
+    # A CANCELLED pass must not raise the warning at all. Its number is spent
+    # but its document is not, and reissuing against it is exactly how a pass
+    # cancelled for being wrong gets replaced.
+    # A number of its own: FR 262700644 is on two issued passes by now, so
+    # cancelling one of them would leave the other still matching and prove
+    # nothing about cancellation.
+    doomed = db.create_gate_pass(conn, None, "S", "C", "FR 262700777",
+                                  "01-01-2026", "", sample_items(),
+                                  prepared_by="Ravi Kumar")
+    fresh = draft("FR 262700777", "TO 5.pdf")
+    check("while that pass is issued, the number is flagged",
+          fresh in db.duplicate_document_report(conn, [db.get_draft(conn, fresh)]))
+    db.cancel_gate_pass(conn, doomed["id"], "printed in error", cancelled_by="Ravi Kumar")
+    check("once it is cancelled, the number is free again",
+          fresh not in db.duplicate_document_report(conn, [db.get_draft(conn, fresh)]))
     conn.close()
 
 
@@ -2652,7 +2741,9 @@ def test_uploaded_invoices_are_deleted_once_used(tmpdir):
     check("discarding a draft deletes its upload too", files_on_disk() == [])
 
     # A batch deletes only the uploads it actually issued.
-    good = [upload() for _ in range(2)]
+    # Two DIFFERENT invoices: uploading one twice now blocks the batch, because
+    # two drafts sharing a document number cannot both be issued.
+    good = [upload(SAMPLE_INVOICE), upload(TWO_PAGE_INVOICE)]
     with open(SCANNED_INVOICE, "rb") as f:
         resp = client.post("/upload", data={"invoice": (f, "scan.pdf")},
                             content_type="multipart/form-data")
@@ -4936,6 +5027,7 @@ def main():
         test_parsing_a_batch(tmpdir)
         test_remarks_print_on_more_than_one_line(tmpdir)
         test_duplicate_document_numbers_are_flagged_not_blocked(tmpdir)
+        test_two_drafts_with_one_number_cannot_both_be_issued(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_correcting_an_issued_pass(tmpdir)
         test_a_cancelled_pass_says_so_on_paper(tmpdir)

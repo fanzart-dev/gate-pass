@@ -155,11 +155,23 @@ irreversible; the button that abandons an edit says **Discard changes**.
 
 ## Duplicate document numbers
 
-`db.duplicate_document_report` flags a draft whose document number already
-exists — in another draft in the same batch, or on an issued gate pass. It is a
-**warning, never a block**: the same number legitimately recurs on a split
-delivery or a corrected reissue, and the person at the desk knows which it is.
-What they cannot do is spot it unaided across fifty uploaded files.
+`db.duplicate_document_report` returns
+`{draft_id: {"message", "blocking"}}`. The two kinds are not the same problem:
+
+* **Blocking** — two of the drafts in hand carry the same number. Issuing both
+  spends two gate pass numbers on one consignment and nothing afterwards can
+  tell the passes apart, so there is no reading of it that is correct. The tick
+  box is withheld, and `db.blocking_duplicates` refuses the batch **server
+  side** as well: a checkbox that was never rendered does not stop the form
+  being posted.
+* **Warning** — the number is on a pass that has already been issued. A split
+  delivery against one invoice, or a reissue after a correction, are ordinary
+  and the person at the desk knows which it is. Flagged, still issuable, with a
+  confirmation.
+
+Only **issued** passes count for the warning. A cancelled pass is a struck-out
+record — its number is spent but its document is not, and reissuing against it
+is exactly how a pass cancelled for being wrong gets replaced.
 
 `normalize_document_no` is what makes it work: a transfer memo carries
 `TO NO: FR 262700644` while the same number on an invoice is `FR 262700644`.
