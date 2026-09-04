@@ -163,7 +163,17 @@ PRINT_MIN_ROWS = 22
 ITEM_BODY_MM = 134
 
 
-def print_row_height_mm(rows):
+# The totals row lives INSIDE the table, as a tfoot, and its height comes out of
+# the table's own budget rather than out of anything below it. Taking it from
+# the item rows instead of from the page keeps two things true: no item is ever
+# pushed off a full 26-line page, and the signature block below keeps its room.
+# The rows get fractionally shorter on a page that shows totals, which nobody
+# can see; an item vanishing off the bottom, or a signature with nowhere to go,
+# both would be.
+TOTALS_ROW_MM = 5.5
+
+
+def print_row_height_mm(rows, with_totals=False):
     """The exact height of one item row, so the box fills without stretching.
 
     Rounded DOWN to two decimals: a fraction of a millimetre of slack at the
@@ -171,7 +181,8 @@ def print_row_height_mm(rows):
     past the edge of the sheet.
     """
     rows = max(1, rows)
-    return int(ITEM_BODY_MM / rows * 100) / 100
+    budget = ITEM_BODY_MM - (TOTALS_ROW_MM if with_totals else 0)
+    return int(budget / rows * 100) / 100
 
 
 def print_row_count(item_count):

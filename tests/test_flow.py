@@ -976,48 +976,56 @@ def test_totals_sit_between_the_items_and_the_signatures(tmpdir):
                               prepared_by="Ravi Kumar")
     page = client.get(f"/print/{gp['id']}").get_data(as_text=True)
 
-    # The totals are not in a box. They sat inside the item table's frame first,
-    # then closed that frame from underneath; both read as a box bolted to the
-    # bottom of the table rather than as a summary of it. The table closes
-    # itself, as it always did, and the figures sit in the white space between
-    # it and the signatures.
+    # The totals belong to the table, as its last row. As a strip underneath
+    # they were a floating line whose numbers did not sit under the columns
+    # they totalled.
     print_css_now = (ROOT / "static" / "css" / "print.css").read_text()
-    totals_rule = re.search(r"^\.pass-totals \{(.*?)\}", print_css_now, re.S | re.M).group(1)
-    totals_rule = re.sub(r"/\*.*?\*/", "", totals_rule, flags=re.S)
-    check("the totals carry no border on any side",
-          "border" not in totals_rule)
-    check("and nothing else draws one around them either",
-          not re.search(r"\.pass-totals[^{]*\{[^}]*border(?!-)", 
-                        re.sub(r"/\*.*?\*/", "", print_css_now, flags=re.S)))
-    # The table must still close itself, or removing the strip's border leaves
-    # the item box hanging open at the bottom.
-    check("the item table keeps its own frame",
-          not re.search(r"\.pass\.with-totals table\.items-table", print_css_now))
+    check("there is no standalone totals strip any more",
+          ".pass-totals" not in print_css_now and "pass-totals" not in page)
+    check("the totals are the table's own last row", "<tfoot>" in page)
+    check("and they come after every item row",
+          page.index("</tbody>") < page.index("<tfoot>"))
+    # Compared against the ITEM table's closing tag: the meta box above is a
+    # table too, and its </table> comes first.
+    items_table = re.search(r'<table class="items-table".*?</table>', page, re.S).group(0)
+    check("inside the table, not after it", "<tfoot>" in items_table)
 
-    check("the totals are on the pass", "Total Qty" in page and ">7<" in page)
-    check("cartons are totalled when some were typed",
-          "Total Cartons" in page and ">3<" in page)
-    check("the totals come after the item table",
-          page.index("</table>") < page.index("pass-totals"))
-    check("and before the signatures",
-          page.index("pass-totals") < page.index("pass-foot"))
-    check("both are inside one block pinned to the end of the pass",
-          page.index("pass-end") < page.index("pass-totals"))
+    # The numbers land in the columns they total, which is the whole point.
+    tfoot = re.search(r"<tfoot>.*?</tfoot>", page, re.S).group(0)
+    check("the quantity total is in the Quantity column",
+          re.search(r'<td class="col-qty"><strong>7</strong>', tfoot))
+    check("the carton total is in the No. of Cartons column",
+          re.search(r'<td class="col-ctn"><strong>3</strong>', tfoot))
+    check("and the row is labelled", "totals-label" in tfoot)
 
-    # One auto margin, not two. Two share the leftover space out BETWEEN the
-    # blocks and leave the totals floating in the middle of the page.
-    print_css = (ROOT / "static" / "css" / "print.css").read_text()
-    autos = re.findall(r"^\.(pass-end|pass-foot|pass-totals)\s*\{[^}]*margin-top:\s*auto",
-                       print_css, re.S | re.M)
-    check("exactly one block is pushed to the bottom", autos == ["pass-end"])
+    # A td with display:flex stops being a table-cell: it leaves the column
+    # grid and takes its share of the ruled border with it, so the rule above
+    # the totals ended halfway across. Already documented on .actions-cell in
+    # register.html, and hit again here — so it is a check now, not a comment.
+    for rule_text in re.findall(r"table\.items-table[^{]*\{[^}]*\}", print_css_now):
+        selector = rule_text.split("{")[0]
+        if "display: flex" in rule_text:
+            check(f"no table cell is turned into a flex container ({selector.strip()})",
+                  " td" not in selector and not selector.rstrip().endswith(("col-item",
+                      "col-qty", "col-ctn", "col-sl")))
+
+    # Its height comes out of the table's budget, not out of the page, so the
+    # ruled box still ends where it always did and no item is pushed off a
+    # full page.
+    check("the row height allows for the totals row",
+          db.print_row_height_mm(26, True) < db.print_row_height_mm(26))
+    check("and the table still fills its budget either way",
+          abs(db.print_row_height_mm(26, True) * 26 + db.TOTALS_ROW_MM
+              - db.ITEM_BODY_MM) < 0.2)
 
     # A blank carton column must not be totalled as a confident 0.
     blank = db.create_gate_pass(conn, None, "S", "C", "I2", "01-01-2026", "",
                                  sample_items(cartons=""), prepared_by="Ravi Kumar")
     page = client.get(f"/print/{blank['id']}").get_data(as_text=True)
+    blank_foot = re.search(r"<tfoot>.*?</tfoot>", page, re.S).group(0)
     check("cartons nobody counted are not totalled as 0",
-          "Total Cartons" not in page)
-    check("but the quantity still is", "Total Qty" in page)
+          not re.search(r'col-ctn"><strong>', blank_foot))
+    check("but the quantity still is", re.search(r'col-qty"><strong>', blank_foot))
     conn.close()
 
 
@@ -1038,24 +1046,29 @@ def test_the_two_totals_are_independent(tmpdir):
     def printed():
         return client.get(f"/print/{gp['id']}").get_data(as_text=True)
 
-    check("both off prints neither",
-          "Total Qty" not in printed() and "Total Cartons" not in printed())
+    def totals_row():
+        found = re.search(r"<tfoot>.*?</tfoot>", printed(), re.S)
+        return found.group(0) if found else ""
+
+    def figure(column):
+        found = re.search(rf'<td class="col-{column}"><strong>(\d+)</strong>', totals_row())
+        return found.group(1) if found else None
+
+    check("both off prints no totals row at all", totals_row() == "")
 
     db.update_settings(conn, show_total_qty="1", show_total_cartons="0")
-    page = printed()
-    check("quantity alone prints the quantity", "Total Qty" in page and ">7<" in page)
-    check("and not the cartons", "Total Cartons" not in page)
+    check("quantity alone prints the quantity", figure("qty") == "7")
+    check("and not the cartons", figure("ctn") is None)
 
     db.update_settings(conn, show_total_qty="0", show_total_cartons="1")
-    page = printed()
-    check("cartons alone prints the cartons", "Total Cartons" in page and ">3<" in page)
-    check("and not the quantity", "Total Qty" not in page)
+    check("cartons alone prints the cartons", figure("ctn") == "3")
+    check("and not the quantity", figure("qty") is None)
 
     db.update_settings(conn, show_total_qty="1", show_total_cartons="1")
-    page = printed()
-    check("both on prints both", "Total Qty" in page and "Total Cartons" in page)
-    check("with a gap between them rather than running together",
-          'class="totals-gap"' in page)
+    check("both on prints both", figure("qty") == "7" and figure("ctn") == "3")
+    check("each under the column it totals, not run together",
+          'class="col-qty"><strong>7' in totals_row()
+          and 'class="col-ctn"><strong>3' in totals_row())
 
     # Cartons nobody typed are still not totalled as a confident 0, whatever
     # the tick box says.
@@ -1127,7 +1140,7 @@ def test_a_two_page_pass_signs_off_only_at_the_end(tmpdir):
     # Two copies per A4 sheet, so the last page contributes two of each.
     check("the signatures appear only on the last page",
           page.count('class="pass-foot"') == 2)
-    check("and so do the totals", page.count('class="pass-totals"') == 2)
+    check("and so do the totals", page.count("<tfoot>") == 2)
     check("every page still has the end block, so the geometry does not shift",
           page.count('class="pass-end"') == len(re.findall(r'class="pass[ "]', page)))
     conn.close()
@@ -2049,13 +2062,14 @@ def test_print_layout_rules(tmpdir):
     # 13.26mm between the table and the rule, against 10.38mm before.
     signing_room = float(re.search(r"min-height: ([\d.]+)mm", foot).group(1))
     check("there is room above the rule to sign", signing_room >= 14)
-    # A page that shows the totals strip has to find its height somewhere, and
-    # this is the only blank-on-purpose part of the layout. Only those pages
-    # pay: a pass with no vehicle and totals off keeps the full 15mm.
-    tight = re.search(r"\.pass\.with-totals \.pass-foot \{[^}]*\}", css).group()
-    with_totals_room = float(re.search(r"min-height: ([\d.]+)mm", tight).group(1))
-    check("a page carrying totals gives up some of it, but not all",
-          11 <= with_totals_room < signing_room)
+    # The totals used to be a strip between the table and the signatures, and
+    # its height was taken from here — 15mm dropped to 11.8mm on any page that
+    # showed them. They are a row inside the table now, paid for out of the
+    # table's own budget, so every pass gets the full signing room again.
+    check("no page has its signing room cut for the totals",
+          not re.search(r"\.pass\.with-totals \.pass-foot", css))
+    check("and the totals row is paid for out of the table instead",
+          db.print_row_height_mm(26, True) * 26 + db.TOTALS_ROW_MM <= db.ITEM_BODY_MM)
     check("Prepared by is inside the footer, not a line below it",
           card.index('class="prepared-by"') > card.index('class="pass-foot"')
           and card.index('class="prepared-by"') < card.index('class="foot-side'))
@@ -3970,7 +3984,8 @@ def test_prepared_by_is_recorded_and_printed(tmpdir):
     db.update_settings(conn, show_total_qty="1", show_total_cartons="1")
     conn.close()
     with_totals = client.get(f"/print/{gate_pass_id}").data
-    check("the totals line still shows the quantity", b"Total Qty" in with_totals)
+    check("the totals row still shows the quantity",
+          re.search(rb'<td class="col-qty"><strong>\d+</strong>', with_totals))
     check("no empty Boxes total is printed when cartons were left blank",
           b"Boxes :" not in with_totals)
 
@@ -4201,15 +4216,19 @@ def test_full_app_flow(tmpdir):
 
     # The box runs to its full budgeted height on both halves, so the column
     # dividers reach the bottom exactly as on the printed form.
-    printed_rows = print_resp.data.count(b'<td class="col-sl">')
+    # Counted inside <tbody> only: the totals row is a tfoot and carries a
+    # col-sl cell of its own, which would inflate this without meaning a row
+    # was drawn in the box.
+    body = "".join(re.findall(r"<tbody>.*?</tbody>",
+                              print_resp.data.decode(), re.S))
+    printed_rows = body.count('<td class="col-sl">')
     check("the box is drawn full height on each of the two passes",
           printed_rows == db.print_row_count(1) * 2)
     # ...but only the one real item is ruled off horizontally.
     check("exactly the populated rows are tagged for a horizontal rule",
           print_resp.data.count(b'<tr class="item-row">') == 1 * 2)
     check("the rest are blank filler rows carrying no rule",
-          print_resp.data.count(b'<td class="col-sl"></td>')
-          == (db.print_row_count(1) - 1) * 2)
+          body.count('<td class="col-sl"></td>') == (db.print_row_count(1) - 1) * 2)
     # print_row_count is now the height BUDGET, not the number of rows drawn:
     # it is what divides ITEM_BODY_MM into --row-h, so a short pass still gets
     # roomy rows and a full one tightens enough to fit.

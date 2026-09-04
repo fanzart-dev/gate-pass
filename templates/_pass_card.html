@@ -74,7 +74,7 @@
          "fit to page" setting — which is what made the same pass print with
          tall warped rows on one machine and correct ones on another. #}
       {% set rows = page_rows(page_items|length) %}
-      <table class="items-table" style="--row-h: {{ row_height_mm(rows) }}mm">
+      <table class="items-table" style="--row-h: {{ row_height_mm(rows, has_totals) }}mm">
         <thead>
           <tr>
             <th class="col-sl">Sl No.</th>
@@ -106,6 +106,42 @@
             </tr>
           {% endfor %}
         </tbody>
+        {# The totals belong to the table, not beside it. As a strip underneath
+           they were a floating line whose numbers did not sit under the columns
+           they totalled; in a tfoot they land in the Quantity and No. of
+           Cartons columns exactly, and the ruled box closes under them.
+           Its height comes out of the table's own budget (db.TOTALS_ROW_MM), so
+           the item rows tighten by a fraction of a millimetre rather than the
+           signature block losing its room or an item being pushed off a full
+           page. #}
+        {% if has_totals %}
+          <tfoot>
+            <tr class="totals-row">
+              <td class="col-sl"></td>
+              {# The flex row goes on a div INSIDE the cell, never on the td.
+                 A td with display:flex stops being a table-cell: it drops out
+                 of the column grid, and its share of the ruled border goes
+                 with it — the rule above the totals ended halfway across. The
+                 same trap is documented on .actions-cell in register.html. #}
+              <td class="col-item">
+                <div class="totals-line">
+                  {# Only when there is one. An empty "Vehicle :" reads as a
+                     vehicle nobody recorded, which is a different claim from a
+                     consignment that did not travel by road. #}
+                  {% if gate_pass.vehicle_no %}
+                    <span class="totals-vehicle">Vehicle&nbsp;<strong>{{ gate_pass.vehicle_no }}</strong></span>
+                  {% else %}<span></span>{% endif %}
+                  <span class="totals-label">Total</span>
+                </div>
+              </td>
+              <td class="col-qty">{% if qty_on %}<strong>{{ gate_pass.total_qty }}</strong>{% endif %}</td>
+              {# Cartons are often written in by hand at the gate, so they are
+                 only totalled when some were actually typed — a bold 0 under a
+                 column of blanks reads as a count, not as "not counted yet". #}
+              <td class="col-ctn">{% if cartons_on and gate_pass.total_cartons != '' %}<strong>{{ gate_pass.total_cartons }}</strong>{% endif %}</td>
+            </tr>
+          </tfoot>
+        {% endif %}
       </table>
 
       {# Totals and signatures are one block, pinned to the bottom of the pass
@@ -119,26 +155,6 @@
          header, so a sheet on its own is still identifiable. #}
       <div class="pass-end">
         {% if page_no == page_total %}
-          {% if has_totals %}
-            <div class="pass-totals">
-              {# Only printed when there IS one. An empty "Vehicle :" on a gate
-                 pass reads as a vehicle nobody recorded rather than a consignment
-                 that did not travel by road. #}
-              {% if gate_pass.vehicle_no %}
-                <span class="totals-vehicle">Vehicle&nbsp;<strong>{{ gate_pass.vehicle_no }}</strong></span>
-              {% endif %}
-              {% if qty_on or cartons_on %}
-                <span class="totals-figures">
-                  {% if qty_on %}Total Qty&nbsp;<strong>{{ gate_pass.total_qty }}</strong>{% endif %}{#
-                  Cartons are often written on by hand at the gate, so they are
-                  only totalled when some were actually typed — a bold 0 next to
-                  a column of blanks reads as a count, not as "not counted yet".
-                  #}{% if cartons_on and gate_pass.total_cartons != '' %}{% if qty_on %}<span class="totals-gap"></span>{% endif %}Total Cartons&nbsp;<strong>{{ gate_pass.total_cartons }}</strong>{% endif %}
-                </span>
-              {% endif %}
-            </div>
-          {% endif %}
-
           {# One footer holding both names, so they sit on the same baseline
              across the foot of the pass. "Prepared by" used to be a separate
              line BELOW this block, which put it 2.88mm lower than "Authorised
