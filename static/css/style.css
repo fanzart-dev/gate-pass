@@ -709,7 +709,10 @@ table.items-editor, table.list {
    its container for no reason, and the extra width came out of the column
    holding the duplicate explanation, which wrapped to seven lines. */
 table.list.register-table { min-width: 1040px; }
-table.list.drafts-table { min-width: 820px; }
+/* Small enough that a narrow window shrinks the columns instead of scrolling.
+   The drafts table has no three-button action cell to protect, so it has far
+   less it must hold on to than the register. */
+table.list.drafts-table { min-width: 720px; }
 
 /* The Invoice No column on Drafts carries the duplicate explanation under the
    number, so it gets the room rather than the equal share a fixed layout would
@@ -861,8 +864,15 @@ table.list .invoice-cell {
   letter-spacing: -.01em;
   /* Monospace is wider than the body face, so "FR 262702188" broke over two
      lines in the narrower Drafts column. A reference number split across lines
-     is one that gets misread back to somebody over the phone. */
+     is one that gets misread back to somebody over the phone.
+     nowrap on its own was not safe: a cell that cannot be made narrower than
+     its text forces a fixed-layout table past its declared width, so the same
+     page scrolled sideways in Firefox and not in Chromium, purely on how wide
+     each renders the monospace face. The column is given room below instead,
+     and this yields rather than overflowing. */
   white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: normal;
 }
 
 /* Actions read as things you press, not as prose links. */
