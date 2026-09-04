@@ -499,6 +499,21 @@ textarea.multiline {
   display: block;      /* kills the baseline gap under an inline-block */
 }
 
+/* Running totals beside the row counter. Tabular figures so the numbers do not
+   jump sideways as they change while somebody is typing. */
+.running-totals {
+  margin-left: auto;
+  white-space: nowrap;
+  color: var(--label);
+}
+
+.running-totals strong {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.totals-sep { display: inline-block; width: 14px; }
+
 .field { margin-bottom: 16px; }
 
 .grid-2 {
@@ -799,6 +814,28 @@ table.items-editor input[name="cartons"]:focus { background: var(--card); }
 /* ------------------------------------------------------------ lists/table */
 
 table.list tbody tr:hover { background: var(--hover); }
+
+/* A duplicate document number. Amber, not red: the draft is fine and can be
+   issued — it just should not be issued without somebody looking. Red is
+   reserved for the rows that genuinely cannot go. */
+table.list tbody tr.is-duplicate {
+  background: var(--warn-bg);
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+
+table.list tbody tr.is-duplicate:hover { background: var(--warn-bg); }
+
+.duplicate-note {
+  margin-top: 3px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto,
+               Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0;
+  white-space: normal;
+  color: var(--warn);
+}
 
 /* Identifiers are read digit by digit, compared against a paper invoice and
    typed into other systems, so they get a monospace face where 0/O and 1/l are

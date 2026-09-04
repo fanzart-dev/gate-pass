@@ -153,6 +153,38 @@ The edit screen deliberately does not have a button labelled "Cancel".
 Everywhere else in this app cancelling means cancelling the gate pass, which is
 irreversible; the button that abandons an edit says **Discard changes**.
 
+## Duplicate document numbers
+
+`db.duplicate_document_report` flags a draft whose document number already
+exists — in another draft in the same batch, or on an issued gate pass. It is a
+**warning, never a block**: the same number legitimately recurs on a split
+delivery or a corrected reissue, and the person at the desk knows which it is.
+What they cannot do is spot it unaided across fifty uploaded files.
+
+`normalize_document_no` is what makes it work: a transfer memo carries
+`TO NO: FR 262700644` while the same number on an invoice is `FR 262700644`.
+Both sides of every comparison go through that one function — an earlier draft
+of this did the issued-pass side in SQL with nested `REPLACE`s, which matched
+spaces and `TO NO:` and nothing else, so `FR-262700644` slipped past.
+
+The Issue button is never disabled for a duplicate; it becomes **Proceed &
+Generate** and asks to be confirmed. The confirmation fires only for duplicates
+still **ticked** — warning about one the operator has already unticked is how a
+prompt becomes something people dismiss unread.
+
+## Totals
+
+`total_qty` and `total_cartons` are **derived on every read**, never stored, so
+no saved figure can disagree with the items under it — there is no such column
+on `gate_passes`. Drafts carry no totals at all.
+
+The review and edit screens show a running total while typing
+(`#total-qty-display`, `#total-cartons-display`). It is display only: nothing
+is posted, and the server sums the item rows it actually stores. The listener
+is delegated from the `tbody`, so a row added later is covered without anything
+bound to it, and non-numeric or blank values count as nothing rather than
+turning the sum into `NaN`.
+
 ## Permissions
 
 Eight, stored as JSON on the user row. `db.PERMISSIONS` maps key to the short

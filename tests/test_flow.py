@@ -1146,6 +1146,134 @@ def test_a_two_page_pass_signs_off_only_at_the_end(tmpdir):
     conn.close()
 
 
+def test_duplicate_document_numbers_are_flagged_not_blocked(tmpdir):
+    """The same document number arriving twice is a warning, never a block.
+
+    A file uploaded twice in one batch, or a document already turned into a
+    gate pass last week, would otherwise spend a second number on a
+    consignment the register already accounts for. But the same number
+    legitimately recurs — a split delivery, a corrected reissue — and the
+    person at the desk knows which it is. What they cannot do is spot it
+    unaided across fifty uploaded files.
+    """
+    flask_app, client = logged_in_app(tmpdir, "dupes")
+    conn = db.connect(flask_app.config["DB_PATH"])
+
+    # The comparison has to survive the ways the same number is written.
+    for written in ("FR 262700644", "TO NO: FR 262700644", "fr262700644",
+                    "FR-262700644", "Document No: FR 262700644"):
+        check(f"{written!r} normalises to the same key",
+              db.normalize_document_no(written) == "FR262700644")
+    check("a different number does not collide",
+          db.normalize_document_no("FR 262700645") != "FR262700644")
+    check("an empty number has no key", db.normalize_document_no("") == "")
+
+    issued = db.create_gate_pass(conn, None, "S", "C", "FR 262700644",
+                                  "01-01-2026", "", sample_items(),
+                                  prepared_by="Ravi Kumar")
+    # Written differently from the issued one on purpose.
+    already = db.create_draft(conn, supplier_name="S", customer_name="C",
+                               invoice_no="TO NO: FR 262700644",
+                               invoice_date="01-01-2026",
+                               invoice_pdf_path="invoices/20260101_TO 1.pdf",
+                               items=sample_items())
+    twin_a = db.create_draft(conn, supplier_name="S", customer_name="C",
+                              invoice_no="FR 262700652", invoice_date="01-01-2026",
+                              invoice_pdf_path="invoices/20260101_TO 2.pdf",
+                              items=sample_items())
+    twin_b = db.create_draft(conn, supplier_name="S", customer_name="C",
+                              invoice_no="FR-262700652", invoice_date="01-01-2026",
+                              invoice_pdf_path="invoices/20260101_TO 3.pdf",
+                              items=sample_items())
+    unique = db.create_draft(conn, supplier_name="S", customer_name="C",
+                              invoice_no="FR 262700999", invoice_date="01-01-2026",
+                              items=sample_items())
+
+    report = db.duplicate_document_report(conn, db.list_drafts(conn))
+    check("a number already issued is caught", already in report)
+    check("and the message names the gate pass",
+          issued["serial_no"] in report[already])
+    check("two files in the same batch are caught",
+          twin_a in report and twin_b in report)
+    check("and the message names the other file",
+          "TO 3.pdf" in report[twin_a] or "TO 2.pdf" in report[twin_b])
+    check("a number nobody has seen is not flagged", unique not in report)
+
+    page = client.get("/drafts").get_data(as_text=True)
+    check("duplicate rows are highlighted", "is-duplicate" in page)
+    check("with a badge", "DUPLICATE" in page.upper())
+    check("and the reason under the number", "duplicate-note" in page)
+    check("the reason names the issued pass", issued["serial_no"] in page)
+
+    # The button must stay usable: the operator decides, not the app.
+    button = re.search(r'<button[^>]*id="issue-selected"[^>]*>(.*?)</button>', page, re.S)
+    check("the issue button is not disabled by a duplicate",
+          button and "disabled" not in button.group(0))
+    check("and it asks to be confirmed", "Proceed" in button.group(1))
+    check("a confirmation is wired up", "confirm(" in page)
+    # Only for duplicates that are actually still ticked — warning about one
+    # the operator already unticked is how a prompt becomes noise.
+    check("and only for duplicates still selected",
+          ".draft-tick:checked" in page)
+    conn.close()
+
+
+def test_totals_are_shown_live_and_derived_on_save(tmpdir):
+    """Running totals while typing, and totals on the record that cannot drift.
+
+    The screen figure is a convenience. The one that matters is stored — and it
+    is not stored at all: total_qty and total_cartons are computed from the item
+    rows every time a pass or draft is read, so there is no saved total that can
+    disagree with the items under it.
+    """
+    flask_app, client = logged_in_app(tmpdir, "livetotals")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    draft_id = db.create_draft(conn, supplier_name="S", customer_name="C",
+                                invoice_no="I", invoice_date="01-01-2026",
+                                items=[{"sl_no": 1, "item_name": "MICRON",
+                                        "quantity": "3", "cartons": "2"},
+                                       {"sl_no": 2, "item_name": "PHOENIX",
+                                        "quantity": "4", "cartons": "1"}])
+
+    for screen, url in (("review", f"/review/{draft_id}"),):
+        page = client.get(url).get_data(as_text=True)
+        check(f"{screen} shows a running quantity total", "total-qty-display" in page)
+        check(f"{screen} shows a running carton total", "total-cartons-display" in page)
+        # Delegated from the tbody, so a row added later is covered without
+        # anything being bound to it — a per-row listener is one that gets
+        # forgotten on the next "+ Add item".
+        check(f"{screen} listens on the table, not on each row",
+              'tbody.addEventListener("input"' in page)
+        check(f"{screen} ignores blanks rather than summing NaN",
+              "Number.isNaN" in page)
+
+    check("the edit screen has them too",
+          "total-qty-display" in (ROOT / "templates" / "edit_pass.html").read_text())
+
+    # A DRAFT carries no totals at all — it is not a record of anything yet,
+    # and the running figure on the review screen is what the operator checks
+    # against the invoice in their hand.
+    check("a draft has no stored totals to go stale",
+          "total_qty" not in db.get_draft(conn, draft_id).keys())
+
+    # An issued pass does have them, and they are derived on every read rather
+    # than written down, so there is nothing that can disagree with the items.
+    gp = db.create_gate_pass(conn, None, "S", "C", "I", "01-01-2026", "",
+                              [{"item_name": "MICRON", "quantity": "10", "cartons": "4"}],
+                              prepared_by="Ravi Kumar")
+    check("an issued pass totals its own items",
+          gp["total_qty"] == 10 and gp["total_cartons"] == 4)
+    db.update_gate_pass(conn, gp["id"], edited_by="Ravi Kumar",
+                        items=[{"item_name": "MICRON", "quantity": "2", "cartons": "1"},
+                               {"item_name": "PHOENIX", "quantity": "5", "cartons": "2"}])
+    after = db.get_gate_pass(conn, gp["id"])
+    check("and follows an edit without anything recalculating a stored figure",
+          after["total_qty"] == 7 and after["total_cartons"] == 3)
+    check("there is no stored total column to drift",
+          "total_qty" not in [c[1] for c in conn.execute("PRAGMA table_info(gate_passes)")])
+    conn.close()
+
+
 def test_correcting_an_issued_pass(tmpdir):
     """An issued pass can be corrected, and the correction is on the record.
 
@@ -4807,6 +4935,8 @@ def main():
         test_cartons_come_from_the_master_list(tmpdir)
         test_parsing_a_batch(tmpdir)
         test_remarks_print_on_more_than_one_line(tmpdir)
+        test_duplicate_document_numbers_are_flagged_not_blocked(tmpdir)
+        test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_correcting_an_issued_pass(tmpdir)
         test_a_cancelled_pass_says_so_on_paper(tmpdir)
         test_printed_sheet_has_no_rule_between_the_copies(tmpdir)

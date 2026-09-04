@@ -114,6 +114,15 @@
         <button type="button" id="add-row">+ Add item</button>
       {% endif %}
       <span class="hint" id="row-count"></span>
+      {# Running totals, so a miscount is caught while the invoice is still on
+         the desk rather than after a number has been spent on it. Display
+         only: nothing here is posted, and the server derives the totals from
+         the item rows it actually stores. #}
+      <span class="hint running-totals">
+        Total Qty <strong id="total-qty-display">0</strong>
+        <span class="totals-sep"></span>
+        Total Cartons <strong id="total-cartons-display">0</strong>
+      </span>
       <span class="hint">Cartons can be left blank — the column prints empty to be filled in by hand.</span>
     </div>
 
@@ -134,6 +143,32 @@
     const ITEMS_PER_PAGE = {{ items_per_page }};
     const pageNote = document.getElementById("page-note");
 
+    // Blanks and anything non-numeric count as nothing rather than breaking the
+    // sum: the carton column is routinely left empty to be written in by hand,
+    // and a quantity someone is midway through typing must not read as NaN.
+    function sumColumn(name) {
+      let total = 0;
+      tbody.querySelectorAll(`input[name="${name}"]`).forEach((el) => {
+        const n = parseInt(el.value.trim(), 10);
+        if (!Number.isNaN(n)) total += n;
+      });
+      return total;
+    }
+
+    function recalcTotals() {
+      const qty = document.getElementById("total-qty-display");
+      const ctn = document.getElementById("total-cartons-display");
+      if (qty) qty.textContent = sumColumn("quantity");
+      if (ctn) ctn.textContent = sumColumn("cartons");
+    }
+
+    // Delegated, so rows added later are covered without attaching anything to
+    // them — a listener bound per row is one that gets forgotten on the next
+    // "+ Add item".
+    tbody.addEventListener("input", (e) => {
+      if (e.target.name === "quantity" || e.target.name === "cartons") recalcTotals();
+    });
+
     function renumber() {
       const rows = tbody.querySelectorAll("tr");
       rows.forEach((row, i) => {
@@ -145,6 +180,7 @@
         ? `${rows.length} items — ${pages} pages`
         : `${rows.length} of ${ITEMS_PER_PAGE} rows used`;
       counter.classList.remove("over-limit");
+      recalcTotals();
 
       // A long invoice is not a problem: it stays one gate pass with one number
       // and simply prints across more pages.

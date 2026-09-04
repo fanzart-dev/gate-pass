@@ -18,6 +18,9 @@ What is here is exactly the behaviour that lives in the page:
     arrows moving down a column, and Enter never submitting the form — the
     submit button issues a gate pass, so a stray keystroke spends a number;
   * Remarks being a textarea that starts one line tall and takes Shift+Enter;
+  * the running quantity and carton totals following every keystroke, added row
+    and removed row — they exist only in the browser, so only a browser can
+    check them;
   * a printed pass rendering with its serial, its items and both signatures,
     no rule drawn between the two copies, and a multi-line remark whose lines
     all start after the colon rather than sliding back under the label.
@@ -226,6 +229,50 @@ class TestItemTableKeyboard:
         page.keyboard.press("ArrowUp")
         assert rows.nth(0).locator("input[name=quantity]").evaluate(
             "el => el === document.activeElement"), "Up keeps the column"
+
+
+class TestRunningTotals:
+    def test_totals_follow_the_rows_as_they_are_typed(self, page, base_url):
+        """The figure updates on every keystroke, add and remove.
+
+        Asserted in a browser because that is the only place it exists: the
+        totals on the review screen are not posted and not stored, they are
+        what the operator checks against the invoice in their hand before a
+        number is spent.
+        """
+        TestItemTableKeyboard._open_a_draft(self, page, base_url)
+        qty = page.locator("#total-qty-display")
+        ctn = page.locator("#total-cartons-display")
+        if qty.count() == 0:
+            pytest.skip("no running totals on this screen")
+
+        rows = page.locator("#items-table tbody tr")
+        rows.nth(0).locator("input[name=quantity]").fill("4")
+        rows.nth(0).locator("input[name=cartons]").fill("2")
+        page.wait_for_timeout(100)
+        assert qty.inner_text() == "4", "typing a quantity updates the total"
+        assert ctn.inner_text() == "2", "typing a carton count updates the total"
+
+        # A row added afterwards must count too — a listener bound per row is
+        # one that gets forgotten on the next "+ Add item".
+        page.click("#add-row")
+        last = page.locator("#items-table tbody tr").last
+        last.locator("input[name=item_name]").fill("EXTRA")
+        last.locator("input[name=quantity]").fill("6")
+        last.locator("input[name=cartons]").fill("3")
+        page.wait_for_timeout(100)
+        assert qty.inner_text() == "10", "a newly added row is counted"
+        assert ctn.inner_text() == "5"
+
+        last.locator(".remove-row").click()
+        page.wait_for_timeout(100)
+        assert qty.inner_text() == "4", "removing a row takes it back out"
+        assert ctn.inner_text() == "2"
+
+        # Blank and part-typed values are worth nothing, not NaN.
+        rows.nth(0).locator("input[name=quantity]").fill("")
+        page.wait_for_timeout(100)
+        assert qty.inner_text() == "0", f"a blank quantity reads as 0, got {qty.inner_text()}"
 
 
 class TestRemarks:
