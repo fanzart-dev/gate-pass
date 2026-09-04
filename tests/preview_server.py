@@ -96,6 +96,21 @@ def main():
         prepared_by="Dinesh D")
     db.close(conn)
 
+    # Two drafts sharing a document number, and one matching an issued pass, so
+    # the duplicate warnings can be looked at. The prefixes differ deliberately:
+    # "TO NO: FR ..." and a bare "FR ..." are the same number, and catching that
+    # is the point.
+    conn = db.connect(app.config["DB_PATH"])
+    for number, source in (("TO NO: FR 262702176", "TO 1.pdf"),
+                            ("FR-262702176", "TO 2.pdf")):
+        db.create_draft(conn, supplier_name="Golden Touch Exports",
+                        customer_name="FANZART LLP", invoice_no=number,
+                        invoice_date="03-09-2026",
+                        invoice_pdf_path=f"invoices/20260903120000_{source}",
+                        items=[{"sl_no": 1, "item_name": name, "quantity": qty,
+                                "cartons": qty} for name, qty in DEMO_ITEMS[:2]])
+    db.close(conn)
+
     # A draft, so /review can be looked at too. The print pages are not the
     # only screen with a layout worth eyeballing.
     conn = db.connect(app.config["DB_PATH"])

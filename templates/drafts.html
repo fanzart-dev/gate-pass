@@ -26,7 +26,7 @@
           </thead>
           <tbody>
             {% for d in drafts %}
-            <tr class="{{ 'needs-attention' if d.problem else '' }}">
+            <tr class="{{ 'needs-attention' if d.problem else '' }}{{ ' is-duplicate' if d.duplicate and not d.problem else '' }}">
               <td class="tick-cell">
                 {% if not d.problem %}
                   <input type="checkbox" name="draft_id" value="{{ d.id }}" class="draft-tick" checked>
@@ -35,12 +35,23 @@
               <td class="muted-cell">{{ d.created_at }}</td>
               <td>{{ d.supplier_name or '—' }}</td>
               <td>{{ d.customer_name or '—' }}</td>
-              <td class="invoice-cell">{{ d.invoice_no or '—' }}</td>
+              <td class="invoice-cell">
+                {{ d.invoice_no or '—' }}
+                {# Under the number itself, because that is what the reader is
+                   checking when they notice the highlight. #}
+                {% if d.duplicate %}
+                  <div class="duplicate-note">{{ d.duplicate }}</div>
+                {% endif %}
+              </td>
               <td class="muted-cell">{{ d.item_count }}</td>
               <td>
                 {% if d.problem %}
                   <span class="pill pending">Needs attention</span>
                   <div class="hint" style="margin-top:3px">{{ d.problem }}</div>
+                {% elif d.duplicate %}
+                  {# Still ready. A duplicate number does not stop a pass being
+                     issued — it just should not be issued without a look. #}
+                  <span class="pill pending">&#9888; Duplicate</span>
                 {% else %}
                   <span class="pill approved">Ready</span>
                 {% endif %}
@@ -55,8 +66,14 @@
       </div>
 
       <div class="form-actions">
-        <button type="submit" class="primary" {% if not ready_count %}disabled{% endif %}>
-          Issue Selected
+        {# Never disabled for duplicates — only for having nothing ready. The
+           confirmation is the check, not a locked button: the operator is the
+           one who knows whether a repeated number is a split delivery or a
+           file uploaded twice. #}
+        <button type="submit" class="primary" id="issue-selected"
+                {% if not ready_count %}disabled{% endif %}
+                {% if duplicate_count %}data-duplicates="{{ duplicate_count }}"{% endif %}>
+          {% if duplicate_count %}Proceed &amp; Generate{% else %}Issue Selected{% endif %}
         </button>
         <span class="hint">
           {{ ready_count }} of {{ drafts|length }} ready.
@@ -68,6 +85,26 @@
   {% endif %}
 
   <script>
+    // Confirm only when a draft that is actually TICKED carries a duplicate.
+    // Warning about a duplicate the operator has already unticked is how a
+    // confirmation becomes something people dismiss without reading.
+    const issueButton = document.getElementById("issue-selected");
+    if (issueButton) {
+      issueButton.closest("form").addEventListener("submit", (e) => {
+        const ticked = [...document.querySelectorAll(".draft-tick:checked")]
+          .filter((t) => t.closest("tr").classList.contains("is-duplicate"));
+        if (!ticked.length) return;
+        const one = ticked.length === 1;
+        const message =
+          `Warning: ${ticked.length} selected draft${one ? " has" : "s have"} a ` +
+          `document number that already exists.\n\n` +
+          `Issuing ${one ? "it" : "them"} spends a new gate pass number on a ` +
+          `consignment the register may already account for.\n\n` +
+          `Generate gate passes for all selected drafts anyway?`;
+        if (!confirm(message)) e.preventDefault();
+      });
+    }
+
     const selectAll = document.getElementById("select-all");
     if (selectAll) {
       const ticks = [...document.querySelectorAll(".draft-tick")];

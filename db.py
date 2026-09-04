@@ -1280,6 +1280,87 @@ def create_gate_pass(conn, draft_id, supplier_name, customer_name, invoice_no,
     return get_gate_pass(conn, gate_pass_id)
 
 
+# --- duplicate document numbers -------------------------------------------
+#
+# The same invoice arriving twice is an ordinary mistake: a file uploaded twice
+# in one batch, or a document already turned into a gate pass last week. Issuing
+# both spends two numbers on one consignment, and the register then shows goods
+# leaving twice that only left once.
+#
+# It is a WARNING, never a block. The same document number legitimately recurs —
+# a split delivery, a corrected reissue — and the person at the desk knows which
+# it is. What they cannot do is notice it unaided across fifty uploaded files.
+
+def normalize_document_no(number):
+    """The key two document numbers are compared on.
+
+    Transfer memos carry their number as "TO NO: FR 262700644" while the same
+    number on an invoice is "FR 262700644", and spacing varies. Comparing the
+    raw strings would miss exactly the duplicate worth catching.
+    """
+    text = (number or "").upper()
+    text = re.sub(r"^\s*(TO\s*NO|DOC(UMENT)?\s*NO|INVOICE\s*NO)\s*[:.\-]?\s*", "", text)
+    return re.sub(r"[^A-Z0-9]", "", text)
+
+
+def duplicate_document_report(conn, drafts):
+    """Which of these drafts share a document number, and with what.
+
+    Returns {draft_id: message}. Three places a number can already exist, and
+    the message says which, because the answer to each is different:
+    another file in the same batch, a draft already waiting, or a gate pass
+    that has already been issued.
+    """
+    report = {}
+    seen = {}
+
+    # Normalised in Python on BOTH sides, using the one function, rather than
+    # trying to reproduce it in SQL with nested REPLACEs. The SQL version
+    # stripped spaces and "TO NO:" and nothing else, so FR-262700644 and
+    # FR 262700644 would not have matched — which is precisely the pair worth
+    # catching.
+    already_issued = {}
+    for row in conn.execute(
+            "SELECT serial_no, invoice_no FROM gate_passes WHERE status = 'issued'"):
+        key = normalize_document_no(row["invoice_no"])
+        if key:
+            already_issued.setdefault(key, row["serial_no"])
+
+    for draft in drafts:
+        key = normalize_document_no(draft["invoice_no"])
+        if not key:
+            continue
+
+        issued = already_issued.get(key)
+        if issued:
+            report[draft["id"]] = (
+                f"{draft['invoice_no']} has already been issued as {issued}.")
+            continue
+
+        if key in seen:
+            first = seen[key]
+            report[draft["id"]] = (
+                f"{draft['invoice_no']} is also on draft #{first['id']}"
+                + (f" ({first['source']})" if first["source"] else "") + ".")
+            # The first one is a duplicate too — it just did not know yet.
+            report.setdefault(first["id"], (
+                f"{first['invoice_no']} is also on draft #{draft['id']}"
+                + (f" ({_source_name(draft)})" if _source_name(draft) else "") + "."))
+            continue
+
+        seen[key] = {"id": draft["id"], "invoice_no": draft["invoice_no"],
+                     "source": _source_name(draft)}
+    return report
+
+
+def _source_name(draft):
+    """The uploaded file a draft came from, for naming it in a warning."""
+    path = draft.get("invoice_pdf_path") or ""
+    name = path.rsplit("/", 1)[-1]
+    # Stored as <timestamp>_<original name>; the timestamp is noise to a reader.
+    return name.split("_", 1)[-1] if "_" in name else name
+
+
 def draft_problem(draft):
     """Why this draft cannot be issued yet, or None if it is ready.
 

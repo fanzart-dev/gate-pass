@@ -101,6 +101,14 @@
     <div class="table-actions">
       <button type="button" id="add-row">+ Add item</button>
       <span class="hint">A pass must keep at least one line.</span>
+      {# The same running totals as the review screen. On this screen they
+         matter more: the pass has already been printed, so a correction is
+         being checked against a piece of paper somebody is holding. #}
+      <span class="hint running-totals">
+        Total Qty <strong id="total-qty-display">0</strong>
+        <span class="totals-sep"></span>
+        Total Cartons <strong id="total-cartons-display">0</strong>
+      </span>
     </div>
 
     <div class="form-actions">
@@ -142,7 +150,30 @@
 
     function renumber() {
       [...tbody.rows].forEach((row, i) => { row.cells[0].textContent = i + 1; });
+      recalcTotals();
     }
+
+    // Blanks and part-typed values count as nothing rather than breaking the
+    // sum into NaN.
+    function sumColumn(name) {
+      let total = 0;
+      tbody.querySelectorAll(`input[name="${name}"]`).forEach((el) => {
+        const n = parseInt(el.value.trim(), 10);
+        if (!Number.isNaN(n)) total += n;
+      });
+      return total;
+    }
+
+    function recalcTotals() {
+      document.getElementById("total-qty-display").textContent = sumColumn("quantity");
+      document.getElementById("total-cartons-display").textContent = sumColumn("cartons");
+    }
+
+    // Delegated, so rows added later need nothing bound to them.
+    tbody.addEventListener("input", (e) => {
+      if (e.target.name === "quantity" || e.target.name === "cartons") recalcTotals();
+    });
+    recalcTotals();
 
     tbody.addEventListener("keydown", (e) => {
       const cell = e.target;

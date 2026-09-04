@@ -555,8 +555,17 @@ def register_routes(app):
             full = db.get_draft(g.db, draft["id"])
             draft["problem"] = db.draft_problem(full)
             draft["item_count"] = len(full["items"])
+        # A duplicate document number is a WARNING, never a problem: `problem`
+        # holds a draft back from being issued, and the same number legitimately
+        # recurs on a split delivery or a corrected reissue. What the operator
+        # cannot do is spot it unaided across fifty uploaded files.
+        duplicates = db.duplicate_document_report(g.db, rows)
+        for draft in rows:
+            draft["duplicate"] = duplicates.get(draft["id"])
         return render_template("drafts.html", drafts=rows, active="drafts",
                                 ready_count=sum(1 for d in rows if not d["problem"]),
+                                duplicate_count=sum(
+                                    1 for d in rows if d["duplicate"] and not d["problem"]),
                                 next_serial=db.next_serial_preview(g.db))
 
     def _back_to_drafts(draft_ids):
