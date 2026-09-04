@@ -6,6 +6,7 @@ group, so it never touches storage/ (the real book).
 """
 
 import functools
+import hashlib
 import io
 import json
 import os
@@ -5294,6 +5295,80 @@ def test_the_drafts_list_previews_the_numbering_order(tmpdir):
     conn.close()
 
 
+def test_issuing_never_alters_a_pass_that_already_exists(tmpdir):
+    """A pass, once issued, is fixed. Nothing issued later may touch it.
+
+    This is the guarantee the whole register rests on: the number on the paper
+    in somebody's drawer has to still mean the same thing next year. Document
+    ordering made it worth asserting rather than assuming — it changes the
+    order numbers are handed out in, and the obvious way to get that wrong is
+    to renumber or rewrite what is already there.
+
+    Every column of every pass and every one of its items is hashed before and
+    after, so this fails on ANY change, not just the ones anticipated here.
+    """
+    flask_app, client = logged_in_app(tmpdir, "immutable")
+    conn = db.connect(flask_app.config["DB_PATH"])
+
+    def fingerprint():
+        out = {}
+        for gp in conn.execute("SELECT * FROM gate_passes ORDER BY id"):
+            row = {k: gp[k] for k in gp.keys()}
+            items = [dict(i) for i in conn.execute(
+                "SELECT sl_no, item_name, quantity, cartons FROM gate_pass_items "
+                "WHERE gate_pass_id = ? ORDER BY sl_no", (gp["id"],))]
+            blob = json.dumps({"row": row, "items": items}, sort_keys=True, default=str)
+            out[gp["serial_no"]] = hashlib.sha256(blob.encode()).hexdigest()
+        return out
+
+    def issue(numbers):
+        ids = [db.create_draft(conn, supplier_name="S", customer_name="C",
+                                invoice_no=number, invoice_date="01-01-2026",
+                                invoice_pdf_path=f"invoices/{number}.pdf",
+                                items=sample_items())
+               for number in numbers]
+        return db.create_gate_passes_batch(conn, ids, prepared_by="Ravi Kumar")[0]
+
+    # A book with history in it, issued in the order the drafts arrived.
+    issue(["SN 262700900", "BI 262700158", "FR 262702176"])
+    before = fingerprint()
+    check("there is something to protect", len(before) == 3)
+
+    # A later batch whose document numbers sort BELOW everything already
+    # issued. If ordering were ever applied across the register rather than
+    # within a batch, this is the batch that would rewrite history.
+    issued = issue(["BI 262700001", "AA 100", "FR 262702558"])
+    after = fingerprint()
+
+    check("no existing pass was altered in any column",
+          all(before[serial] == after.get(serial) for serial in before))
+    check("no existing pass was removed", set(before) <= set(after))
+    check("no existing serial was handed out again",
+          not {p["serial_no"] for p in issued} & set(before))
+    check("the new batch continued from the end, it did not interleave",
+          [p["serial_no"] for p in sorted(issued, key=lambda p: p["serial_seq"])]
+          == ["FZ-00004", "FZ-00005", "FZ-00006"])
+    check("and inside that batch the documents are in order",
+          [p["invoice_no"] for p in sorted(issued, key=lambda p: p["serial_seq"])]
+          == ["AA 100", "BI 262700001", "FR 262702558"])
+
+    # The database refuses it even if code someday tries.
+    gp = conn.execute("SELECT id FROM gate_passes LIMIT 1").fetchone()["id"]
+    for sql, why in (
+            ("UPDATE gate_passes SET serial_no = 'FZ-99999' WHERE id = ?",
+             "a serial cannot be edited"),
+            ("DELETE FROM gate_passes WHERE id = ?", "a pass cannot be deleted")):
+        try:
+            conn.execute(sql, (gp,))
+            conn.rollback()
+            check(why, False)
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            check(why, True)
+
+    conn.close()
+
+
 def test_every_test_is_actually_run():
     """Every test_* in this file must be called by main().
 
@@ -5346,6 +5421,7 @@ def main():
         test_a_draft_can_be_removed_from_the_row_it_is_on(tmpdir)
         test_a_batch_is_numbered_in_document_order(tmpdir)
         test_the_drafts_list_previews_the_numbering_order(tmpdir)
+        test_issuing_never_alters_a_pass_that_already_exists(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)
         test_the_printed_totals_are_bolder_than_the_rows(tmpdir)
