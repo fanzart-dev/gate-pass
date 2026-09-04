@@ -1223,8 +1223,28 @@ def get_draft(conn, draft_id):
 
 
 def list_drafts(conn):
-    rows = conn.execute("SELECT * FROM drafts ORDER BY created_at DESC").fetchall()
-    return [dict(r) for r in rows]
+    """Waiting drafts, in the order they will be numbered.
+
+    Document order, not upload order, and sorted with exactly the key
+    create_gate_passes_batch allocates by — including the draft-id tie-break —
+    so the Drafts list is a preview of the run rather than a differently
+    ordered list of the same rows. Before this the screen showed newest first
+    while the batch was numbered by document number, so the operator could not
+    tell from the page which draft was about to become which gate pass.
+
+    Sorted here rather than in ORDER BY: the digits have to compare as an
+    integer, and SQLite would compare the whole string, which is the ordering
+    this exists to avoid.
+
+    Drafts that cannot be told apart by document number — a duplicate pair, or
+    several with nothing typed in yet — fall back to draft id, so the older one
+    is listed first. That is the batch's tie-break too, and it has to be: a
+    preview that breaks ties the other way would show the pair in the opposite
+    order to the numbers they are about to get.
+    """
+    rows = conn.execute("SELECT * FROM drafts").fetchall()
+    return sorted((dict(r) for r in rows),
+                  key=lambda d: document_sort_key(d["invoice_no"]) + (d["id"],))
 
 
 def update_draft(conn, draft_id, supplier_name, customer_name, invoice_no,
