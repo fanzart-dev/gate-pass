@@ -306,25 +306,32 @@ disappears off a printed pass without somebody choosing to turn it off.
 A bold `0` beside a column of blanks reads as a count, not as "not counted
 yet".
 
-**The totals are not in a box.** `.pass-totals` carries no border on any side.
-It sat inside the item table's frame first, then closed that frame from
-underneath; both read as a box bolted to the bottom of the table rather than as
-a summary of it. The table closes itself, as it always did, and the figures sit
-in the white space between it and the signatures.
+**The totals are the table's last row**, a `<tfoot>`, so each figure lands
+under the column it totals. They were a strip underneath first — a floating
+line whose numbers did not line up with anything.
+
+Its height comes out of `ITEM_BODY_MM` via `db.TOTALS_ROW_MM`, not out of the
+page. That is what stops it costing anything below: the item rows tighten by a
+fraction of a millimetre (5.15mm to 4.94mm on a full page), which nobody can
+see, instead of an item being pushed off a 26-line page or the signature block
+losing its room. Both of those would be visible.
+
+**Never `display: flex` on a `<td>`.** It stops being a table-cell, leaves the
+column grid and takes its share of the ruled border with it — the rule above
+the totals ended halfway across. Put the flex row on a div inside the cell. The
+same trap is documented on `.actions-cell` in `register.html`; it has now
+caught this codebase twice, so a test checks for it.
 
 **The pass has no spare vertical room.** Adding the totals strip overflowed it
 by 17px. That is paid for out of `.pass-foot`'s `min-height`, the only part of
 the layout that is blank on purpose, and only on pages that actually carry the
-strip (`.pass.with-totals`): 15mm normally, **11.8mm** with totals. Taking it
-from the item table instead would have cost a row and re-paginated passes that
-have already been issued.
+strip. That is gone: the totals moved inside the table, so the footer keeps its
+full **15mm** on every pass and the measured gap between the table and the
+signature rule is **11.4mm (43px)**.
 
-11.8mm is a measured ceiling, not a round number: 12mm overflows some passes by
-1px and 12.5mm by 2px. It leaves 7.63mm to sign in, against 13.26mm on a pass
-with no totals. Anything more has to come out of `ITEM_BODY_MM` and
-`ITEMS_PER_PAGE`. **Re-measure before changing it** — `.pass` is
-`overflow: hidden`, so going over does not look wrong, it silently clips the
-bottom of the last item row and part of the signature line.
+**Re-measure before changing any of it** — `.pass` is `overflow: hidden`, so
+going over does not look wrong, it silently clips the bottom of the last item
+row and part of the signature line.
 
 **Numbering does not reset by itself.** There is no fiscal-year rollover — the
 count runs on until an admin deliberately restarts it under Settings →

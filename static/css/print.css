@@ -483,39 +483,36 @@ table.items-table td.col-item {
    the bottom by ONE auto margin. Two of them — one here and one on .pass-foot,
    which is how this started — divide the leftover space between the blocks and
    leave the totals floating in the middle of the page. */
+/* The totals row, inside the table's own grid. Its height is fixed and comes
+   out of ITEM_BODY_MM (db.TOTALS_ROW_MM), so the ruled box still ends exactly
+   where it always did. */
+table.items-table tfoot td {
+  height: 5.5mm;
+  border-top: 1px solid #000;
+  font-size: 7pt;
+  vertical-align: middle;
+}
+
+/* Vehicle on the left of the item column, the word Total hard right against
+   the figures it introduces. On a DIV inside the cell, not on the cell: a td
+   with display:flex is no longer a table-cell, leaves the column grid and
+   takes its part of the ruled border with it. */
+table.items-table tfoot .totals-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 3mm;
+}
+
+.totals-label { font-weight: 700; letter-spacing: .02em; }
+
 .pass-end {
   margin-top: auto;
 }
 
-/* Totals sit directly under the item table and directly above the signatures.
-   Figures right-aligned against the same edge as the No. of Cartons column, so
-   the eye runs straight down the numbers it is checking. */
-.pass-totals {
-  display: flex;
-  align-items: baseline;
-  gap: 4mm;
-  /* No border of its own, on any side. It sat inside the item table's frame
-     first, then closed that frame from underneath; both read as a box bolted
-     to the bottom of the table rather than as a summary of it. The table now
-     closes itself, as it always did, and these figures sit in the white space
-     between it and the signatures.
-     Side padding still matches the table cells' 1.5mm, so "Total Cartons"
-     lines up with the column it totals rather than sitting 0.5mm inside it. */
-  padding: 1mm 1.5mm 0;
-  font-size: 7.5pt;
-}
 
-.totals-vehicle { flex: none; }
 
-/* margin-left:auto rather than justify-content:space-between, so the figures
-   stay hard right whether or not there is a vehicle number beside them. */
-.totals-figures {
-  margin-left: auto;
-  text-align: right;
-  white-space: nowrap;
-}
 
-.totals-gap { display: inline-block; width: 5mm; }
 
 .pass-foot {
   display: flex;
@@ -531,21 +528,11 @@ table.items-table td.col-item {
   min-height: 15mm;
 }
 
-/* The pass is a fixed height with no spare room — adding the totals strip
-   overflowed it by 17px — so a page that shows the strip has to find that
-   space somewhere. It comes from here, the only part of the layout that is
-   blank on purpose, rather than from the item table, where it would have cost
-   a row and re-paginated passes that have already been issued.
-   Only pages that actually carry the strip are affected: a pass with no
-   vehicle and totals switched off keeps the full 15mm.
-   11.8mm is the measured ceiling, not a round number picked by eye: 12mm
-   overflows some passes by 1px and 12.5mm by 2px. It leaves 7.63mm to sign in,
-   against 13.26mm on a pass with no totals. Anything more has to come out of
-   ITEM_BODY_MM, which costs an item row and re-paginates passes already
-   issued. Re-measure before changing it. */
-.pass.with-totals .pass-foot {
-  min-height: 11.8mm;
-}
+/* The totals moved INSIDE the table, taking their height out of the table's
+   own budget instead of out of this. So a page carrying totals no longer has
+   to buy that space here, and the signing room is the same 15mm on every pass
+   again — it had been cut to 11.8mm to make room for a strip that no longer
+   exists. */
 
 
 .foot-side { text-align: center; flex: none; }
