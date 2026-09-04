@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ gate_pass.serial_no }}{% endblock %}
+
+{% block content %}
+  <h1>Correcting {{ gate_pass.serial_no }}</h1>
+
+  {# The point of the warning is that this pass has already been printed and
+     the goods have already gone. Somebody is holding the old version. #}
+  <div class="notice">
+    <span class="notice-icon">⚠</span>
+    <span>
+      This pass was issued on {{ gate_pass.issued_at }} by
+      <strong>{{ gate_pass.prepared_by }}</strong> and may already be printed and
+      signed. Its number, its issue date and its preparer do not change, and
+      every correction is written to the audit log with the old value beside the
+      new one.
+    </span>
+  </div>
+
+  <form method="post" id="review-form" class="card">
+    <div class="grid-2">
+      {# Serial and issue date are shown, never posted: the database refuses to
+         change them (trg_gate_passes_no_serial_edit) and the issue date is when
+         the goods left, which is a fact rather than a field. #}
+      <div class="field">
+        <label>Gate Pass No</label>
+        <p class="read-field" title="A serial number never changes">{{ gate_pass.serial_no }}</p>
+      </div>
+      <div class="field">
+        <label>Issued</label>
+        <p class="read-field" title="When the goods left">{{ gate_pass.issued_at }}</p>
+      </div>
+      <div class="field">
+        <label>Prepared by</label>
+        <p class="read-field" title="Who issued it — not who is correcting it">{{ gate_pass.prepared_by }}</p>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="field">
+        <label for="supplier_name">From</label>
+        <input type="text" id="supplier_name" name="supplier_name"
+               value="{{ gate_pass.supplier_name }}" required>
+      </div>
+      <div class="field">
+        <label for="customer_name">Customer</label>
+        <input type="text" id="customer_name" name="customer_name"
+               value="{{ gate_pass.customer_name }}" required>
+      </div>
+      <div class="field">
+        <label for="invoice_no">Document No</label>
+        <input type="text" id="invoice_no" name="invoice_no"
+               value="{{ gate_pass.invoice_no }}" required>
+      </div>
+      <div class="field">
+        <label for="invoice_date">Date</label>
+        <input type="text" id="invoice_date" name="invoice_date"
+               value="{{ gate_pass.invoice_date }}" placeholder="DD-MM-YYYY" required>
+      </div>
+      <div class="field">
+        <label for="vehicle_no">Vehicle No <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
+        <input type="text" id="vehicle_no" name="vehicle_no"
+               value="{{ gate_pass.vehicle_no }}" placeholder="KA 01 AB 1234">
+      </div>
+      <div class="field">
+        <label for="remarks">Remarks <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
+        {# Two rows, matching the review screen: an existing remark is often
+           already two lines, and rows="1" hid the second behind a scrollbar. #}
+        <textarea id="remarks" name="remarks" rows="2" class="multiline"
+                  placeholder="Anything to note about this consignment">{{ gate_pass.remarks }}</textarea>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="items-editor" id="items-table">
+        <thead>
+          <tr>
+            <th>Sl No.</th>
+            <th>Item</th>
+            <th>Quantity</th>
+            <th>No. of Cartons</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in gate_pass['items'] %}
+          <tr>
+            <td class="sl-no">{{ loop.index }}</td>
+            <td><input type="text" name="item_name" value="{{ item.item_name }}" placeholder="Item name"></td>
+            <td class="col-qty-cell"><input type="text" name="quantity" value="{{ item.quantity }}"></td>
+            <td class="col-ctn-cell"><input type="text" name="cartons" value="{{ item.cartons }}"></td>
+            <td class="row-tools">
+              <button type="button" class="row-remove" title="Remove this line">&times;</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-actions">
+      <button type="button" id="add-row">+ Add item</button>
+      <span class="hint">A pass must keep at least one line.</span>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="primary">Save Changes</button>
+      {# NOT "Cancel". On every other screen in this app cancelling means
+         cancelling the GATE PASS, which is irreversible and keeps the number.
+         A button here meaning "discard my edits" would be the most dangerous
+         word on the page. #}
+      <a class="button quiet" href="{{ url_for('register') }}">Discard changes</a>
+    </div>
+  </form>
+
+  <script>
+    // The same two behaviours as the review screen: Enter walks across the row
+    // and falls into the next, the arrows move down a column, and Enter never
+    // submits — on this screen submitting rewrites a pass that is already out
+    // in the world.
+    const tbody = document.querySelector("#items-table tbody");
+
+    document.getElementById("add-row").addEventListener("click", () => {
+      const row = tbody.rows[0].cloneNode(true);
+      row.querySelectorAll("input").forEach((el) => { el.value = ""; });
+      tbody.appendChild(row);
+      renumber();
+      row.querySelector("input").focus();
+    });
+
+    tbody.addEventListener("click", (e) => {
+      if (!e.target.classList.contains("row-remove")) return;
+      // Never down to nothing: a pass with no items is not a pass, and the
+      // server refuses it anyway. Emptying the last row is the same intent.
+      if (tbody.rows.length === 1) {
+        tbody.rows[0].querySelectorAll("input").forEach((el) => { el.value = ""; });
+      } else {
+        e.target.closest("tr").remove();
+      }
+      renumber();
+    });
+
+    function renumber() {
+      [...tbody.rows].forEach((row, i) => { row.cells[0].textContent = i + 1; });
+    }
+
+    tbody.addEventListener("keydown", (e) => {
+      const cell = e.target;
+      if (cell.tagName !== "INPUT") return;
+      const isEnter = e.key === "Enter";
+      const vertical = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+      if (!isEnter && !vertical) return;
+      e.preventDefault();
+
+      const rows = [...tbody.querySelectorAll("tr")];
+      const row = cell.closest("tr");
+      let next = null;
+      if (isEnter) {
+        const all = [...tbody.querySelectorAll("input")];
+        next = all[all.indexOf(cell) + 1] || null;
+      } else {
+        const target = rows[rows.indexOf(row) + vertical];
+        const column = [...row.children].indexOf(cell.closest("td"));
+        next = target && target.children[column]
+             ? target.children[column].querySelector("input") : null;
+      }
+      if (next) { next.focus(); next.select(); }
+    });
+  </script>
+{% endblock %}

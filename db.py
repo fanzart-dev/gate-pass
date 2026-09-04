@@ -71,6 +71,7 @@ PERMISSIONS = {
     "can_batch_print": "Batch Print",
     "can_review_drafts": "Review Drafts",
     "can_edit_parsed_details": "Edit Draft Details",
+    "can_edit_issued_pass": "Edit Issued Gate Pass",
 }
 
 # The sentence under each tick box. Kept apart from the label so the tick list
@@ -92,6 +93,11 @@ PERMISSION_HINTS = {
     # is fixed and only the blanks can be typed in — so a scan can still be
     # completed by hand, but nobody can quietly restate what a document said.
     "can_edit_parsed_details": "Change what the invoice was read as saying, not just fill the blanks",
+    # The heaviest permission here, and off by default. Everything else changes
+    # what happens next; this changes what the register says already happened.
+    # Every edit is written to the audit log with the old value beside the new,
+    # so the record of the change survives even though the value does not.
+    "can_edit_issued_pass": "Correct an issued pass — quantities, cartons, customer or remarks",
 }
 
 # The most a batch print can cover. A runaway request would otherwise try to
@@ -1592,6 +1598,97 @@ def close(conn):
     except sqlite3.Error:
         pass
     conn.close()
+
+
+# What may be corrected after issue. Deliberately not the serial, the sequence,
+# the preparer or the issue date: the first three the database refuses outright
+# (trg_gate_passes_no_serial_edit), and the fourth is when the goods left, which
+# is a fact about the world rather than a field.
+EDITABLE_FIELDS = ("supplier_name", "customer_name", "invoice_no",
+                   "invoice_date", "vehicle_no", "remarks")
+
+
+def update_gate_pass(conn, gate_pass_id, items=None, edited_by="", **fields):
+    """Correct an already-issued pass, and record that it was corrected.
+
+    A gate pass is the record of goods that have already left the building, so
+    changing one is not an ordinary edit. Two things make it defensible rather
+    than reckless:
+
+      * the serial, the sequence, the preparer and the issue date do not move,
+        so the pass is still the same pass and still says who issued it and
+        when;
+      * every field that changes is written to the audit log with its old value
+        beside the new one. The value is gone from the row; what it used to be
+        is not gone from the book.
+
+    Returns the list of human-readable changes, empty if nothing differed.
+    """
+    existing = get_gate_pass(conn, gate_pass_id)
+    if existing is None:
+        raise ValueError("that gate pass does not exist")
+    if existing["status"] != "issued":
+        # A cancelled pass is a closed record. Correcting one would mean
+        # rewriting something that has already been struck out, and the paper
+        # in the drawer would no longer match the book.
+        raise ValueError("a cancelled gate pass cannot be edited")
+
+    changes = []
+    updates = {}
+    for name in EDITABLE_FIELDS:
+        if name not in fields:
+            continue
+        new = (fields[name] or "").strip()
+        old = (existing[name] or "").strip()
+        if new != old:
+            updates[name] = new
+            changes.append(f"{name}: {old or '(blank)'} -> {new or '(blank)'}")
+
+    if items is not None:
+        cleaned = [i for i in items if str(i.get("item_name", "")).strip()]
+        if not cleaned:
+            raise ValueError("a gate pass needs at least one item")
+        before = [(i["item_name"], i["quantity"], i["cartons"]) for i in existing["items"]]
+        after = [(str(i.get("item_name", "")).strip(), str(i.get("quantity", "")).strip(),
+                  str(i.get("cartons", "")).strip()) for i in cleaned]
+        if before != after:
+            if len(before) != len(after):
+                changes.append(f"items: {len(before)} line(s) -> {len(after)} line(s)")
+            for old_row, new_row in zip(before, after):
+                if old_row != new_row:
+                    changes.append(
+                        f"{old_row[0]}: qty {old_row[1]}->{new_row[1]}, "
+                        f"cartons {old_row[2] or '(blank)'}->{new_row[2] or '(blank)'}")
+            for extra in after[len(before):]:
+                changes.append(f"added {extra[0]} qty {extra[1]}")
+            for gone in before[len(after):]:
+                changes.append(f"removed {gone[0]} qty {gone[1]}")
+    else:
+        cleaned = None
+
+    if not changes:
+        return []
+
+    with writing(conn):
+        if updates:
+            columns = ", ".join(f"{name} = ?" for name in updates)
+            conn.execute(f"UPDATE gate_passes SET {columns} WHERE id = ?",
+                         (*updates.values(), gate_pass_id))
+        if cleaned is not None:
+            conn.execute("DELETE FROM gate_pass_items WHERE gate_pass_id = ?", (gate_pass_id,))
+            for position, item in enumerate(cleaned, start=1):
+                conn.execute(
+                    "INSERT INTO gate_pass_items (gate_pass_id, sl_no, item_name, quantity, cartons) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (gate_pass_id, position, str(item.get("item_name", "")).strip(),
+                     str(item.get("quantity", "")).strip(), str(item.get("cartons", "")).strip()))
+        conn.execute(
+            "INSERT INTO audit_log (gate_pass_id, action, details, created_at) "
+            "VALUES (?, 'edit', ?, ?)",
+            (gate_pass_id,
+             f"edited by {edited_by or 'unknown'}: " + "; ".join(changes),
+             _now()))
+    return changes
 
 
 def cancel_gate_pass(conn, gate_pass_id, reason, cancelled_by=""):

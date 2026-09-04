@@ -1133,6 +1133,102 @@ def test_a_two_page_pass_signs_off_only_at_the_end(tmpdir):
     conn.close()
 
 
+def test_correcting_an_issued_pass(tmpdir):
+    """An issued pass can be corrected, and the correction is on the record.
+
+    This is the heaviest permission in the app: everything else changes what
+    happens next, this changes what the register says already happened. What
+    makes it defensible is that the pass stays the same pass — same number,
+    same issue date, same preparer — and the old values survive in the audit
+    log even though they no longer survive in the row.
+    """
+    flask_app, admin = logged_in_app(tmpdir, "editpass",
+                                      users=(("dinesh", "Dinesh D"), ("asha", "Asha Nair")))
+    conn = db.connect(flask_app.config["DB_PATH"])
+    gp = db.create_gate_pass(conn, None, "Golden Touch Exports", "OLD CUSTOMER",
+                              "FR 1", "01-01-2026", "",
+                              [{"item_name": "MICRON MODREN OAK", "quantity": "3", "cartons": ""}],
+                              prepared_by="Rakesh")
+
+    check("the permission exists and is a real one",
+          "can_edit_issued_pass" in db.PERMISSIONS)
+    check("and it is explained on the people screen",
+          "can_edit_issued_pass" in db.PERMISSION_HINTS)
+    check("a fresh account does not have it",
+          not db.user_can(db.get_user_by_username(conn, "asha"), "can_edit_issued_pass"))
+
+    # Someone without it cannot reach the screen, and is not shown the way in.
+    staff = flask_app.test_client()
+    sign_in(staff, "asha")
+    check("without the permission the edit screen is refused",
+          staff.get(f"/gate-passes/{gp['id']}/edit").status_code == 302)
+    check("and no Edit button is offered", b"/edit" not in staff.get("/register").data)
+    check("with it, the button is there", b"/edit" in admin.get("/register").data)
+
+    form = MultiDict([
+        ("supplier_name", "Golden Touch Exports"), ("customer_name", "NEW CUSTOMER"),
+        ("invoice_no", "FR 1"), ("invoice_date", "01-01-2026"),
+        ("vehicle_no", "KA 01 AB 1234"), ("remarks", "corrected at the gate"),
+        ("item_name", "MICRON MODREN OAK"), ("quantity", "5"), ("cartons", "5")])
+    resp = admin.post(f"/gate-passes/{gp['id']}/edit", data=form,
+                      headers={"Origin": "http://localhost"})
+    check("saving returns to the register", resp.headers.get("Location", "").endswith("/register"))
+    check("and says so", b"updated successfully" in admin.get("/register").data)
+
+    after = db.get_gate_pass(conn, gp["id"])
+    # The three things that must not move, whatever else does.
+    check("the serial number is unchanged", after["serial_no"] == gp["serial_no"])
+    check("the issue date is unchanged", after["issued_at"] == gp["issued_at"])
+    check("the preparer is still whoever issued it", after["prepared_by"] == "Rakesh")
+    # And the things that were meant to change.
+    check("the customer is corrected", after["customer_name"] == "NEW CUSTOMER")
+    check("the vehicle is recorded", after["vehicle_no"] == "KA 01 AB 1234")
+    check("the remark is recorded", after["remarks"] == "corrected at the gate")
+    check("the quantity is corrected", after["items"][0]["quantity"] == "5")
+    check("the cartons are corrected", after["items"][0]["cartons"] == "5")
+
+    # The whole justification for allowing this at all.
+    logged = conn.execute(
+        "SELECT details FROM audit_log WHERE gate_pass_id = ? AND action = 'edit'",
+        (gp["id"],)).fetchall()
+    check("the edit is written to the audit log", len(logged) == 1)
+    details = logged[0]["details"]
+    check("naming who made it", "Dinesh D" in details)
+    check("and keeping the old value beside the new",
+          "OLD CUSTOMER -> NEW CUSTOMER" in details)
+    check("including the quantity that changed", "qty 3->5" in details)
+
+    # An edit that changes nothing must not fabricate a record of a change.
+    same = db.update_gate_pass(conn, gp["id"], edited_by="Dinesh D",
+                               customer_name="NEW CUSTOMER")
+    check("a no-op edit records nothing", same == [])
+    check("and adds no audit row", len(conn.execute(
+        "SELECT 1 FROM audit_log WHERE gate_pass_id = ? AND action = 'edit'",
+        (gp["id"],)).fetchall()) == 1)
+
+    # The database still refuses what it always refused.
+    check("the serial cannot be edited even directly",
+          raises(sqlite3.IntegrityError, lambda: conn.execute(
+              "UPDATE gate_passes SET serial_no = 'XX-99999' WHERE id = ?", (gp["id"],))))
+
+    # A cancelled pass is a closed record.
+    db.cancel_gate_pass(conn, gp["id"], "printed in error", cancelled_by="Dinesh D")
+    check("a cancelled pass cannot be edited",
+          raises(ValueError, db.update_gate_pass, conn, gp["id"],
+                 None, "Dinesh D", customer_name="ANYTHING"))
+    check("its edit screen turns you away",
+          admin.get(f"/gate-passes/{gp['id']}/edit").status_code == 302)
+    check("and the register offers no Edit for it",
+          admin.get("/register").data.count(b"/edit") == 0)
+
+    # An empty pass is not a pass.
+    live = db.create_gate_pass(conn, None, "S", "C", "FR 2", "01-01-2026", "",
+                                sample_items(), prepared_by="Rakesh")
+    check("a pass cannot be emptied of every item",
+          raises(ValueError, db.update_gate_pass, conn, live["id"], [], "Dinesh D"))
+    conn.close()
+
+
 def test_a_cancelled_pass_says_so_on_paper(tmpdir):
     """Cancelling keeps the number and the row, so the paper must say what it is.
 
@@ -4692,6 +4788,7 @@ def main():
         test_cartons_come_from_the_master_list(tmpdir)
         test_parsing_a_batch(tmpdir)
         test_remarks_print_on_more_than_one_line(tmpdir)
+        test_correcting_an_issued_pass(tmpdir)
         test_a_cancelled_pass_says_so_on_paper(tmpdir)
         test_printed_sheet_has_no_rule_between_the_copies(tmpdir)
         test_vehicle_prints_only_when_there_is_one(tmpdir)
