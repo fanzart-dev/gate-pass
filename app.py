@@ -892,6 +892,25 @@ def register_routes(app):
         return jsonify(ok=True, filename=file.filename, draft_id=draft_id,
                         notes=notes, problem=problem)
 
+    @app.route("/gate-passes/<int:gate_pass_id>/printed", methods=["POST"])
+    @login_required
+    def mark_gate_pass_printed(gate_pass_id):
+        """Record that a pass reached paper.
+
+        Posted by the print page when the browser reports the print dialog
+        finished. Deliberately not done on GET of /print/<id>: opening that
+        page is a preview — from the register, from a link, by someone
+        checking a number — and marking it there would fill the register with
+        passes marked printed that nobody put on paper, which is worse than no
+        marking at all because it looks like information.
+
+        Any signed-in account may do it. Printing asserts nothing about the
+        pass; it records something that happened to it.
+        """
+        if db.get_gate_pass(g.db, gate_pass_id) is None:
+            abort(404)
+        return jsonify(ok=True, print_count=db.mark_printed(g.db, gate_pass_id))
+
     @app.route("/gate-passes/<int:gate_pass_id>/edit", methods=["GET", "POST"])
     @requires("can_edit_issued_pass")
     def edit_gate_pass(gate_pass_id):

@@ -489,9 +489,23 @@ table.items-table td.col-item {
 table.items-table tfoot td {
   height: 5.5mm;
   border-top: 1px solid #000;
-  font-size: 7pt;
+  /* Bigger and heavier than the 7pt item rows above, so the summary reads as a
+     summary at a glance rather than as one more line of the list. 9pt sets a
+     line box of about 3.2mm, which still sits inside the 5.5mm the row is
+     given, so nothing grows and the pass does not overflow.
+     Weight and size are set here rather than only on the <strong>: the "Total"
+     label is not inside one, and a bold figure beside a light label reads as
+     though only half the row matters. */
+  font-size: 9pt;
+  font-weight: 700;
   vertical-align: middle;
+  /* Browsers drop weight along with colour on some print paths unless told to
+     render the page as authored. */
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
+
+table.items-table tfoot strong { font-weight: 800; }
 
 /* Vehicle on the left of the item column, the word Total hard right against
    the figures it introduces. On a DIV inside the cell, not on the cell: a td

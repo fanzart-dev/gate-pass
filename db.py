@@ -30,6 +30,15 @@ ADDED_COLUMNS = {
         ("remarks", "TEXT NOT NULL DEFAULT ''"),
         ("prepared_by", "TEXT NOT NULL DEFAULT ''"),
         ("prepared_by_user_id", "INTEGER REFERENCES users(id)"),
+        # Whether the paper actually exists yet. A pass can be issued, hold its
+        # number and sit in the register for an hour before anybody prints it,
+        # and there was no way to see which ones those were.
+        # print_count rather than a bare flag because reprints matter: a pass
+        # printed four times is worth a second look, and the count is the only
+        # place that shows.
+        ("is_printed", "INTEGER NOT NULL DEFAULT 0"),
+        ("print_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("printed_at", "TEXT"),
         ("cancelled_by", "TEXT"),
     ],
     "users": [
@@ -236,7 +245,7 @@ DEFAULT_SETTINGS = {
 # Bump when schema.sql or ADDED_COLUMNS changes. Stored in the file as
 # PRAGMA user_version, so a connection can tell in one cheap read whether the
 # schema script needs running at all.
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 # How long a writer waits for another writer before giving up. Four people
 # clicking Issue at the same moment are serialised in milliseconds, so this is
@@ -1816,6 +1825,27 @@ def update_gate_pass(conn, gate_pass_id, items=None, edited_by="", **fields):
              f"edited by {edited_by or 'unknown'}: " + "; ".join(changes),
              _now()))
     return changes
+
+
+def mark_printed(conn, gate_pass_id):
+    """Record that this pass has actually been printed. Returns the new count.
+
+    Called when the browser reports the print dialog finished, not when the
+    print page is opened: opening it is a preview, and the register would fill
+    up with passes marked printed that nobody put on paper.
+
+    Not written to the audit log. Printing changes nothing about what the pass
+    SAYS — the log is for what the register asserts, and a line per reprint
+    would bury the entries that matter.
+    """
+    with writing(conn):
+        conn.execute(
+            "UPDATE gate_passes SET is_printed = 1, print_count = print_count + 1, "
+            "printed_at = ? WHERE id = ?",
+            (_now(), gate_pass_id))
+    row = conn.execute("SELECT print_count FROM gate_passes WHERE id = ?",
+                       (gate_pass_id,)).fetchone()
+    return row["print_count"] if row else 0
 
 
 def cancel_gate_pass(conn, gate_pass_id, reason, cancelled_by=""):

@@ -723,6 +723,12 @@ table.list.drafts-table th:nth-child(2),
 table.list.drafts-table td:nth-child(2) { width: 13%; }
 table.list.drafts-table th:nth-child(6),
 table.list.drafts-table td:nth-child(6) { width: 7%; }
+/* Status holds the widest badge on the page and Open holds one short link, so
+   the room goes where the words are rather than being split evenly. */
+table.list.drafts-table th:nth-child(7),
+table.list.drafts-table td:nth-child(7) { width: 17%; }
+table.list.drafts-table th:nth-child(8),
+table.list.drafts-table td:nth-child(8) { width: 8%; }
 
 table.items-editor th, table.list th {
   text-align: left;
@@ -902,6 +908,43 @@ table.list .invoice-cell {
 }
 
 .actions-inner button.link-button:hover { color: var(--danger); border-color: var(--danger); }
+
+/* Whether a pass has reached paper, shown on the button that does it rather
+   than as a badge in the status column. The register is read by scanning down
+   it, and a badge on every row that has not been printed yet — which is every
+   new pass, for the first minute of its life — reads as a column of warnings
+   about nothing.
+
+   Solid means the paper does not exist yet. Quiet means it does, and the button
+   still works: a printed pass can always be printed again. */
+/* --brand with --card text, the same pair every other solid button in here
+   uses. Not --ink with a literal #fff: --ink is "primary TEXT", so in dark mode
+   it flips to near-white and the button became white-on-white — invisible, and
+   only visible as such by looking at it in dark mode. */
+.actions-inner a.print-action.not-printed {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--card);
+}
+.actions-inner a.print-action.not-printed:hover {
+  background: var(--brand-hover);
+  border-color: var(--brand-hover);
+  color: var(--card);
+}
+.actions-inner a.print-action.is-printed {
+  background: var(--line-soft);
+  border-color: var(--line);
+  /* --label, not --muted. Muted is slate 400, which on this fill is about
+     2:1 against the background — fine for a placeholder, too faint for a
+     control that still works. This still reads as the quiet one beside a
+     solid black button without becoming unreadable. */
+  color: var(--label);
+}
+.actions-inner a.print-action.is-printed:hover {
+  background: var(--head-bg);
+  border-color: var(--muted);
+  color: var(--ink-2);
+}
 table.list tr.cancelled td:not(.actions-cell) { color: var(--muted); }
 table.list tr.cancelled .serial-cell { text-decoration: line-through; }
 
@@ -1303,14 +1346,20 @@ table.list td {
   word-break: normal;
 }
 
+/* Adds to 100. Status is back to one badge — the print state moved onto the
+   Print button — so the width it was given for a second one goes back to the
+   columns holding names, which are the ones that wrap. */
 .reg-tick     { width: 4%;  text-align: center; }
 .reg-serial   { width: 10%; }
-.reg-issued   { width: 14%; }
-.reg-by       { width: 11%; }
+.reg-issued   { width: 12%; }
+.reg-by       { width: 10%; }
 .reg-from     { width: 12%; }
-.reg-customer { width: 15%; }
+.reg-customer { width: 14%; }
 .reg-invoice  { width: 11%; }
-.reg-status   { width: 9%;  }
+/* 12, not the 9 it had for years: "CANCELLED" plus the cell's padding needs
+   about 117px, and 9% of the table at a 1100px window is 92. It ran past the
+   column the whole time and nothing was looking at the right thing. */
+.reg-status   { width: 12%; }
 /* 11%, not 8%: "Print" + "Cancel" plus the cell padding measures about 130px,
    which is 10.6% of the table. At 8% they would overflow the cell — the very
    clipping this layout is meant to prevent. */

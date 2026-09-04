@@ -233,6 +233,27 @@ class TestItemTableKeyboard:
             "el => el === document.activeElement"), "Up keeps the column"
 
 
+# Two different ways a bit of a table can be too big for the space it is in,
+# and only one of them was being checked.
+#
+#   scrollWidth > clientWidth   the element clips its OWN content. A pill is
+#                               `white-space: nowrap` and has no overflow rule,
+#                               so it never does this — it just gets wider.
+#   right > cell.right          the element runs past the CELL it sits in. This
+#                               is what actually renders as a chopped-off word,
+#                               and it was invisible to the first check.
+OVERFLOWING_BITS = """() => {
+  const bad = [];
+  for (const bit of document.querySelectorAll('.pill, .actions-cell a')) {
+    const cell = bit.closest('td, th');
+    if (bit.scrollWidth > bit.clientWidth + 1) bad.push(bit.textContent.trim() + ' (clips itself)');
+    else if (cell && bit.getBoundingClientRect().right > cell.getBoundingClientRect().right + 1)
+      bad.push(bit.textContent.trim() + ' (past its cell)');
+  }
+  return bad;
+}"""
+
+
 class TestTableFits:
     def test_the_drafts_table_does_not_need_sideways_scrolling(self, page, base_url):
         """Every column of Drafts is visible without scrolling the table.
@@ -257,12 +278,27 @@ class TestTableFits:
             }""")
             assert over <= 1, f"Drafts overflows by {over}px at {width}px wide"
 
-            clipped = page.evaluate("""() => {
-              const bits = [...document.querySelectorAll('.pill, .actions-cell a')];
-              return bits.filter(b => b.scrollWidth > b.clientWidth + 1)
-                         .map(b => b.textContent.trim());
-            }""")
+            clipped = page.evaluate(OVERFLOWING_BITS)
             assert clipped == [], f"clipped at {width}px: {clipped}"
+
+    def test_the_register_status_column_holds_both_badges(self, page, base_url):
+        """A status cell now carries TWO badges — what the pass is, and whether
+        it has reached paper — and the column has to be wide enough for the
+        wider of them.
+
+        This exists because checking `scrollWidth > clientWidth` on the badge
+        itself said everything was fine while the second badge visibly ran past
+        the edge of its column and rendered as "UNPRINTEI". A `nowrap` pill does
+        not clip itself; it overflows its CELL. So the comparison that matters
+        is against the containing cell, which is what OVERFLOWING_BITS does.
+        """
+        for width in (1920, 1440, 1280, 1100):
+            page.set_viewport_size({"width": width, "height": 900})
+            page.goto(f"{base_url}/register")
+            page.wait_for_selector("table.list")
+            assert page.locator(".reg-status .pill").count() > 0, "no badges to check"
+            clipped = page.evaluate(OVERFLOWING_BITS)
+            assert clipped == [], f"badge past its cell at {width}px: {clipped}"
 
 
 class TestRunningTotals:
@@ -454,3 +490,53 @@ class TestPrintedPass:
         assert sheet.locator(".pass").count() == 2, "A4 should carry two copies"
         serials = sheet.locator(".serial").all_inner_texts()
         assert serials[0] == serials[1], "the two halves must be the same pass"
+
+
+CONTRAST = """(sel) => {
+  const lum = (c) => {
+    const [r, g, b] = c.match(/\\d+/g).map(Number).map((v) => {
+      v /= 255;
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const el = document.querySelector(sel);
+  if (!el) return null;
+  const s = getComputedStyle(el);
+  const a = lum(s.color), b = lum(s.backgroundColor);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}"""
+
+
+class TestPrintButtonState:
+    """The register shows what has reached paper on the Print button itself.
+
+    Solid while the paper is still owed, quiet once it exists. Both have to stay
+    legible, and both have to survive the theme flipping — which is the part
+    that broke: the first version painted the solid one with --ink, which is
+    "primary TEXT" and so goes near-white in dark mode. The button was
+    white-on-white and completely invisible, and nothing in light mode showed
+    it. That is why this test runs twice.
+    """
+
+    @pytest.mark.parametrize("scheme", ["light", "dark"])
+    def test_both_states_are_legible_in_either_theme(self, page, base_url, scheme):
+        page.emulate_media(color_scheme=scheme)
+        page.goto(f"{base_url}/register")
+        page.wait_for_selector("table.list")
+
+        owed = page.evaluate(CONTRAST, "a.print-action.not-printed")
+        if owed is None:
+            pytest.skip("no unprinted pass in the register to look at")
+        assert owed >= 4.5, f"the solid Print button is {owed:.2f}:1 in {scheme}"
+
+        done = page.evaluate(CONTRAST, "a.print-action.is-printed")
+        if done is not None:
+            assert done >= 4.5, f"the quiet Print button is {done:.2f}:1 in {scheme}"
+            # And they must not have converged into the same button.
+            same = page.evaluate("""() => {
+              const a = document.querySelector('a.print-action.not-printed');
+              const b = document.querySelector('a.print-action.is-printed');
+              return getComputedStyle(a).backgroundColor === getComputedStyle(b).backgroundColor;
+            }""")
+            assert not same, f"both states paint the same background in {scheme}"
