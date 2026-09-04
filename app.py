@@ -865,6 +865,45 @@ def register_routes(app):
         return jsonify(ok=True, filename=file.filename, draft_id=draft_id,
                         notes=notes, problem=problem)
 
+    @app.route("/gate-passes/<int:gate_pass_id>/edit", methods=["GET", "POST"])
+    @requires("can_edit_issued_pass")
+    def edit_gate_pass(gate_pass_id):
+        """Correct an issued pass.
+
+        The register is the record of goods that have already left, so this is
+        the heaviest thing a permission opens. What keeps it defensible is that
+        the pass stays the same pass: db.update_gate_pass leaves the serial,
+        the sequence, the preparer and the issue date alone, and writes every
+        change to the audit log with the old value beside the new one.
+        """
+        gate_pass = db.get_gate_pass(g.db, gate_pass_id)
+        if gate_pass is None:
+            abort(404)
+        if gate_pass["status"] != "issued":
+            flash(f"{gate_pass['serial_no']} is cancelled. A cancelled pass is a "
+                  "closed record and cannot be edited.", "error")
+            return redirect(url_for("register"))
+
+        if request.method == "GET":
+            return render_template("edit_pass.html", gate_pass=gate_pass, active="register")
+
+        items = _items_from_form(request.form)
+        try:
+            changes = db.update_gate_pass(
+                g.db, gate_pass_id, items=items,
+                edited_by=g.user["display_name"],
+                **{name: request.form.get(name, "") for name in db.EDITABLE_FIELDS})
+        except ValueError as exc:
+            flash(str(exc)[0].upper() + str(exc)[1:] + ".", "error")
+            return render_template("edit_pass.html", gate_pass=gate_pass, active="register")
+
+        if changes:
+            flash(f"Gate Pass {gate_pass['serial_no']} updated successfully. "
+                  f"{len(changes)} change(s) recorded in the audit log.", "ok")
+        else:
+            flash(f"Nothing was changed on {gate_pass['serial_no']}.", "warn")
+        return redirect(url_for("register"))
+
     @app.route("/gate-passes/<int:gate_pass_id>/cancel", methods=["POST"])
     @requires("can_cancel_passes")
     def cancel_gate_pass(gate_pass_id):

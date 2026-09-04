@@ -130,6 +130,29 @@ These are the reason the app exists. Do not "simplify" them away.
 8. **A number is never issued twice.** This is what makes restarting the count
    delicate — see below.
 
+## Correcting an issued pass
+
+`can_edit_issued_pass`, off by default, is the heaviest permission here:
+everything else changes what happens next, this changes what the register says
+already happened. `db.update_gate_pass` is what makes it defensible rather than
+reckless:
+
+* The serial, the sequence, the preparer and the **issue date** do not move.
+  The first three the database refuses outright
+  (`trg_gate_passes_no_serial_edit`); the fourth is when the goods left, which
+  is a fact about the world rather than a field, so nothing writes it.
+* Every changed field goes to the audit log with its **old value beside the
+  new one**. The value is gone from the row; what it used to be is not gone
+  from the book. An edit that changes nothing writes nothing.
+* A **cancelled** pass cannot be edited, from the route, the button or the
+  database helper. It is a closed record — correcting one would leave the paper
+  in somebody's drawer disagreeing with the register.
+* A pass cannot be emptied of its last item.
+
+The edit screen deliberately does not have a button labelled "Cancel".
+Everywhere else in this app cancelling means cancelling the gate pass, which is
+irreversible; the button that abandons an edit says **Discard changes**.
+
 ## Permissions
 
 Eight, stored as JSON on the user row. `db.PERMISSIONS` maps key to the short

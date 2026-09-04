@@ -688,8 +688,11 @@ table.items-editor, table.list {
 
 /* Below this the fixed column percentages stop working: the status column gets
    too narrow for its badge and clips it to "ISSU". .table-wrap already scrolls,
-   so a narrow window scrolls the table sideways rather than crushing it. */
-table.list { min-width: 920px; }
+   so a narrow window scrolls the table sideways rather than crushing it.
+   Raised from 920px when the register gained a third action button (Edit):
+   the percentages held, but at 920px the absolute space left for the actions
+   and the status badge beside them no longer did. */
+table.list { min-width: 1040px; }
 
 table.items-editor th, table.list th {
   text-align: left;
@@ -1245,14 +1248,14 @@ table.list td {
 .reg-serial   { width: 10%; }
 .reg-issued   { width: 14%; }
 .reg-by       { width: 11%; }
-.reg-from     { width: 14%; }
-.reg-customer { width: 16%; }
+.reg-from     { width: 12%; }
+.reg-customer { width: 15%; }
 .reg-invoice  { width: 11%; }
 .reg-status   { width: 9%;  }
 /* 11%, not 8%: "Print" + "Cancel" plus the cell padding measures about 130px,
    which is 10.6% of the table. At 8% they would overflow the cell — the very
    clipping this layout is meant to prevent. */
-.reg-actions  { width: 12%; }
+.reg-actions  { width: 15%; }
 
 /* Keep the two actions on one line, hard against the right edge.
    The flex row is the inner div: putting display:flex on the <td> itself takes

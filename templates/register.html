@@ -122,6 +122,12 @@
                  then cannot give the column its width — it collapsed to 24px. #}
               <div class="actions-inner">
                 <a href="{{ url_for('print_gate_pass', gate_pass_id=gp.id) }}">Print</a>
+                {# Only an issued pass can be corrected. A cancelled one is a
+                   closed record: rewriting it would leave the paper in the
+                   drawer disagreeing with the book. #}
+                {% if gp.status == 'issued' and can('can_edit_issued_pass') %}
+                  <a href="{{ url_for('edit_gate_pass', gate_pass_id=gp.id) }}">Edit</a>
+                {% endif %}
                 {% if gp.status == 'issued' and may_cancel %}
                   <form method="post" action="{{ url_for('cancel_gate_pass', gate_pass_id=gp.id) }}"
                         onsubmit="return promptCancel(this);">
