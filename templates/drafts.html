@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Drafts{% endblock %}
+{# The same wide container as the register: this is the same kind of
+   page, a table of records, and 960px was squeezing eight columns
+   into a width the register never had to. #}
+{% block container_class %}container-wide{% endblock %}
+
 {% block content %}
   <div class="page-head">
     <h1>Drafts</h1>

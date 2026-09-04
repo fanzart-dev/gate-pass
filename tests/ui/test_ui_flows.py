@@ -21,6 +21,8 @@ What is here is exactly the behaviour that lives in the page:
   * the running quantity and carton totals following every keystroke, added row
     and removed row — they exist only in the browser, so only a browser can
     check them;
+  * the Drafts table fitting its container at several widths, which depends on
+    font metrics and so cannot be checked from the markup;
   * a printed pass rendering with its serial, its items and both signatures,
     no rule drawn between the two copies, and a multi-line remark whose lines
     all start after the colon rather than sliding back under the label.
@@ -229,6 +231,38 @@ class TestItemTableKeyboard:
         page.keyboard.press("ArrowUp")
         assert rows.nth(0).locator("input[name=quantity]").evaluate(
             "el => el === document.activeElement"), "Up keeps the column"
+
+
+class TestTableFits:
+    def test_the_drafts_table_does_not_need_sideways_scrolling(self, page, base_url):
+        """Every column of Drafts is visible without scrolling the table.
+
+        It scrolled on the office machines and not here, which is the tell: the
+        invoice cell is `white-space: nowrap`, and a cell that cannot be made
+        narrower than its text pushes a fixed-layout table past its declared
+        width. Whether that overflows then depends on how wide the browser
+        renders the monospace face — Firefox wider than Chromium, so the same
+        page scrolled for them and not for me.
+
+        Checked at several widths because one is not evidence.
+        """
+        for width in (1440, 1280, 1100):
+            page.set_viewport_size({"width": width, "height": 900})
+            page.goto(f"{base_url}/drafts")
+            page.wait_for_selector("table.list")
+            over = page.evaluate("""() => {
+              const t = document.querySelector('table.list');
+              const wrap = document.querySelector('.table-wrap');
+              return t.scrollWidth - wrap.clientWidth;
+            }""")
+            assert over <= 1, f"Drafts overflows by {over}px at {width}px wide"
+
+            clipped = page.evaluate("""() => {
+              const bits = [...document.querySelectorAll('.pill, .actions-cell a')];
+              return bits.filter(b => b.scrollWidth > b.clientWidth + 1)
+                         .map(b => b.textContent.trim());
+            }""")
+            assert clipped == [], f"clipped at {width}px: {clipped}"
 
 
 class TestRunningTotals:

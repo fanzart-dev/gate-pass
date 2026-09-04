@@ -104,7 +104,8 @@ def main():
     for number, source in (("TO NO: FR 262702176", "TO 1.pdf"),
                             ("FR-262702176", "TO 2.pdf")):
         db.create_draft(conn, supplier_name="Golden Touch Exports",
-                        customer_name="FANZART LLP", invoice_no=number,
+                        customer_name="Golden Touch Exports, Indiranagar",
+                        invoice_no=number,
                         invoice_date="03-09-2026",
                         invoice_pdf_path=f"invoices/20260903120000_{source}",
                         items=[{"sl_no": 1, "item_name": name, "quantity": qty,
