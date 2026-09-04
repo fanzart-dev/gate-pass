@@ -5165,6 +5165,73 @@ def test_a_draft_can_be_removed_from_the_row_it_is_on(tmpdir):
     conn.close()
 
 
+def test_a_batch_is_numbered_in_document_order(tmpdir):
+    """Gate pass numbers follow the document numbers, not the upload order.
+
+    A batch used to take its order from however the drafts were listed, which
+    is the order somebody fed the scanner. Fifty invoices off a pile came out
+    of the register shuffled, and finding the pass for an invoice meant
+    searching for it rather than reading down the column.
+    """
+    # The key on its own first, because the sort is only as good as this.
+    check("letters at the front, digits at the end",
+          db.document_sort_key("FR 262702176") == ("FR", 0, 262702176))
+    check("spacing and punctuation do not change it",
+          db.document_sort_key("FR-262702176") == db.document_sort_key("FR 262702176"))
+    check("a transfer memo sorts with its own prefix, not under T",
+          db.document_sort_key("TO NO: FR 262702176")
+          == db.document_sort_key("FR 262702176"))
+    # The whole reason the numbers do not order themselves: as text, the longer
+    # number is the smaller one.
+    check("the digits compare as a number, not as text",
+          sorted(["FR 262702558", "FR 26270256"], key=db.document_sort_key)
+          == ["FR 26270256", "FR 262702558"])
+    check("a number with no digits goes last within its prefix",
+          db.document_sort_key("FR")[1] == 1 and db.document_sort_key("FR 1")[1] == 0)
+
+    flask_app, client = logged_in_app(tmpdir, "sortbatch")
+    conn = db.connect(flask_app.config["DB_PATH"])
+
+    # Deliberately created in the wrong order, and spanning three prefixes.
+    scrambled = ["SN 262700900", "FR 262702558", "BI 262700158",
+                 "FR 26270256", "SN 262700100", "FR 262702176"]
+    ids = [db.create_draft(conn, supplier_name="S", customer_name="C",
+                            invoice_no=number, invoice_date="01-01-2026",
+                            invoice_pdf_path=f"invoices/2026_{n}.pdf",
+                            items=sample_items())
+           for n, number in enumerate(scrambled)]
+
+    issued, skipped = db.create_gate_passes_batch(conn, ids, prepared_by="Ravi Kumar")
+    check("all of them were issued", len(issued) == 6 and not skipped)
+
+    order = [(p["serial_no"], p["invoice_no"]) for p in
+             sorted(issued, key=lambda p: p["serial_seq"])]
+    check("the numbers were handed out in document order",
+          [n for _, n in order] == ["BI 262700158", "FR 26270256", "FR 262702176",
+                                     "FR 262702558", "SN 262700100", "SN 262700900"])
+    check("and the serials are an unbroken block",
+          [s for s, _ in order] == [f"FZ-0000{i}" for i in range(1, 7)])
+
+    # Two drafts carrying one number sort to the same key, so something else has
+    # to decide — otherwise the same batch issued twice could number them the
+    # other way round.
+    twin_a = db.create_draft(conn, supplier_name="S", customer_name="C",
+                              invoice_no="RT 262700325", invoice_date="01-01-2026",
+                              invoice_pdf_path="invoices/a.pdf", items=sample_items())
+    twin_b = db.create_draft(conn, supplier_name="S", customer_name="C",
+                              invoice_no="RT-262700325", invoice_date="01-01-2026",
+                              invoice_pdf_path="invoices/b.pdf", items=sample_items())
+    check("a tied pair still has a defined order",
+          db.document_sort_key("RT 262700325") == db.document_sort_key("RT-262700325"))
+    issued, _ = db.create_gate_passes_batch(conn, [twin_b, twin_a],
+                                             prepared_by="Ravi Kumar")
+    first = min(issued, key=lambda p: p["serial_seq"])
+    check("and it is the older draft that goes first",
+          first["invoice_no"] == "RT 262700325")
+
+    conn.close()
+
+
 def test_every_test_is_actually_run():
     """Every test_* in this file must be called by main().
 
@@ -5215,6 +5282,7 @@ def main():
         test_duplicate_document_numbers_are_flagged_not_blocked(tmpdir)
         test_two_drafts_with_one_number_cannot_both_be_issued(tmpdir)
         test_a_draft_can_be_removed_from_the_row_it_is_on(tmpdir)
+        test_a_batch_is_numbered_in_document_order(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)
         test_the_printed_totals_are_bolder_than_the_rows(tmpdir)
