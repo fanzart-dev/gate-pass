@@ -1312,6 +1312,39 @@ def normalize_document_no(number):
     return re.sub(r"[^A-Z0-9]", "", text)
 
 
+def document_sort_key(number):
+    """How two document numbers order against each other.
+
+    Returns (prefix, has_number, number) — alphabetical by the letters at the
+    front, then ascending by the digits at the end.
+
+        BI 262700158   ->  ("BI", 0, 262700158)
+        FR-262702176   ->  ("FR", 0, 262702176)
+        TO NO: FR 262702176 -> ("FR", 0, 262702176)
+
+    Built on normalize_document_no, deliberately, rather than on its own
+    stripping. That is the same key duplicates are matched on, so two documents
+    this app already calls the same number cannot sort to opposite ends of the
+    batch — which is what would happen to a transfer memo written "TO NO: FR
+    262702176" if the lead-in were left on and it sorted under T.
+
+    The digits are compared AS AN INTEGER. As text, "262702558" sorts before
+    "26270256" because the comparison ends at the first differing character,
+    which is the whole reason the numbers do not come out in order by
+    themselves.
+
+    A number with no trailing digits sorts last within its prefix (has_number
+    is 1): there is nothing to put it in sequence by, so it goes at the end
+    rather than displacing numbers that can be ordered.
+    """
+    text = normalize_document_no(number)
+    match = re.match(r"^(.*?)(\d+)$", text)
+    if not match:
+        return (text, 1, 0)
+    prefix, digits = match.groups()
+    return (prefix, 0, int(digits))
+
+
 def duplicate_document_report(conn, drafts):
     """Which of these drafts share a document number, and how serious it is.
 
@@ -1464,6 +1497,21 @@ def create_gate_passes_batch(conn, draft_ids, prepared_by="", prepared_by_user_i
 
     if not ready:
         return [], skipped
+
+    # The order the numbers are handed out in, and the only place it is decided.
+    #
+    # Until now a batch took its order from however the drafts happened to be
+    # listed, which is upload order — so fifty invoices read off a pile came out
+    # of the register in the order somebody fed the scanner. Sorted by document
+    # number instead, a run of gate passes reads in the same order as the
+    # paperwork it was made from, and finding the pass for an invoice is a scan
+    # down the column rather than a search.
+    #
+    # The tie-break is the draft id. Two drafts CAN share a normalized number —
+    # that is exactly the duplicate case — and without a final key their order
+    # would come down to whatever sorted() was handed, so the same batch issued
+    # twice could number them opposite ways round.
+    ready.sort(key=lambda d: document_sort_key(d["invoice_no"]) + (d["id"],))
 
     scope = current_prefix(conn)
     issued_ids = []
