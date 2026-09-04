@@ -64,7 +64,10 @@
                      with, and the longer wording did not fit the column — it
                      ran past the cell and lost its last word. #}
                   <span class="pill rejected">&#9888; Duplicate</span>
-                  <div class="hint" style="margin-top:3px">Delete one of them to continue</div>
+                  {# Points at the ✕ on this row. It used to read "Delete one of
+                     them to continue" when the only way to do that was to open
+                     the draft and discard it from the next screen. #}
+                  <div class="hint" style="margin-top:3px">Remove one with &times;</div>
                 {% elif d.duplicate %}
                   {# Still ready. A number already issued does not stop a pass —
                      a split delivery or a reissue is a real thing — it just
@@ -74,8 +77,19 @@
                   <span class="pill approved">Ready</span>
                 {% endif %}
               </td>
-              <td class="actions-cell">
-                <a href="{{ url_for('review', draft_id=d.id) }}">Open</a>
+              <td class="actions-cell draft-actions">
+                <div class="actions-inner">
+                  <a href="{{ url_for('review', draft_id=d.id) }}">Open</a>
+                  {# The way out of a blocked pair, on the row itself. Before
+                     this the only way to clear a duplicate was to open the
+                     draft and discard it from in there — two screens away from
+                     the message telling you to do it. #}
+                  <button type="button" class="draft-delete"
+                          data-draft-id="{{ d.id }}"
+                          data-draft-label="{{ d.invoice_no or 'this draft' }}"
+                          title="Delete draft {{ d.invoice_no or '' }}"
+                          aria-label="Delete draft {{ d.invoice_no or '' }}">&times;</button>
+                </div>
               </td>
             </tr>
             {% endfor %}
@@ -96,8 +110,8 @@
         {% if blocked_count %}
           <span class="hint" style="color:var(--danger)">
             {{ blocked_count }} draft{{ 's' if blocked_count != 1 else '' }}
-            share a document number and cannot be issued. Open and discard the
-            one you do not want.
+            share a document number and cannot be issued. Use &times; on the row
+            to remove the one you do not want.
           </span>
         {% endif %}
         <button type="button" hidden>
@@ -131,6 +145,58 @@
         if (!confirm(message)) e.preventDefault();
       });
     }
+
+    // Removing a draft from the row it is on. Delegated rather than an inline
+    // onclick per row: the click has to work on rows the page did not render
+    // itself, and a handler written once cannot drift between rows.
+    function toast(message, kind) {
+      let tray = document.querySelector(".toast-tray");
+      if (!tray) {
+        tray = document.createElement("div");
+        tray.className = "toast-tray";
+        document.body.appendChild(tray);
+      }
+      const note = document.createElement("div");
+      note.className = "toast" + (kind ? " " + kind : "");
+      note.setAttribute("role", "status");
+      note.textContent = message;
+      tray.appendChild(note);
+      setTimeout(() => note.remove(), 4000);
+    }
+
+    document.addEventListener("click", async (e) => {
+      const button = e.target.closest(".draft-delete");
+      if (!button) return;
+      e.preventDefault();
+
+      // A draft is a parsed invoice nobody has spent a number on, so this is
+      // cheap to undo by uploading again — but it is still somebody's file
+      // disappearing, and the button is two pixels from Open.
+      const label = button.dataset.draftLabel || "this draft";
+      if (!confirm(`Delete the draft for ${label}?\n\n` +
+                   `No gate pass number has been used, so nothing in the ` +
+                   `register changes. The uploaded file is discarded.`)) return;
+
+      button.disabled = true;
+      const row = button.closest("tr");
+      try {
+        const response = await fetch(
+          `/drafts/${encodeURIComponent(button.dataset.draftId)}/delete`,
+          {method: "POST", headers: {"X-Requested-With": "fetch"}});
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const result = await response.json();
+        toast(result.message || "Draft removed", "ok");
+        row.remove();
+        // Reload rather than unpick the highlights here. Whether the rows that
+        // are left still block each other is a rule about spending numbers, and
+        // the server has just recomputed it — re-deriving it in the page is how
+        // the two answers start to disagree.
+        setTimeout(() => window.location.reload(), 350);
+      } catch (err) {
+        button.disabled = false;
+        toast("Could not remove that draft — nothing was changed.", "bad");
+      }
+    });
 
     const selectAll = document.getElementById("select-all");
     if (selectAll) {

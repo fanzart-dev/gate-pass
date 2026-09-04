@@ -1258,7 +1258,7 @@ def test_two_drafts_with_one_number_cannot_both_be_issued(tmpdir):
     # The badge reads "Duplicate" and the line under it carries the rest; the
     # longer wording did not fit the column.
     check("a blocked draft is marked as such", "&#9888; Duplicate<" in page)
-    check("and says how to clear it", "Delete one of them" in page)
+    check("and says how to clear it", "Remove one with" in page)
     # No tick for a draft that cannot go — but that is presentation, not a rule.
     check("only the clean draft can be selected",
           page.count('class="draft-tick"') == 1)
@@ -5087,6 +5087,84 @@ def test_the_deployment_config_holds_together():
           (ROOT / "deploy" / "preflight.sh").exists())
 
 
+def test_a_draft_can_be_removed_from_the_row_it_is_on(tmpdir):
+    """The ✕ on the Drafts list, and what it does to the rest of the batch.
+
+    A blocked pair used to be a dead end on this screen: the message said to
+    delete one of them and the only way to do it was to open a draft and
+    discard it from the next screen. The ✕ does it from the row, and the
+    blocking has to lift on its own afterwards — a warning that stays up after
+    the thing it warns about is gone teaches people to ignore warnings.
+    """
+    flask_app, client = logged_in_app(tmpdir, "rowdelete")
+    conn = db.connect(flask_app.config["DB_PATH"])
+
+    def draft(number, source):
+        return db.create_draft(conn, supplier_name="S", customer_name="C",
+                                invoice_no=number, invoice_date="01-01-2026",
+                                invoice_pdf_path=f"invoices/20260101120000_{source}",
+                                items=sample_items())
+
+    twin_a, twin_b = draft("RT 262700325", "5.pdf"), draft("RT-262700325", "9.pdf")
+    clean = draft("FR 262702181", "3.pdf")
+
+    page = client.get("/drafts").get_data(as_text=True)
+    # data-draft-id, not the class name: the class also appears in the script
+    # that binds the handler, so counting it says four for three rows.
+    check("every row carries a delete button", page.count("data-draft-id") == 3)
+    check("and it knows which draft it is on", f'data-draft-id="{twin_a}"' in page)
+    check("the pair blocks to begin with", len(db.blocking_duplicates(
+        conn, [twin_a, twin_b, clean])) == 2)
+
+    # The page's own fetch. Says so, so the route answers in JSON rather than
+    # sending it somewhere.
+    resp = client.post(f"/drafts/{twin_a}/delete",
+                       headers={"Origin": "http://localhost",
+                                "X-Requested-With": "fetch"})
+    check("the delete answers in JSON", resp.status_code == 200)
+    body = resp.get_json()
+    check("and says it worked", body["ok"] is True)
+    check("and carries the words for the toast", body["message"] == "Draft removed")
+    check("the draft is gone", db.get_draft(conn, twin_a) is None)
+    check("its items went with it",
+          conn.execute("SELECT COUNT(*) FROM draft_items WHERE draft_id = ?",
+                       (twin_a,)).fetchone()[0] == 0)
+
+    # The whole point: the survivor is no longer blocked BY THE SERVER, not by
+    # the page deciding it looks fine now.
+    check("nothing is blocked any more", body["blocked"] == [])
+    check("and it counts what is left", body["remaining"] == 2)
+    check("and how many can go", body["ready"] == 2)
+    check("the rule agrees", db.blocking_duplicates(conn, [twin_b, clean]) == {})
+
+    page = client.get("/drafts").get_data(as_text=True)
+    check("the surviving row is no longer marked blocked",
+          "&#9888; Duplicate<" not in page)
+    check("and the batch is issuable again", "cannot be issued" not in page)
+
+    # The review screen's Discard button is an ordinary form post and still has
+    # to be sent somewhere. Returning it JSON would leave it on a blank page.
+    resp = client.post(f"/drafts/{twin_b}/delete",
+                       headers={"Origin": "http://localhost"})
+    check("a plain form post still redirects", resp.status_code == 302)
+    check("and to the drafts list", "/drafts" in resp.headers["Location"])
+
+    # Two people clearing the same pair at once. The row is gone either way,
+    # which is what was asked for.
+    resp = client.post(f"/drafts/{twin_b}/delete",
+                       headers={"Origin": "http://localhost",
+                                "X-Requested-With": "fetch"})
+    check("deleting an already-deleted draft is not an error",
+          resp.status_code == 200 and resp.get_json()["already_gone"] is True)
+    check("but a form post for a missing draft still 404s",
+          client.post(f"/drafts/{twin_b}/delete",
+                      headers={"Origin": "http://localhost"}).status_code == 404)
+
+    check("no gate pass number was spent by any of it",
+          len(db.list_gate_passes(conn)) == 0)
+    conn.close()
+
+
 def test_every_test_is_actually_run():
     """Every test_* in this file must be called by main().
 
@@ -5136,6 +5214,7 @@ def main():
         test_remarks_print_on_more_than_one_line(tmpdir)
         test_duplicate_document_numbers_are_flagged_not_blocked(tmpdir)
         test_two_drafts_with_one_number_cannot_both_be_issued(tmpdir)
+        test_a_draft_can_be_removed_from_the_row_it_is_on(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)
         test_the_printed_totals_are_bolder_than_the_rows(tmpdir)
