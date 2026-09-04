@@ -5232,6 +5232,68 @@ def test_a_batch_is_numbered_in_document_order(tmpdir):
     conn.close()
 
 
+def test_the_drafts_list_previews_the_numbering_order(tmpdir):
+    """What the Drafts screen shows is the order the numbers will be given out.
+
+    These are two separate pieces of code — one lists rows for a page, the
+    other allocates serial numbers — and if they order drafts differently then
+    the screen is quietly lying about which draft becomes which gate pass. So
+    the test is not "the list is sorted", it is "the list and the batch agree",
+    compared item for item.
+    """
+    flask_app, client = logged_in_app(tmpdir, "previeworder")
+    conn = db.connect(flask_app.config["DB_PATH"])
+
+    scrambled = ["SN 262700900", "FR 262702558", "BI 262700158", "FR 26270256",
+                 "TO NO: FR 262702176", "MU 262700307", "FR 262702176"]
+    for n, number in enumerate(scrambled):
+        db.create_draft(conn, supplier_name="S", customer_name="C",
+                         invoice_no=number, invoice_date="01-01-2026",
+                         invoice_pdf_path=f"invoices/2026_{n}.pdf",
+                         items=sample_items())
+
+    listed = db.list_drafts(conn)
+    check("the list is in document order",
+          [d["invoice_no"] for d in listed]
+          # The transfer memo and the invoice normalize to one number, so the
+          # tie-break decides — and it is the older draft, which is the memo.
+          == ["BI 262700158", "FR 26270256", "TO NO: FR 262702176",
+              "FR 262702176", "FR 262702558", "MU 262700307",
+              "SN 262700900"])
+
+    # The page renders them in that order too, not just the function.
+    page = client.get("/drafts").get_data(as_text=True)
+    # data-draft-id, not the checkbox: a blocked duplicate has no checkbox, and
+    # this batch deliberately contains one.
+    positions = [page.index(f'data-draft-id="{d["id"]}"') for d in listed]
+    check("and the page renders them in that order",
+          positions == sorted(positions))
+
+    # The claim being made: issuing them hands out numbers in the SAME order.
+    issued, skipped = db.create_gate_passes_batch(
+        conn, [d["id"] for d in listed], prepared_by="Ravi Kumar")
+    check("all of them were issued", len(issued) == len(scrambled) and not skipped)
+    check("the numbering follows the list exactly",
+          [p["invoice_no"] for p in sorted(issued, key=lambda p: p["serial_seq"])]
+          == [d["invoice_no"] for d in listed])
+
+    # And it still agrees when the ids are handed over shuffled, which is what
+    # a form post of ticked checkboxes actually is.
+    for number in ("RT 262700325", "RT-262700325", "BI 262700001"):
+        db.create_draft(conn, supplier_name="S", customer_name="C",
+                         invoice_no=number, invoice_date="01-01-2026",
+                         invoice_pdf_path=f"invoices/{number}.pdf",
+                         items=sample_items())
+    listed = db.list_drafts(conn)
+    issued, _ = db.create_gate_passes_batch(
+        conn, list(reversed([d["id"] for d in listed])), prepared_by="Ravi Kumar")
+    check("order comes from the documents, not from how they were submitted",
+          [p["invoice_no"] for p in sorted(issued, key=lambda p: p["serial_seq"])]
+          == [d["invoice_no"] for d in listed])
+
+    conn.close()
+
+
 def test_every_test_is_actually_run():
     """Every test_* in this file must be called by main().
 
@@ -5283,6 +5345,7 @@ def main():
         test_two_drafts_with_one_number_cannot_both_be_issued(tmpdir)
         test_a_draft_can_be_removed_from_the_row_it_is_on(tmpdir)
         test_a_batch_is_numbered_in_document_order(tmpdir)
+        test_the_drafts_list_previews_the_numbering_order(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)
         test_the_printed_totals_are_bolder_than_the_rows(tmpdir)
