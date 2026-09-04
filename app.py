@@ -561,11 +561,18 @@ def register_routes(app):
         # cannot do is spot it unaided across fifty uploaded files.
         duplicates = db.duplicate_document_report(g.db, rows)
         for draft in rows:
-            draft["duplicate"] = duplicates.get(draft["id"])
+            entry = duplicates.get(draft["id"])
+            draft["duplicate"] = entry["message"] if entry else None
+            # Two drafts in hand carrying one number cannot both be issued: the
+            # register would show a consignment leaving twice and nothing could
+            # tell the two passes apart. Held back like any other problem until
+            # one of them is removed.
+            draft["duplicate_blocks"] = bool(entry and entry["blocking"])
+        ready = [d for d in rows if not d["problem"] and not d["duplicate_blocks"]]
         return render_template("drafts.html", drafts=rows, active="drafts",
-                                ready_count=sum(1 for d in rows if not d["problem"]),
-                                duplicate_count=sum(
-                                    1 for d in rows if d["duplicate"] and not d["problem"]),
+                                ready_count=len(ready),
+                                blocked_count=sum(1 for d in rows if d["duplicate_blocks"]),
+                                duplicate_count=sum(1 for d in ready if d["duplicate"]),
                                 next_serial=db.next_serial_preview(g.db))
 
     def _back_to_drafts(draft_ids):
@@ -645,6 +652,17 @@ def register_routes(app):
         draft_ids = [int(i) for i in request.form.getlist("draft_id") if i.isdigit()]
         if not draft_ids:
             flash("Select at least one invoice to issue.", "error")
+            return redirect(_back_to_drafts(draft_ids))
+
+        # Enforced here, not only by withholding the checkbox: the form can be
+        # posted regardless of what the page chose to render.
+        blocked = db.blocking_duplicates(g.db, draft_ids)
+        if blocked:
+            how_many = len(blocked)
+            flash(f"Not issued. {how_many} of the selected drafts "
+                  f"{'share a document number with another' if how_many > 1 else 'shares its document number with another'} "
+                  f"draft in the list — {next(iter(blocked.values()))} "
+                  "Nothing was numbered.", "error")
             return redirect(_back_to_drafts(draft_ids))
 
         # Noted before the transaction, because the drafts are deleted by it.

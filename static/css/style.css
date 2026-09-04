@@ -704,10 +704,22 @@ table.items-editor, table.list {
 /* Below this the fixed column percentages stop working: the status column gets
    too narrow for its badge and clips it to "ISSU". .table-wrap already scrolls,
    so a narrow window scrolls the table sideways rather than crushing it.
-   Raised from 920px when the register gained a third action button (Edit):
-   the percentages held, but at 920px the absolute space left for the actions
-   and the status badge beside them no longer did. */
-table.list { min-width: 1040px; }
+   Scoped to the REGISTER, which is the wide one — eight columns and three
+   action buttons. Applied to every .list it also forced the Drafts table past
+   its container for no reason, and the extra width came out of the column
+   holding the duplicate explanation, which wrapped to seven lines. */
+table.list.register-table { min-width: 1040px; }
+table.list.drafts-table { min-width: 820px; }
+
+/* The Invoice No column on Drafts carries the duplicate explanation under the
+   number, so it gets the room rather than the equal share a fixed layout would
+   otherwise give it. */
+table.list.drafts-table th:nth-child(5),
+table.list.drafts-table td:nth-child(5) { width: 24%; }
+table.list.drafts-table th:nth-child(2),
+table.list.drafts-table td:nth-child(2) { width: 13%; }
+table.list.drafts-table th:nth-child(6),
+table.list.drafts-table td:nth-child(6) { width: 7%; }
 
 table.items-editor th, table.list th {
   text-align: left;

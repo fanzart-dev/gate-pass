@@ -1304,12 +1304,24 @@ def normalize_document_no(number):
 
 
 def duplicate_document_report(conn, drafts):
-    """Which of these drafts share a document number, and with what.
+    """Which of these drafts share a document number, and how serious it is.
 
-    Returns {draft_id: message}. Three places a number can already exist, and
-    the message says which, because the answer to each is different:
-    another file in the same batch, a draft already waiting, or a gate pass
-    that has already been issued.
+    Returns {draft_id: {"message": str, "blocking": bool}}. The two kinds are
+    not the same problem and must not be treated the same:
+
+      BLOCKING — two of the drafts in hand carry the same number. Issuing both
+        spends two gate pass numbers on one consignment, and nothing later can
+        tell them apart. There is no reading of this that is correct, so it is
+        refused until one of them is removed.
+
+      WARNING — the number is on a pass that has already been issued. That
+        happens legitimately: a split delivery against one invoice, or a
+        reissue after a correction. The person at the desk knows which it is,
+        so they are told and allowed to proceed.
+
+    Only ISSUED passes count for the warning. A cancelled pass is a struck-out
+    record — its number is spent but its document is not, and reissuing against
+    it is the normal way to correct a pass that was cancelled for being wrong.
     """
     report = {}
     seen = {}
@@ -1331,26 +1343,49 @@ def duplicate_document_report(conn, drafts):
         if not key:
             continue
 
-        issued = already_issued.get(key)
-        if issued:
-            report[draft["id"]] = (
-                f"{draft['invoice_no']} has already been issued as {issued}.")
-            continue
-
         if key in seen:
             first = seen[key]
-            report[draft["id"]] = (
-                f"{draft['invoice_no']} is also on draft #{first['id']}"
-                + (f" ({first['source']})" if first["source"] else "") + ".")
-            # The first one is a duplicate too — it just did not know yet.
-            report.setdefault(first["id"], (
-                f"{first['invoice_no']} is also on draft #{draft['id']}"
-                + (f" ({_source_name(draft)})" if _source_name(draft) else "") + "."))
+            here, there = _source_name(draft), first["source"]
+            # Short enough to live in a table cell under the number. The long
+            # form belongs in the message shown when a batch is refused, where
+            # there is room to read it — the same sentence in a 90px column
+            # wrapped to ten lines and stopped being read at all.
+            where = (f"'{there}' and '{here}'" if here and there
+                     else "another file in this batch")
+            message = f"Same document number as {where} — remove one."
+            report[draft["id"]] = {"message": message, "blocking": True}
+            # The first one is a duplicate too — it just did not know yet, and
+            # blocking only the second would leave the operator deleting the
+            # wrong one.
+            report[first["id"]] = {"message": message, "blocking": True}
+            continue
+
+        issued = already_issued.get(key)
+        if issued:
+            report[draft["id"]] = {
+                "message": f"Already issued as {issued}.",
+                "blocking": False}
+            # Still recorded as seen: a THIRD file with the same number is a
+            # batch duplicate of this one, which is the blocking kind.
+            seen[key] = {"id": draft["id"], "invoice_no": draft["invoice_no"],
+                         "source": _source_name(draft)}
             continue
 
         seen[key] = {"id": draft["id"], "invoice_no": draft["invoice_no"],
                      "source": _source_name(draft)}
     return report
+
+
+def blocking_duplicates(conn, draft_ids):
+    """The subset of these drafts that cannot be issued as a batch.
+
+    Enforced on the server as well as hidden in the UI. A checkbox that is not
+    rendered is not a rule — the form can still be posted.
+    """
+    drafts = [d for d in (get_draft(conn, i) for i in draft_ids) if d is not None]
+    report = duplicate_document_report(conn, drafts)
+    return {draft_id: entry["message"]
+            for draft_id, entry in report.items() if entry["blocking"]}
 
 
 def _source_name(draft):

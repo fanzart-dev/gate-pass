@@ -16,7 +16,7 @@
   {% else %}
     <form method="post" action="{{ url_for('issue_drafts') }}">
       <div class="table-wrap">
-        <table class="list">
+        <table class="list drafts-table">
           <thead>
             <tr>
               <th class="tick-cell"><input type="checkbox" id="select-all" title="Select all ready"></th>
@@ -26,9 +26,11 @@
           </thead>
           <tbody>
             {% for d in drafts %}
-            <tr class="{{ 'needs-attention' if d.problem else '' }}{{ ' is-duplicate' if d.duplicate and not d.problem else '' }}">
+            <tr class="{{ 'needs-attention' if d.problem or d.duplicate_blocks else '' }}{{ ' is-duplicate' if d.duplicate and not d.problem else '' }}">
               <td class="tick-cell">
-                {% if not d.problem %}
+                {# No tick for a draft that cannot go: unreadable, or sharing
+                   its number with another draft in the list. #}
+                {% if not d.problem and not d.duplicate_blocks %}
                   <input type="checkbox" name="draft_id" value="{{ d.id }}" class="draft-tick" checked>
                 {% endif %}
               </td>
@@ -48,10 +50,16 @@
                 {% if d.problem %}
                   <span class="pill pending">Needs attention</span>
                   <div class="hint" style="margin-top:3px">{{ d.problem }}</div>
+                {% elif d.duplicate_blocks %}
+                  {# Cannot go. Two drafts here carry one number, and issuing
+                     both would spend two numbers on one consignment. #}
+                  <span class="pill rejected">&#9888; Duplicate in batch</span>
+                  <div class="hint" style="margin-top:3px">Delete one of them to continue</div>
                 {% elif d.duplicate %}
-                  {# Still ready. A duplicate number does not stop a pass being
-                     issued — it just should not be issued without a look. #}
-                  <span class="pill pending">&#9888; Duplicate</span>
+                  {# Still ready. A number already issued does not stop a pass —
+                     a split delivery or a reissue is a real thing — it just
+                     should not go without a look. #}
+                  <span class="pill pending">&#9888; Already issued</span>
                 {% else %}
                   <span class="pill approved">Ready</span>
                 {% endif %}
@@ -74,6 +82,15 @@
                 {% if not ready_count %}disabled{% endif %}
                 {% if duplicate_count %}data-duplicates="{{ duplicate_count }}"{% endif %}>
           {% if duplicate_count %}Proceed &amp; Generate{% else %}Issue Selected{% endif %}
+        </button>
+        {% if blocked_count %}
+          <span class="hint" style="color:var(--danger)">
+            {{ blocked_count }} draft{{ 's' if blocked_count != 1 else '' }}
+            share a document number and cannot be issued. Open and discard the
+            one you do not want.
+          </span>
+        {% endif %}
+        <button type="button" hidden>
         </button>
         <span class="hint">
           {{ ready_count }} of {{ drafts|length }} ready.
