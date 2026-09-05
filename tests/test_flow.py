@@ -5547,6 +5547,148 @@ def test_a_gate_pass_can_be_typed_without_an_invoice(tmpdir):
     conn.close()
 
 
+def test_the_carton_master_can_be_managed_from_the_browser(tmpdir):
+    """Adding, correcting and removing packaging rules without touching a file.
+
+    The list decides what every future gate pass claims about how many boxes
+    left the building. Before this the only way to change it was to edit a
+    spreadsheet and re-run an import on the server, which meant a wrong carton
+    count stayed wrong until somebody with a shell was free.
+    """
+    flask_app, client = logged_in_app(tmpdir, "cartonui")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    db.upsert_carton_mappings(conn, [("CRYSTAL - FANDELIER", 2),
+                                      ("MICRON MODREN OAK", 1)])
+
+    page = client.get("/settings/fans").get_data(as_text=True)
+    check("the page lists what is loaded", "CRYSTAL - FANDELIER" in page)
+    check("and says how many cartons", ">2<" in page)
+
+    # Adding.
+    resp = client.post("/settings/fans", headers={"Origin": "http://localhost"},
+                       data={"item_name": "VENETIAN BLACK - FANDELIER", "cartons": "2"})
+    body = resp.get_json()
+    check("a fan can be added", resp.status_code == 200 and body["ok"])
+    check("with the toast the operator sees",
+          body["message"] == "Fan master updated successfully!")
+    check("and it is immediately live for lookups",
+          db.carton_count_for(conn, "venetian black - fandelier") == 2)
+
+    # The same name twice is refused, however it is spaced or dashed — the
+    # normalized key is what the lookup matches on, so two rows for one fan
+    # would make which count you get depend on row order.
+    resp = client.post("/settings/fans", headers={"Origin": "http://localhost"},
+                       data={"item_name": "venetian black-fandelier", "cartons": "3"})
+    check("a duplicate under different spacing is refused", resp.status_code == 400)
+    check("and it names the row already there",
+          "VENETIAN BLACK - FANDELIER" in resp.get_json()["error"])
+
+    for cartons, why in (("0", "zero"), ("-2", "negative"), ("abc", "not a number"),
+                          ("500", "absurdly large")):
+        resp = client.post("/settings/fans", headers={"Origin": "http://localhost"},
+                           data={"item_name": f"THING {cartons}", "cartons": cartons})
+        check(f"{why} cartons is refused", resp.status_code == 400)
+    resp = client.post("/settings/fans", headers={"Origin": "http://localhost"},
+                       data={"item_name": "   ", "cartons": "1"})
+    check("a blank name is refused", resp.status_code == 400)
+
+    # Correcting.
+    row = [r for r in db.list_carton_mappings(conn, "MICRON")][0]
+    resp = client.post(f"/settings/fans/{row['id']}",
+                       headers={"Origin": "http://localhost"},
+                       data={"item_name": "MICRON MODERN OAK", "cartons": "2"})
+    check("a row can be corrected", resp.get_json()["ok"])
+    check("the new value is what lookups get",
+          db.carton_count_for(conn, "MICRON MODERN OAK") == 2)
+    check("and the old spelling no longer matches",
+          db.carton_count_for(conn, "MICRON MODREN OAK") is None)
+    audit = conn.execute("SELECT details FROM audit_log WHERE action = 'carton_master' "
+                          "ORDER BY id DESC LIMIT 1").fetchone()["details"]
+    check("the change is in the audit log with the old value beside the new",
+          "MICRON MODREN OAK = 1" in audit and "MICRON MODERN OAK = 2" in audit)
+
+    # Removing.
+    before = db.carton_mapping_count(conn)
+    resp = client.post(f"/settings/fans/{row['id']}/delete",
+                       headers={"Origin": "http://localhost"})
+    check("a row can be removed", resp.get_json()["ok"])
+    check("and it is gone", db.carton_mapping_count(conn) == before - 1)
+    check("removing it again is not an error",
+          client.post(f"/settings/fans/{row['id']}/delete",
+                      headers={"Origin": "http://localhost"}).status_code == 200)
+
+    # The thing anyone sensible asks before touching a master list.
+    gp = db.create_gate_pass(conn, None, "S", "C", "I", "01-01-2026", "",
+                              [{"item_name": "CRYSTAL - FANDELIER", "quantity": "3",
+                                "cartons": "6"}], prepared_by="Ravi Kumar")
+    crystal = [r for r in db.list_carton_mappings(conn, "CRYSTAL")][0]
+    client.post(f"/settings/fans/{crystal['id']}", headers={"Origin": "http://localhost"},
+                data={"item_name": "CRYSTAL - FANDELIER", "cartons": "9"})
+    check("an issued pass keeps the cartons it was issued with",
+          db.get_gate_pass(conn, gp["id"])["items"][0]["cartons"] == "6")
+
+    conn.close()
+
+
+def test_the_carton_master_is_admin_only(tmpdir):
+    """It is behind can_access_settings, and not by hiding the link."""
+    flask_app, client = logged_in_app(tmpdir, "cartonperm")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    db.create_user(conn, "packer", "Packer", "a-long-enough-password",
+                    status=db.APPROVED, permissions=dict(db.NO_PERMISSIONS))
+
+    other = flask_app.test_client()
+    other.post("/login", data={"username": "packer", "password": "a-long-enough-password"},
+               headers={"Origin": "http://localhost"})
+
+    check("the page is refused", other.get("/settings/fans").status_code in (302, 403))
+    before = db.carton_mapping_count(conn)
+    for url in ("/settings/fans", "/settings/fans/1", "/settings/fans/1/delete"):
+        resp = other.post(url, headers={"Origin": "http://localhost"},
+                          data={"item_name": "SNEAKY", "cartons": "1"})
+        check(f"POST {url} is refused", resp.status_code in (302, 403))
+    check("and nothing was written", db.carton_mapping_count(conn) == before)
+
+    # The lookup itself is NOT admin-only: anyone issuing a pass has to be able
+    # to ask what a fan packs into, which is the whole point of the list.
+    check("but the lookup is open to anyone signed in",
+          other.get("/api/carton-lookup?q=anything").status_code == 200)
+    conn.close()
+
+
+def test_the_carton_lookup_answers_what_the_item_box_needs(tmpdir):
+    """One endpoint, two answers: names to suggest, and the line's cartons."""
+    flask_app, client = logged_in_app(tmpdir, "cartonapi")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    db.upsert_carton_mappings(conn, [("VENETIAN BLACK - FANDELIER", 2),
+                                      ("VENETIAN WHITE - FANDELIER", 2),
+                                      ("AEROSLIM 1200MM WHITE", 1)])
+
+    data = client.get("/api/carton-lookup?q=venetian").get_json()
+    check("it suggests matching names", len(data["suggestions"]) == 2)
+
+    data = client.get("/api/carton-lookup?q=VENETIAN BLACK - FANDELIER&quantity=3").get_json()
+    check("per unit comes back", data["per_unit"] == 2)
+    check("and the LINE is per unit times quantity", data["cartons"] == 6)
+
+    data = client.get("/api/carton-lookup?q=AEROSLIM 1200MM WHITE&quantity=4").get_json()
+    check("a one-carton model is just the quantity", data["cartons"] == 4)
+
+    data = client.get("/api/carton-lookup?q=NOT ON THE LIST&quantity=5").get_json()
+    check("an unknown item gets no number", data["cartons"] is None)
+
+    # A spare travels inside somebody else's box.
+    data = client.get("/api/carton-lookup?q=SPARE BLADE SET&quantity=2").get_json()
+    check("a spare is flagged and gets no number",
+          data["non_stock"] and data["cartons"] is None)
+
+    # Without a readable quantity there is no arithmetic to do.
+    data = client.get("/api/carton-lookup?q=VENETIAN BLACK - FANDELIER&quantity=").get_json()
+    check("no quantity means no carton number yet", data["cartons"] is None)
+    check("though the per-unit figure is still known", data["per_unit"] == 2)
+    conn.close()
+
+
 def markup_only(page):
     """The page with its <script> blocks stripped out.
 
@@ -5613,6 +5755,9 @@ def main():
         test_issuing_never_alters_a_pass_that_already_exists(tmpdir)
         test_every_timestamp_is_indian_standard_time(tmpdir)
         test_a_gate_pass_can_be_typed_without_an_invoice(tmpdir)
+        test_the_carton_master_can_be_managed_from_the_browser(tmpdir)
+        test_the_carton_master_is_admin_only(tmpdir)
+        test_the_carton_lookup_answers_what_the_item_box_needs(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)
         test_the_printed_totals_are_bolder_than_the_rows(tmpdir)

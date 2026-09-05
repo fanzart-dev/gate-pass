@@ -1000,6 +1000,78 @@ table.list tbody tr.removing {
   table.list tbody tr.removing { transition: none; }
 }
 
+/* Where a row's carton number came from. Small and quiet — it is an
+   explanation, not a field. */
+.items-editor .carton-note {
+  font-size: 11.5px;
+  margin-top: 3px;
+  min-height: 14px;
+}
+
+/* ------------------------------------------------- fan & carton master */
+table.list.fans-table th:nth-child(1),
+table.list.fans-table td:nth-child(1) { width: 46%; }
+table.list.fans-table th:nth-child(2),
+table.list.fans-table td:nth-child(2) { width: 16%; }
+table.list.fans-table th:nth-child(3),
+table.list.fans-table td:nth-child(3) { width: 22%; }
+table.list.fans-table th:nth-child(4),
+table.list.fans-table td:nth-child(4) { width: 16%; }
+.col-centre { text-align: center; }
+table.list.fans-table td.fan-cartons { font-weight: 700; }
+table.list.fans-table td input {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 13.5px;
+}
+
+.add-panel { margin-bottom: 16px; }
+.add-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.add-row .field { flex: 1; min-width: 220px; margin: 0; }
+.add-row .field-narrow { flex: 0 0 150px; min-width: 150px; }
+
+.actions-inner button.row-edit,
+.actions-inner button.row-save,
+.actions-inner button.row-cancel {
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.actions-inner button.row-save {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--card);
+}
+.actions-inner button.row-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px; height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.actions-inner button.row-delete:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 /* ------------------------------------------------------------------ toasts */
 /* Confirmation for something that happened without leaving the page. The flash
    strip at the top of the layout only appears on a navigation, and the ✕

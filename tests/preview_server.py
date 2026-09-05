@@ -41,6 +41,16 @@ def main():
     # Totals on, so the preview shows the block that sits between the item
     # table and the signatures. Off by default in a real install.
     db.update_settings(conn, show_total_qty="1", show_total_cartons="1")
+    # A few master rows, so the manual screen's carton lookup has something to
+    # find. The two-carton entries are the ones that matter: they are what
+    # proves the number comes from the master list times the quantity, rather
+    # than from the quantity alone.
+    db.upsert_carton_mappings(conn, [
+        ("VENETIAN BLACK - FANDELIER", 2),
+        ("CRYSTAL - FANDELIER", 2),
+        ("AEROSLIM 1200MM WHITE", 1),
+        ("MICRON MODREN OAK", 1),
+    ])
     db.create_user(conn, "demo", "Dinesh D", "demo-preview-only")          # admin
     db.create_user(conn, "staff", "Asha Nair", "demo-preview-only",         # no extras
                     status=db.APPROVED)
