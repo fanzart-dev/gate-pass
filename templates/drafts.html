@@ -107,17 +107,18 @@
                 {% if duplicate_count %}data-duplicates="{{ duplicate_count }}"{% endif %}>
           {% if duplicate_count %}Proceed &amp; Generate{% else %}Issue Selected{% endif %}
         </button>
-        {% if blocked_count %}
-          <span class="hint" style="color:var(--danger)">
+        {# Both of these are rewritten in place when a draft is deleted, so they
+           carry ids rather than being found by their text. #}
+        <span class="hint blocked-note" id="blocked-note"
+              style="color:var(--danger)" {% if not blocked_count %}hidden{% endif %}>
+          <span id="blocked-count-text">
             {{ blocked_count }} draft{{ 's' if blocked_count != 1 else '' }}
-            share a document number and cannot be issued. Use &times; on the row
-            to remove the one you do not want.
+            share a document number and cannot be issued.
           </span>
-        {% endif %}
-        <button type="button" hidden>
-        </button>
+          Use &times; on the row to remove the one you do not want.
+        </span>
         <span class="hint">
-          {{ ready_count }} of {{ drafts|length }} ready.
+          <span id="ready-count-text">{{ ready_count }} of {{ drafts|length }} ready.</span>
           They are numbered in one unbroken block; if any one of them fails, none are
           issued and no numbers are used.
         </span>
@@ -164,6 +165,71 @@
       setTimeout(() => note.remove(), 4000);
     }
 
+    // Redraws the counts, the blocked banner and the Issue button.
+    //
+    // Called twice per delete, on purpose. First with null, straight after the
+    // row disappears, when all the page can honestly say is "one fewer row" —
+    // it counts what is on screen. Then again with the server's reply, which
+    // knows the thing the page cannot work out for itself: whether the drafts
+    // that are LEFT still block each other. A pair sharing one number stops
+    // blocking the moment its twin goes, and only the server decides that.
+    function applyCounts(result) {
+      const rows = [...document.querySelectorAll("tbody tr")]
+        .filter((r) => !r.classList.contains("removing"));
+
+      if (result && Array.isArray(result.blocked)) {
+        const blocked = new Set(result.blocked.map(String));
+        rows.forEach((row) => {
+          const id = row.querySelector(".draft-delete")?.dataset.draftId;
+          if (!id || blocked.has(id)) return;
+          // No longer half of a pair. The row keeps any "already issued"
+          // warning it carries — that is a different thing and still true.
+          const status = row.querySelector("td:nth-child(7)");
+          if (row.querySelector(".pill.rejected") && status) {
+            row.classList.remove("needs-attention");
+            status.innerHTML =
+              '<span class="pill approved">Ready</span>';
+            const tick = row.querySelector("td:first-child");
+            if (tick && !tick.querySelector("input")) {
+              tick.innerHTML =
+                `<input type="checkbox" name="draft_id" value="${id}" class="draft-tick" checked>`;
+            }
+          }
+        });
+      }
+
+      const total = rows.length;
+      const blockedRows = rows.filter((r) => r.querySelector(".pill.rejected")).length;
+      const problemRows = rows.filter((r) => r.querySelector(".pill.pending")
+                                          && !r.querySelector(".pill.rejected")
+                                          && !r.querySelector(".draft-tick")).length;
+      const ready = result && typeof result.ready === "number"
+                  ? result.ready : total - blockedRows - problemRows;
+
+      const readyText = document.getElementById("ready-count-text");
+      if (readyText) readyText.textContent = `${ready} of ${total} ready.`;
+
+      const note = document.getElementById("blocked-note");
+      const noteText = document.getElementById("blocked-count-text");
+      if (note && noteText) {
+        note.hidden = blockedRows === 0;
+        noteText.textContent =
+          `${blockedRows} draft${blockedRows === 1 ? "" : "s"} share a ` +
+          `document number and cannot be issued.`;
+      }
+
+      const issue = document.getElementById("issue-selected");
+      if (issue) {
+        issue.disabled = ready === 0;
+        const withDuplicates = rows.some(
+          (r) => r.classList.contains("is-duplicate") && r.querySelector(".draft-tick:checked"));
+        issue.textContent = withDuplicates ? "Proceed & Generate" : "Issue Selected";
+      }
+
+      // Nothing left at all: the table and the buttons are meaningless now.
+      if (total === 0) window.location.reload();
+    }
+
     document.addEventListener("click", async (e) => {
       const button = e.target.closest(".draft-delete");
       if (!button) return;
@@ -177,8 +243,22 @@
                    `No gate pass number has been used, so nothing in the ` +
                    `register changes. The uploaded file is discarded.`)) return;
 
-      button.disabled = true;
+      // Optimistic: the row goes now, and the request goes in the background.
+      // The wait was previously a fade, a round trip AND a full page reload
+      // before anything moved, which on a slow link read as a dead button and
+      // got clicked twice.
+      //
+      // Remembered precisely enough to undo: WHERE the row was, not just that
+      // it existed, so a failed delete puts it back in its own place instead of
+      // at the bottom of a sorted table.
       const row = button.closest("tr");
+      const parent = row.parentNode;
+      const nextSibling = row.nextSibling;
+
+      row.classList.add("removing");
+      setTimeout(() => row.remove(), 150);
+      applyCounts(null);
+
       try {
         const response = await fetch(
           `/drafts/${encodeURIComponent(button.dataset.draftId)}/delete`,
@@ -186,15 +266,17 @@
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const result = await response.json();
         toast(result.message || "Draft removed", "ok");
-        row.remove();
-        // Reload rather than unpick the highlights here. Whether the rows that
-        // are left still block each other is a rule about spending numbers, and
-        // the server has just recomputed it — re-deriving it in the page is how
-        // the two answers start to disagree.
-        setTimeout(() => window.location.reload(), 350);
+        // Now correct the page with the SERVER's answer. Whether the rows that
+        // are left still block each other is a rule about spending numbers, so
+        // it is not re-derived here — it is read out of the response, which is
+        // the same recomputation the next page load would do.
+        applyCounts(result);
       } catch (err) {
-        button.disabled = false;
-        toast("Could not remove that draft — nothing was changed.", "bad");
+        // Put it back exactly where it was, and say so.
+        parent.insertBefore(row, nextSibling);
+        row.classList.remove("removing");
+        applyCounts(null);
+        toast("Failed to delete draft. Please try again.", "bad");
       }
     });
 

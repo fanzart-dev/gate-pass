@@ -26,6 +26,9 @@
     </a>
     <nav>
       <a href="{{ url_for('upload') }}" {% if active == 'upload' %}class="active"{% endif %}>New Gate Pass</a>
+      {# For a consignment with no PDF behind it. Everyone who can issue a pass
+         can type one, so this follows no permission of its own. #}
+      <a href="{{ url_for('manual_gate_pass') }}" {% if active == 'manual' %}class="active"{% endif %}>Manual</a>
       {# Drafts is optional. Without the permission an upload goes straight to a
          printed pass, so there is no draft list to show. #}
       {% if can('can_review_drafts') %}

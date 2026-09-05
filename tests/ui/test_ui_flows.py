@@ -597,3 +597,143 @@ class TestDeleteDraftFromTheRow:
 
         assert page.locator(".toast").count() == 0, "toasted a delete that was declined"
         assert page.locator("tbody tr").count() == before, "removed a row anyway"
+
+
+class TestManualGatePass:
+    def test_cartons_follow_the_quantity_until_they_are_overridden(self, page, base_url):
+        """Typing a quantity fills the carton box, and stops once you edit it.
+
+        One fan in one carton is the common case, so typing the same number
+        twice on every line is a chore people skip. The half that matters is
+        the stopping: without it, correcting a row to "4 fans, 1 carton" and
+        then fixing a typo in the quantity would silently throw the correction
+        away, and the pass would go out claiming four cartons.
+        """
+        page.goto(f"{base_url}/manual")
+        page.wait_for_selector("#items-table")
+        row = page.locator("#items-table tbody tr").first
+
+        row.locator('input[name="quantity"]').fill("4")
+        assert row.locator('input[name="cartons"]').input_value() == "4", \
+            "cartons did not follow the quantity"
+
+        # The override.
+        row.locator('input[name="cartons"]').fill("1")
+        row.locator('input[name="quantity"]').fill("6")
+        assert row.locator('input[name="cartons"]').input_value() == "1", \
+            "a typed carton count was overwritten by a later quantity"
+
+        # A second row is its own decision, unaffected by the first.
+        page.click("#add-row")
+        second = page.locator("#items-table tbody tr").nth(1)
+        second.locator('input[name="quantity"]').fill("3")
+        assert second.locator('input[name="cartons"]').input_value() == "3"
+
+        assert page.locator("#total-qty-display").inner_text() == "9"
+        assert page.locator("#total-cartons-display").inner_text() == "4"
+
+    def test_rows_can_be_added_and_removed(self, page, base_url):
+        page.goto(f"{base_url}/manual")
+        page.wait_for_selector("#items-table")
+        rows = page.locator("#items-table tbody tr")
+
+        page.click("#add-row")
+        page.click("#add-row")
+        assert rows.count() == 3
+        rows.nth(2).locator(".remove-row").click()
+        assert rows.count() == 2
+
+        # The last row empties rather than vanishing: a pass with no rows is
+        # not a pass, and the server refuses it anyway.
+        rows.nth(1).locator(".remove-row").click()
+        rows.nth(0).locator('input[name="item_name"]').fill("Ceiling Fan")
+        rows.nth(0).locator(".remove-row").click()
+        assert rows.count() == 1
+        assert rows.nth(0).locator('input[name="item_name"]').input_value() == ""
+
+    def test_the_serial_numbers_appear_in_order_on_the_printed_pass(self, page, base_url):
+        """Typing a whole pass and issuing it lands on the printed page."""
+        page.goto(f"{base_url}/manual")
+        page.wait_for_selector("#items-table")
+        page.fill("#supplier_name", "FANZART LLP")
+        page.fill("#customer_name", "MBS DECOR LLP")
+        page.fill("#invoice_no", "LP 262700338")
+        row = page.locator("#items-table tbody tr").first
+        row.locator('input[name="item_name"]').fill("Ceiling Fan")
+        row.locator('input[name="quantity"]').fill("4")
+
+        page.click("button[type=submit].primary")
+        page.wait_for_url(re.compile(r"/print/\d+"), timeout=15000)
+        body = page.locator("body").inner_text()
+        assert "MBS DECOR LLP" in body
+        assert "Ceiling Fan" in body
+
+
+class TestOptimisticDraftDelete:
+    def _two_drafts(self, page, base_url):
+        page.goto(f"{base_url}/upload")
+        page.set_input_files("#invoice", [_fake_pdf("opt-a.pdf"), _fake_pdf("opt-b.pdf")])
+        page.wait_for_selector("#file-panel:visible")
+        page.click("#submit-btn")
+        page.wait_for_url(re.compile(r"/(review|drafts)"), timeout=30000)
+        page.goto(f"{base_url}/drafts")
+        page.wait_for_selector("table.list")
+
+    def test_the_row_goes_immediately_without_waiting_for_the_server(self, page, base_url):
+        """The row leaves on the click, not on the response.
+
+        Asserted by holding the response back: the request is delayed by two
+        seconds and the row still has to be gone well inside that. Without the
+        delay this test would pass on a fast local server no matter how the
+        code was written, which would make it worthless.
+        """
+        self._two_drafts(page, base_url)
+        rows = page.locator("tbody tr")
+        before = rows.count()
+        if before < 2:
+            pytest.skip("need at least two drafts")
+
+        # The request is swallowed and NEVER answered, so anything that waits
+        # on the response waits for ever. The row still has to go.
+        in_flight = []
+        page.route("**/delete", lambda route: in_flight.append(route))
+        page.on("dialog", lambda d: d.accept())
+        try:
+            page.locator(".draft-delete").first.click()
+            page.wait_for_timeout(500)
+
+            visible = page.locator("tbody tr:not(.removing)").count()
+            assert visible == before - 1, (
+                f"the row was still shown with the request unanswered "
+                f"({visible} of {before}) — the delete is waiting on the server")
+            # And the count under the table moved with it, rather than still
+            # claiming a draft that is no longer on screen.
+            counts = page.locator("#ready-count-text").inner_text()
+            assert f"of {before - 1} ready" in counts, (
+                f"the count still reflects {before} drafts: {counts!r}")
+        finally:
+            for route in in_flight:
+                route.abort()
+            page.unroute_all(behavior="ignoreErrors")
+
+    def test_a_failed_delete_puts_the_row_back(self, page, base_url):
+        """A delete that fails must not look like one that worked."""
+        self._two_drafts(page, base_url)
+        rows = page.locator("tbody tr")
+        before = rows.count()
+        if before < 2:
+            pytest.skip("need at least two drafts")
+
+        first_id = page.locator(".draft-delete").first.get_attribute("data-draft-id")
+        page.route("**/delete", lambda route: route.fulfill(
+            status=500, content_type="application/json", body='{"ok": false}'))
+        page.on("dialog", lambda d: d.accept())
+        page.locator(".draft-delete").first.click()
+
+        toast = page.locator(".toast.bad")
+        toast.wait_for(state="visible", timeout=5000)
+        assert "Failed to delete draft" in toast.inner_text()
+        assert page.locator("tbody tr:not(.removing)").count() == before, \
+            "the row was not restored after the delete failed"
+        # And back in its own place, not appended at the bottom.
+        assert page.locator(".draft-delete").first.get_attribute("data-draft-id") == first_id
