@@ -34,7 +34,7 @@
           <tr>
             <td><strong>{{ u.display_name }}</strong></td>
             <td class="mono-cell">{{ u.username }}</td>
-            <td class="muted-cell">{{ u.created_at }}</td>
+            <td class="muted-cell">{{ u.created_at|ist }}</td>
             <td class="actions-cell">
               {{ status_form(u, 'approved', 'Approve', 'primary') }}
               {{ status_form(u, 'rejected', 'Turn down', 'danger') }}

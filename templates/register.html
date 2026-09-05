@@ -110,7 +110,7 @@
               </td>
             {% endif %}
             <td class="serial-cell reg-serial">{{ gp.serial_no }}</td>
-            <td class="muted-cell reg-issued">{{ gp.issued_at }}</td>
+            <td class="muted-cell reg-issued">{{ gp.issued_at|ist }}</td>
             <td class="reg-by">{{ gp.prepared_by or '—' }}</td>
             <td class="reg-from">{{ gp.supplier_name }}</td>
             <td class="reg-customer">{{ gp.customer_name }}</td>
@@ -148,7 +148,7 @@
                 <a class="{{ print_state }}"
                    href="{{ url_for('print_gate_pass', gate_pass_id=gp.id) }}"
                    {% if gp.status != 'issued' %}title="Reprint this cancelled pass"
-                   {% elif gp.is_printed %}title="Printed {{ gp.printed_at }}{% if gp.print_count > 1 %} — {{ gp.print_count }} times{% endif %}"
+                   {% elif gp.is_printed %}title="Printed {{ gp.printed_at|ist }}{% if gp.print_count > 1 %} — {{ gp.print_count }} times{% endif %}"
                    {% else %}title="Not printed yet"{% endif %}>Print</a>
                 {# Only an issued pass can be corrected. A cancelled one is a
                    closed record: rewriting it would leave the paper in the

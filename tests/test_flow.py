@@ -15,7 +15,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -5369,6 +5369,92 @@ def test_issuing_never_alters_a_pass_that_already_exists(tmpdir):
     conn.close()
 
 
+def test_every_timestamp_is_indian_standard_time(tmpdir):
+    """The book runs on the office clock, whatever the machine is set to.
+
+    This has bitten once already: SQLite's datetime('now') is UTC, so passes
+    were filed 5.5 hours early — one issued at 02:37 on the 5th was recorded as
+    21:07 on the 4th, and a report for "today" missed everything after 18:30.
+    It was fixed by using local time, which was right only because the server
+    happens to be set to IST. A reinstall, a container (they default to UTC) or
+    a restore onto another machine would have reopened it silently.
+    """
+    import os
+    import subprocess
+
+    # The one that matters: the same code, on a machine set to UTC.
+    probe = ("import sys; sys.path.insert(0, %r); import db; print(db._now())"
+             % str(ROOT))
+    def now_under(tz):
+        env = dict(os.environ, TZ=tz)
+        return subprocess.run([sys.executable, "-c", probe], capture_output=True,
+                              text=True, env=env).stdout.strip()
+
+    in_ist = now_under("Asia/Kolkata")
+    in_utc = now_under("UTC")
+    in_ny = now_under("America/New_York")
+    check("a machine set to UTC still records IST", in_utc[:16] == in_ist[:16])
+    check("and so does one set to New York", in_ny[:16] == in_ist[:16])
+    # And it is genuinely IST rather than UTC that happens to be labelled so:
+    # the two are 5.5 hours apart, which is the gap that caused the original
+    # bug. Compared as a duration with a minute of slack for the clock ticking
+    # between the two readings.
+    gap = (datetime.strptime(in_utc, "%Y-%m-%d %H:%M:%S")
+           - datetime.now(timezone.utc).replace(tzinfo=None))
+    check("and it is 5.5 hours ahead of UTC, not UTC relabelled",
+          timedelta(hours=5, minutes=29) < gap < timedelta(hours=5, minutes=31))
+
+    offset = db.IST.utcoffset(datetime(2026, 9, 5))
+    check("the offset is +05:30", offset == timedelta(hours=5, minutes=30))
+    check("and does not move for daylight saving",
+          db.IST.utcoffset(datetime(2026, 1, 5)) == offset)
+
+    flask_app, client = logged_in_app(tmpdir, "isttime")
+    conn = db.connect(flask_app.config["DB_PATH"])
+
+    expected = datetime.now(db.IST).strftime("%Y-%m-%d")
+    gp = db.create_gate_pass(conn, None, "S", "C", "I", "01-01-2026", "",
+                              sample_items(), prepared_by="Ravi Kumar")
+    check("issued_at is today by the office clock",
+          gp["issued_at"].startswith(expected))
+    check("and is stored without an offset on it",
+          "+" not in gp["issued_at"] and "Z" not in gp["issued_at"])
+
+    draft_id = db.create_draft(conn, supplier_name="S", customer_name="C",
+                                invoice_no="FR 1", invoice_date="01-01-2026",
+                                invoice_pdf_path="invoices/x.pdf",
+                                items=sample_items())
+    check("a draft's created_at too",
+          db.get_draft(conn, draft_id)["created_at"].startswith(expected))
+
+    db.mark_printed(conn, gp["id"])
+    check("and printed_at",
+          db.get_gate_pass(conn, gp["id"])["printed_at"].startswith(expected))
+
+    # audit_log used to take the column DEFAULT, which is fixed when the table
+    # is created and therefore cannot be corrected in a database already in
+    # service. Every row is written explicitly now.
+    row = conn.execute("SELECT created_at FROM audit_log WHERE gate_pass_id = ? "
+                       "ORDER BY id LIMIT 1", (gp["id"],)).fetchone()
+    check("an audit row is stamped explicitly, not by the column default",
+          row["created_at"].startswith(expected))
+
+    # THE ONE THAT WOULD BE SILENT. A stored timestamp is already local, so a
+    # display filter that "converts it to Asia/Kolkata" would add 5.5 hours to
+    # every date in the register — 18:00 would print as 23:30 and a pass issued
+    # after 18:30 would jump a day.
+    with flask_app.test_request_context():
+        shown = flask_app.jinja_env.filters["ist"]("2026-09-05 18:00:00")
+    check("displaying a timestamp does not shift it", shown == "2026-09-05 18:00:00")
+    check("and the displayed format is the stored one",
+          re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", shown))
+
+    page = client.get("/register").get_data(as_text=True)
+    check("the register shows it unshifted", gp["issued_at"] in page)
+
+    conn.close()
+
+
 def test_every_test_is_actually_run():
     """Every test_* in this file must be called by main().
 
@@ -5422,6 +5508,7 @@ def main():
         test_a_batch_is_numbered_in_document_order(tmpdir)
         test_the_drafts_list_previews_the_numbering_order(tmpdir)
         test_issuing_never_alters_a_pass_that_already_exists(tmpdir)
+        test_every_timestamp_is_indian_standard_time(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)
         test_the_printed_totals_are_bolder_than_the_rows(tmpdir)

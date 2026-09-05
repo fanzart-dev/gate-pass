@@ -39,7 +39,7 @@
                   <input type="checkbox" name="draft_id" value="{{ d.id }}" class="draft-tick" checked>
                 {% endif %}
               </td>
-              <td class="muted-cell">{{ d.created_at }}</td>
+              <td class="muted-cell">{{ d.created_at|ist }}</td>
               <td>{{ d.supplier_name or '—' }}</td>
               <td>{{ d.customer_name or '—' }}</td>
               <td class="invoice-cell">

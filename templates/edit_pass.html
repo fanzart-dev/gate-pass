@@ -9,7 +9,7 @@
   <div class="notice">
     <span class="notice-icon">⚠</span>
     <span>
-      This pass was issued on {{ gate_pass.issued_at }} by
+      This pass was issued on {{ gate_pass.issued_at|ist }} by
       <strong>{{ gate_pass.prepared_by }}</strong> and may already be printed and
       signed. Its number, its issue date and its preparer do not change, and
       every correction is written to the audit log with the old value beside the
@@ -28,7 +28,7 @@
       </div>
       <div class="field">
         <label>Issued</label>
-        <p class="read-field" title="When the goods left">{{ gate_pass.issued_at }}</p>
+        <p class="read-field" title="When the goods left">{{ gate_pass.issued_at|ist }}</p>
       </div>
       <div class="field">
         <label>Prepared by</label>
