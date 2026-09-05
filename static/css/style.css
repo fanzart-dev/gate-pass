@@ -341,6 +341,18 @@ input[type="password"]:focus {
 
 .page-head { margin-bottom: 20px; }
 
+/* A heading with an action opposite it. Wraps rather than squeezing: on a
+   narrow window the button drops under the heading and keeps its size instead
+   of becoming a sliver of text at the edge of the screen. */
+.page-head-split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.page-head-split h1 { margin-bottom: 0; }
+
 h1 {
   font-size: 24px;
   font-weight: 650;
@@ -631,9 +643,14 @@ button.link-button:hover { background: none; color: var(--danger); text-decorati
 
 .dropzone {
   display: block;
-  border: 2px dashed #cbd5e1;
+  /* Tokens, not the literal #cbd5e1 and #fafafa these carried. A hardcoded
+     light panel does not flip with the theme, so in dark mode the title —
+     which is var(--ink), and so goes near-white — sat on it at 1.05:1 and was
+     invisible. The main control of the whole app, unreadable, and nothing in
+     light mode showed it. */
+  border: 2px dashed var(--line);
   border-radius: var(--radius);
-  background: #fafafa;
+  background: var(--head-bg);
   padding: 46px 24px;
   text-align: center;
   cursor: pointer;
@@ -676,7 +693,9 @@ button.link-button:hover { background: none; color: var(--danger); text-decorati
   color: var(--ink);
 }
 
-.dropzone-sub { margin-top: 4px; font-size: 13px; color: var(--muted); }
+/* --label rather than --muted: muted sits at about 3.3:1 on the panel now
+   that the panel follows the theme, which is too faint to read. */
+.dropzone-sub { margin-top: 4px; font-size: 13px; color: var(--label); }
 
 .dropzone-file {
   margin-top: 14px;
