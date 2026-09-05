@@ -10,12 +10,21 @@
 -- serial_scope immutable and gate_passes/audit_log append-only, independent
 -- of anything the app code does.
 
--- Timestamps are stored in LOCAL time, not UTC. SQLite's datetime('now')
--- returns UTC, which put every issued_at 5.5 hours behind the office clock in
--- India — a pass issued at 02:37 on the 5th was filed as 21:07 on the 4th, and
--- an audit report for "today" missed everything issued after 18:30. The
--- 'localtime' modifier is what keeps the book agreeing with the wall clock and
--- with the dates the reports page filters on.
+-- Timestamps are stored as Indian Standard Time wall clock, not UTC. SQLite's
+-- datetime('now') returns UTC, which put every issued_at 5.5 hours behind the
+-- office clock — a pass issued at 02:37 on the 5th was filed as 21:07 on the
+-- 4th, and an audit report for "today" missed everything issued after 18:30.
+--
+-- '+5 hours','+30 minutes' rather than the 'localtime' modifier these used to
+-- carry: localtime means whatever the MACHINE is set to, which is the office
+-- server today and is not guaranteed to be tomorrow — a reinstall, a container
+-- (they default to UTC) or a restore onto another box would silently reopen
+-- the same 5.5 hour bug. India has no daylight saving and has been +05:30
+-- since 1945, so the arithmetic is exact rather than an approximation.
+--
+-- These are a backstop. Every INSERT the application makes now passes db._now()
+-- explicitly, which matters because a column default is fixed when the table is
+-- CREATEd — changing it here does nothing to the databases already in service.
 PRAGMA foreign_keys = ON;
 
 -- Gate passes are issued by several people at the office. Everyone draws from
@@ -39,7 +48,7 @@ CREATE TABLE IF NOT EXISTS users (
     is_admin INTEGER NOT NULL DEFAULT 0,
     -- Per-feature permissions as a JSON object; see db.PERMISSIONS.
     permissions TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
     decided_at TEXT,
     decided_by TEXT
 );
@@ -58,7 +67,7 @@ CREATE TABLE IF NOT EXISTS drafts (
     remarks TEXT NOT NULL DEFAULT '',
     invoice_pdf_path TEXT,
     parse_notes TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
 
 CREATE TABLE IF NOT EXISTS draft_items (
@@ -104,7 +113,7 @@ CREATE TABLE IF NOT EXISTS gate_passes (
     -- printed pass still names them if the account is later renamed or removed.
     prepared_by TEXT NOT NULL DEFAULT '',
     prepared_by_user_id INTEGER REFERENCES users(id),
-    issued_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    issued_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
     cancelled_at TEXT,
     cancel_reason TEXT,
     cancelled_by TEXT
@@ -160,7 +169,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     gate_pass_id INTEGER REFERENCES gate_passes(id),
     action TEXT NOT NULL,
     details TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_pass ON audit_log(gate_pass_id);

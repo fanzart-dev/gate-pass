@@ -142,7 +142,7 @@
           {% for gp in preview %}
           <tr class="{{ 'cancelled' if gp.status == 'cancelled' else '' }}">
             <td class="serial-cell">{{ gp.serial_no }}</td>
-            <td class="muted-cell">{{ gp.issued_at }}</td>
+            <td class="muted-cell">{{ gp.issued_at|ist }}</td>
             <td>{{ gp.prepared_by or '—' }}</td>
             <td>{{ gp.supplier_name }}</td>
             <td>{{ gp.customer_name }}</td>

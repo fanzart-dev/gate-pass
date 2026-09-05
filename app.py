@@ -149,6 +149,34 @@ def create_app(db_path=None, storage_dir=None):
         lines = str(text or "").splitlines()
         return Markup("<br>".join(escape(line) for line in lines))
 
+    @app.template_filter("ist")
+    def ist(value):
+        """A stored timestamp, shown the one way the whole app shows them.
+
+        'YYYY-MM-DD HH:MM:SS', which is what is stored, so on a well-formed
+        value this is a no-op that exists to make every screen agree and to
+        give one place to change the format.
+
+        It does NOT shift the clock, and that is the point of it being a
+        filter. Stored timestamps are already Indian Standard Time with no
+        offset written on them (db._now). Reading one as UTC and "converting it
+        to Asia/Kolkata" would add five and a half hours to every date in the
+        register — an 18:00 dispatch would print as 23:30, and a pass issued
+        after 18:30 would move to the next day. The conversion belongs at the
+        point the timestamp is made, which is where it now is.
+
+        Anything unparseable is handed back untouched rather than blanked: a
+        row with an odd timestamp should still show what it holds.
+        """
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        try:
+            moment = datetime.strptime(text[:19], db.TIMESTAMP_FORMAT)
+        except ValueError:
+            return text
+        return moment.strftime(db.TIMESTAMP_FORMAT)
+
     @app.template_filter("as_day_month_year")
     def as_day_month_year(value):
         """'2026-08-07 12:34:56' -> '07-08-2026'.

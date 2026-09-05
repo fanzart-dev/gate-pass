@@ -5,7 +5,7 @@ import re
 import sqlite3
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -643,21 +643,46 @@ def start_new_run(conn, prefix, start_at=None, started_by=""):
         update_settings(conn, serial_prefix=prefix)
         update_settings(conn, serial_min_seq=str(start_at))
         conn.execute(
-            "INSERT INTO audit_log (action, details) VALUES ('new_serial_run', ?)",
+            "INSERT INTO audit_log (action, details, created_at) "
+            "VALUES ('new_serial_run', ?, ?)",
             (f"numbering set to {serial_for(prefix, start_at)} (was {previous}) "
-             f"by {started_by or 'unknown'}",),
+             f"by {started_by or 'unknown'}", _now()),
         )
     return prefix, start_at
 
 
-def _now():
-    """Local wall-clock time, the single source of every timestamp in the book.
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-    Not UTC: the register, the date filters and the audit reports are all read
-    against the office clock, and SQLite's own datetime('now') is UTC, which is
-    what put issued_at 5.5 hours behind in India.
+# The office clock, named rather than assumed.
+#
+# datetime.now() with no argument reads whatever the machine is set to, which
+# is how issued_at ended up 5.5 hours out once already. It has been right since
+# only because the server happens to be set to IST — an assumption that holds
+# until someone reinstalls it, runs it in a container (which default to UTC),
+# or restores a backup somewhere else. None of those should be able to change
+# what time the book says a consignment left.
+#
+# The fallback is a fixed +05:30 for a system with no tz database: India has no
+# daylight saving and has been +05:30 since 1945, so the offset is not a guess.
+try:
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+except Exception:                                    # pragma: no cover
+    IST = timezone(timedelta(hours=5, minutes=30), "IST")
+
+
+def _now():
+    """The office wall clock, the single source of every timestamp in the book.
+
+    Returned as 'YYYY-MM-DD HH:MM:SS' with no offset on it, which is what every
+    existing row already holds — the register, the date filters and the audit
+    reports are all read against the office clock, so that is what is stored.
+
+    Because the stored form carries no offset, nothing downstream may treat it
+    as UTC and "convert" it: that would move every timestamp in the book
+    forward by five and a half hours. It is already local.
     """
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(IST).strftime(TIMESTAMP_FORMAT)
 
 
 # ---------------------------------------------------------------------------
@@ -723,10 +748,11 @@ def set_user_permissions(conn, user_id, permissions, decided_by=""):
             (json.dumps(wanted), 1 if wanted["can_manage_people"] else 0, user_id),
         )
         conn.execute(
-            "INSERT INTO audit_log (action, details) VALUES ('permissions', ?)",
+            "INSERT INTO audit_log (action, details, created_at) "
+            "VALUES ('permissions', ?, ?)",
             (f"{user['username']}: "
              + ", ".join(k for k, v in wanted.items() if v) or f"{user['username']}: none"
-             + f" (set by {decided_by or 'unknown'})",),
+             + f" (set by {decided_by or 'unknown'})", _now()),
         )
     return wanted
 
@@ -1591,9 +1617,10 @@ def _insert_gate_pass(conn, prefix, seq, supplier_name, customer_name, invoice_n
              str(item.get("cartons", "") or "")),
         )
     conn.execute(
-        "INSERT INTO audit_log (gate_pass_id, action, details) VALUES (?, ?, ?)",
+        "INSERT INTO audit_log (gate_pass_id, action, details, created_at) "
+        "VALUES (?, ?, ?, ?)",
         (gate_pass_id, "issue",
-         f"issued as {serial_no} by {prepared_by or 'unknown'} from {source}"),
+         f"issued as {serial_no} by {prepared_by or 'unknown'} from {source}", _now()),
     )
     return gate_pass_id
 
@@ -1925,8 +1952,9 @@ def cancel_gate_pass(conn, gate_pass_id, reason, cancelled_by=""):
             (_now(), reason, cancelled_by, gate_pass_id),
         )
         conn.execute(
-            "INSERT INTO audit_log (gate_pass_id, action, details) VALUES (?, 'cancel', ?)",
-            (gate_pass_id, f"{reason or ''} (by {cancelled_by or 'unknown'})"),
+            "INSERT INTO audit_log (gate_pass_id, action, details, created_at) "
+            "VALUES (?, 'cancel', ?, ?)",
+            (gate_pass_id, f"{reason or ''} (by {cancelled_by or 'unknown'})", _now()),
         )
 
 
