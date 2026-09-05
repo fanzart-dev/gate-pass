@@ -26,7 +26,7 @@ import db  # noqa: E402
 import app as appmod  # noqa: E402
 import app as app_module  # noqa: E402
 import invoice_parser  # noqa: E402
-from app import create_app  # noqa: E402
+from app import _as_stored_date, create_app  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
 import make_invoice_pdf  # noqa: E402
@@ -1262,7 +1262,7 @@ def test_two_drafts_with_one_number_cannot_both_be_issued(tmpdir):
     check("and says how to clear it", "Remove one with" in page)
     # No tick for a draft that cannot go — but that is presentation, not a rule.
     check("only the clean draft can be selected",
-          page.count('class="draft-tick"') == 1)
+          markup_only(page).count('class="draft-tick"') == 1)
 
     # The rule is on the server. A checkbox that was never rendered does not
     # stop the form being posted with the id in it.
@@ -5141,7 +5141,10 @@ def test_a_draft_can_be_removed_from_the_row_it_is_on(tmpdir):
     page = client.get("/drafts").get_data(as_text=True)
     check("the surviving row is no longer marked blocked",
           "&#9888; Duplicate<" not in page)
-    check("and the batch is issuable again", "cannot be issued" not in page)
+    # The banner is always rendered now so the page can unhide it without a
+    # reload, so "gone" means hidden rather than absent.
+    check("and the batch is issuable again",
+          re.search(r'id="blocked-note"[^>]*\shidden', page) is not None)
 
     # The review screen's Discard button is an ordinary form post and still has
     # to be sent somewhere. Returning it JSON would leave it on a blank page.
@@ -5455,6 +5458,99 @@ def test_every_timestamp_is_indian_standard_time(tmpdir):
     conn.close()
 
 
+def test_a_gate_pass_can_be_typed_without_an_invoice(tmpdir):
+    """The manual screen: a pass for a consignment that has no PDF.
+
+    A handwritten challan, a phone order, a replacement going out. The only way
+    to make one of these used to be to invent a draft and edit it.
+    """
+    flask_app, client = logged_in_app(tmpdir, "manual")
+    conn = db.connect(flask_app.config["DB_PATH"])
+
+    page = client.get("/manual").get_data(as_text=True)
+    check("the screen exists", "Manual Gate Pass" in page)
+    check("and every header field is a plain box, not a dropdown",
+          all(f'name="{name}"' in page for name in
+              ("supplier_name", "customer_name", "invoice_no", "invoice_date",
+               "vehicle_no", "remarks")))
+    check("no dropdown restricts what can be typed",
+          "<select" not in markup_only(page))
+    # The date box is defaulted by the SERVER's clock, not the browser's: the
+    # office clock is the one the book runs on.
+    check("the date defaults to today in IST",
+          f'value="{datetime.now(db.IST).strftime("%Y-%m-%d")}"' in page)
+
+    before = db.count_gate_passes(conn)
+    resp = client.post("/manual", headers={"Origin": "http://localhost"}, data={
+        "supplier_name": "FANZART LLP",
+        "customer_name": "MBS DECOR LLP",
+        "invoice_no": "LP 262700338",
+        "invoice_date": "2026-09-05",          # what <input type="date"> posts
+        "vehicle_no": "KA 01 AB 1234",
+        "remarks": "Handwritten challan",
+        "item_name": ["Ceiling Fan", "Wall Fan"],
+        "quantity": ["4", "2"],
+        "cartons": ["4", "1"],
+    })
+    check("it issues and goes to the printed pass", resp.status_code == 302)
+    check("straight to print", "/print/" in resp.headers["Location"])
+    check("exactly one number was spent", db.count_gate_passes(conn) == before + 1)
+
+    gp = db.get_gate_pass(conn, int(resp.headers["Location"].rsplit("/", 1)[1]))
+    check("it took the next serial in the run", gp["serial_no"] == "FZ-00001")
+    check("with what was typed on it",
+          gp["supplier_name"] == "FANZART LLP"
+          and gp["customer_name"] == "MBS DECOR LLP"
+          and gp["invoice_no"] == "LP 262700338"
+          and gp["vehicle_no"] == "KA 01 AB 1234"
+          and gp["remarks"] == "Handwritten challan")
+    check("and both items", len(gp["items"]) == 2)
+    check("cartons kept as typed, including the overridden one",
+          [i["cartons"] for i in gp["items"]] == ["4", "1"])
+
+    # The date picker posts ISO; every pass in the book is DD-MM-YYYY. Storing
+    # the picker's format would print one date in office style and the next in
+    # ISO on the same stack of paper.
+    check("the ISO date was rewritten to the book's format",
+          gp["invoice_date"] == "05-09-2026")
+    check("a date already in the book's format is left alone",
+          _as_stored_date("05-09-2026") == "05-09-2026")
+    check("and so is anything unrecognised", _as_stored_date("whenever") == "whenever")
+
+    check("it is prepared by whoever typed it", gp["prepared_by"] == "Ravi Kumar")
+    check("issued_at is on the office clock",
+          gp["issued_at"].startswith(datetime.now(db.IST).strftime("%Y-%m-%d")))
+
+    # A pass with no items is not a pass. The form is refused and, crucially,
+    # what was typed comes back rather than being thrown away.
+    before = db.count_gate_passes(conn)
+    resp = client.post("/manual", headers={"Origin": "http://localhost"}, data={
+        "supplier_name": "FANZART LLP", "customer_name": "SOMEBODY",
+        "invoice_no": "LP 9", "invoice_date": "2026-09-05",
+        "item_name": [""], "quantity": [""], "cartons": [""],
+    })
+    check("an empty pass is refused", resp.status_code == 200)
+    check("no number was spent on it", db.count_gate_passes(conn) == before)
+    body = resp.get_data(as_text=True)
+    check("and the typing is still there", 'value="FANZART LLP"' in body
+          and 'value="LP 9"' in body)
+
+    check("it is reachable from the nav", "Manual" in client.get("/register")
+          .get_data(as_text=True))
+    conn.close()
+
+
+def markup_only(page):
+    """The page with its <script> blocks stripped out.
+
+    Counting an element by searching the whole response counts the JavaScript
+    that CREATES that element too, which is how "one checkbox" became two the
+    moment rows were built in the browser. Anything asserting how many of a
+    thing are on screen has to look at the markup alone.
+    """
+    return re.sub(r"<script\b.*?</script>", "", page, flags=re.S | re.I)
+
+
 def test_every_test_is_actually_run():
     """Every test_* in this file must be called by main().
 
@@ -5509,6 +5605,7 @@ def main():
         test_the_drafts_list_previews_the_numbering_order(tmpdir)
         test_issuing_never_alters_a_pass_that_already_exists(tmpdir)
         test_every_timestamp_is_indian_standard_time(tmpdir)
+        test_a_gate_pass_can_be_typed_without_an_invoice(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)
         test_the_printed_totals_are_bolder_than_the_rows(tmpdir)

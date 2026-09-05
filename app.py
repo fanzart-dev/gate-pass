@@ -575,6 +575,50 @@ def register_routes(app):
         flash("Draft saved. No gate pass number has been used.", "ok")
         return redirect(url_for("review", draft_id=draft_id))
 
+    @app.route("/manual", methods=["GET", "POST"])
+    @login_required
+    def manual_gate_pass():
+        """A gate pass typed from scratch, with no invoice behind it.
+
+        The usual way in is a PDF: upload, parse, check, issue. This is for
+        everything that has no PDF — a handwritten challan, a phone order, a
+        replacement going out, a supplier whose format the parser has never
+        seen. Before this the only way to make one was to invent a draft.
+
+        It spends a serial number the moment it succeeds, exactly like the
+        review screen's Issue button, and lands on the printed pass.
+        """
+        today = datetime.now(db.IST).strftime("%Y-%m-%d")
+        if request.method == "GET":
+            return render_template("manual.html", today=today,
+                                    items_per_page=db.ITEMS_PER_PAGE,
+                                    active="manual", form={}, items=[])
+
+        fields = {name: request.form.get(name, "").strip() for name in
+                  ("supplier_name", "customer_name", "invoice_no",
+                   "invoice_date", "vehicle_no", "remarks")}
+        items = _items_from_form(request.form)
+
+        try:
+            gate_pass = db.create_gate_pass(
+                g.db, None, fields["supplier_name"], fields["customer_name"],
+                fields["invoice_no"], _as_stored_date(fields["invoice_date"]),
+                fields["vehicle_no"], items,
+                prepared_by=g.user["display_name"],
+                prepared_by_user_id=g.user["id"],
+                remarks=fields["remarks"],
+            )
+        except ValueError as exc:
+            # Back to the form with what was typed still in it. Losing a
+            # twenty-line item table to a missing vehicle number would make
+            # people avoid the screen.
+            flash(str(exc), "error")
+            return render_template("manual.html", today=today,
+                                    items_per_page=db.ITEMS_PER_PAGE,
+                                    active="manual", form=fields, items=items)
+
+        return redirect(url_for("print_gate_pass", gate_pass_id=gate_pass["id"]))
+
     @app.route("/drafts")
     @requires("can_review_drafts")
     def drafts():
@@ -1303,6 +1347,25 @@ def _fill_blanks_only(draft, form):
             merged[key] = was_read or str(offered.get(key) or "").strip()
         items.append(merged)
     return fields, items
+
+
+def _as_stored_date(value):
+    """What <input type="date"> posts, in the form the rest of the book uses.
+
+    The date picker always posts YYYY-MM-DD. Every gate pass ever issued stores
+    DD-MM-YYYY — it is what the invoices say and what the printed pass shows —
+    so storing the picker's format verbatim would print one date in the office
+    style and the next in ISO, on the same stack of paper.
+
+    Anything that is not the picker's format is passed straight through: a
+    typed date, or a date the parser read off an invoice, is already in the
+    book's own form and must not be rearranged on a guess.
+    """
+    text = (value or "").strip()
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").strftime("%d-%m-%Y")
+    except ValueError:
+        return text
 
 
 def _items_from_form(form):

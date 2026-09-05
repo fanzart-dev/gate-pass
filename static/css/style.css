@@ -971,10 +971,38 @@ tr.is-duplicate .actions-inner button.draft-delete {
   color: var(--danger);
 }
 
+/* A row on its way out. It is removed from the DOM 150ms later; this is only
+   so the removal reads as the row leaving rather than the table jumping. */
+table.list tbody tr.removing {
+  opacity: 0;
+  transition: opacity .15s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  table.list tbody tr.removing { transition: none; }
+}
+
 /* ------------------------------------------------------------------ toasts */
 /* Confirmation for something that happened without leaving the page. The flash
    strip at the top of the layout only appears on a navigation, and the ✕
    deliberately does not navigate. */
+/* The totals row inside the item editor. Under the column it adds up, so it
+   can be checked against the column rather than taken on trust. */
+table.items-editor tfoot td {
+  border-top: 2px solid var(--line);
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--ink);
+}
+table.items-editor tfoot .totals-label {
+  text-align: right;
+  font-weight: 600;
+  color: var(--label);
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: .05em;
+}
+table.items-editor tfoot strong { font-weight: 700; }
+
 .toast-tray {
   position: fixed;
   right: 20px;

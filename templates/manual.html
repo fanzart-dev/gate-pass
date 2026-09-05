@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% block title %}Manual Gate Pass{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>Manual Gate Pass</h1>
+    <p class="hint">
+      For a consignment with no invoice PDF — a handwritten challan, a phone
+      order, a replacement going out. A number is spent the moment you press
+      <strong>Issue Gate Pass</strong>, so nothing here is saved until then.
+    </p>
+  </div>
+
+  <div class="notice info" id="page-note" hidden></div>
+
+  {# Every field is a plain text box. There is no dropdown and no lookup on
+     purpose: this screen exists for the consignments that do not fit the usual
+     shape, and a picker that only offers customers already in the book would
+     defeat the whole point of it. #}
+  <form method="post" id="manual-form" class="card">
+    <div class="grid-2">
+      <div class="field">
+        <label for="supplier_name">From</label>
+        <input type="text" id="supplier_name" name="supplier_name"
+               value="{{ form.supplier_name or '' }}"
+               placeholder="e.g. FANZART LLP" required>
+      </div>
+      <div class="field">
+        <label for="customer_name">Customer</label>
+        <input type="text" id="customer_name" name="customer_name"
+               value="{{ form.customer_name or '' }}"
+               placeholder="e.g. MBS DECOR LLP" required>
+      </div>
+      <div class="field">
+        <label for="invoice_no">Document No</label>
+        <input type="text" id="invoice_no" name="invoice_no"
+               value="{{ form.invoice_no or '' }}"
+               placeholder="e.g. LP 262700338" required>
+      </div>
+      <div class="field">
+        <label for="invoice_date">Date</label>
+        {# A date picker, defaulted to today by the office clock — the server
+           works that out with the same IST source every timestamp uses, rather
+           than trusting whatever the operator's laptop is set to. It posts
+           YYYY-MM-DD and the server rewrites it to the DD-MM-YYYY the rest of
+           the book is written in. #}
+        <input type="date" id="invoice_date" name="invoice_date"
+               value="{{ form.invoice_date or today }}" required>
+      </div>
+      <div class="field">
+        <label for="vehicle_no">Vehicle No
+          <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
+        <input type="text" id="vehicle_no" name="vehicle_no"
+               value="{{ form.vehicle_no or '' }}" placeholder="e.g. KA 01 AB 1234">
+      </div>
+      <div class="field">
+        <label for="remarks">Remarks
+          <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
+        <textarea id="remarks" name="remarks" rows="2" class="multiline"
+                  placeholder="Anything to note about this consignment">{{ form.remarks or '' }}</textarea>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="items-editor" id="items-table">
+        <thead>
+          <tr>
+            <th>Sl No.</th>
+            <th>Item</th>
+            <th>Quantity</th>
+            <th>No. of Cartons</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items or [{'item_name': '', 'quantity': '', 'cartons': ''}] %}
+          <tr>
+            <td class="sl-no">{{ loop.index }}</td>
+            <td><input type="text" name="item_name" value="{{ item.item_name }}"
+                       placeholder="Item name"></td>
+            <td class="col-qty-cell"><input type="text" name="quantity"
+                       value="{{ item.quantity }}" inputmode="numeric"></td>
+            <td class="col-ctn-cell"><input type="text" name="cartons"
+                       value="{{ item.cartons }}" inputmode="numeric"></td>
+            <td class="col-act-cell">
+              <button type="button" class="remove-row" title="Remove row"
+                      aria-label="Remove row">&times;</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        {# The totals live in the table, under the column each one adds up.
+           A summary sitting beside the table is a number you have to take on
+           trust; one under the column is a number you can check. #}
+        <tfoot>
+          <tr>
+            <td></td>
+            <td class="totals-label">Total</td>
+            <td class="col-qty-cell"><strong id="total-qty-display">0</strong></td>
+            <td class="col-ctn-cell"><strong id="total-cartons-display">0</strong></td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div class="item-actions">
+      <button type="button" id="add-row">+ Add item</button>
+      <span class="hint" id="row-count"></span>
+      <span class="hint">
+        Cartons follow the quantity as you type, until you change one — then
+        that row is yours and typing the quantity again will not overwrite it.
+      </span>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="primary">Issue Gate Pass</button>
+      <a class="button quiet" href="{{ url_for('upload') }}">Cancel</a>
+    </div>
+  </form>
+
+  <script>
+    const tbody = document.querySelector("#items-table tbody");
+    const ITEMS_PER_PAGE = {{ items_per_page }};
+    const pageNote = document.getElementById("page-note");
+
+    function sumColumn(name) {
+      let total = 0;
+      tbody.querySelectorAll(`input[name="${name}"]`).forEach((el) => {
+        const n = parseInt(el.value.trim(), 10);
+        if (!Number.isNaN(n)) total += n;
+      });
+      return total;
+    }
+
+    function recalcTotals() {
+      document.getElementById("total-qty-display").textContent = sumColumn("quantity");
+      document.getElementById("total-cartons-display").textContent = sumColumn("cartons");
+    }
+
+    // Cartons follow the quantity, because one fan in one carton is the common
+    // case and typing the same number twice on every line is the sort of chore
+    // that gets skipped.
+    //
+    // It stops following the moment the operator types in the carton box. That
+    // is the whole difference between a default and an override: without it,
+    // correcting a row to "4 fans, 1 carton" and then fixing a typo in the
+    // quantity would quietly throw the correction away. The row remembers, so
+    // it is only ever surrendered deliberately.
+    tbody.addEventListener("input", (e) => {
+      const cell = e.target;
+      if (cell.name === "cartons") {
+        cell.dataset.touched = "1";
+      } else if (cell.name === "quantity") {
+        const cartons = cell.closest("tr").querySelector('input[name="cartons"]');
+        if (cartons && cartons.dataset.touched !== "1") cartons.value = cell.value;
+      }
+      if (cell.name === "quantity" || cell.name === "cartons") recalcTotals();
+    });
+
+    function renumber() {
+      const rows = tbody.querySelectorAll("tr");
+      rows.forEach((row, i) => { row.querySelector(".sl-no").textContent = i + 1; });
+      const counter = document.getElementById("row-count");
+      const pages = Math.max(1, Math.ceil(rows.length / ITEMS_PER_PAGE));
+      counter.textContent = pages > 1
+        ? `${rows.length} items — ${pages} pages`
+        : `${rows.length} of ${ITEMS_PER_PAGE} rows used`;
+      recalcTotals();
+
+      if (pages > 1) {
+        pageNote.textContent =
+          `This gate pass contains ${rows.length} items. It will print across ` +
+          `${pages} pages under one number.`;
+        pageNote.hidden = false;
+      } else {
+        pageNote.hidden = true;
+      }
+    }
+
+    document.getElementById("add-row").addEventListener("click", () => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td class="sl-no"></td>
+        <td><input type="text" name="item_name" placeholder="Item name"></td>
+        <td class="col-qty-cell"><input type="text" name="quantity" inputmode="numeric"></td>
+        <td class="col-ctn-cell"><input type="text" name="cartons" inputmode="numeric"></td>
+        <td class="col-act-cell"><button type="button" class="remove-row" title="Remove row" aria-label="Remove row">&times;</button></td>`;
+      tbody.appendChild(row);
+      renumber();
+      row.querySelector('input[name="item_name"]').focus();
+    });
+
+    tbody.addEventListener("click", (e) => {
+      if (!e.target.classList.contains("remove-row")) return;
+      // Never down to nothing: a pass with no items is not a pass, and the
+      // server refuses it anyway. Emptying the last row is the same intent.
+      if (tbody.rows.length === 1) {
+        tbody.rows[0].querySelectorAll("input").forEach((el) => {
+          el.value = "";
+          delete el.dataset.touched;
+        });
+      } else {
+        e.target.closest("tr").remove();
+      }
+      renumber();
+    });
+
+    // Enter walks ACROSS the row and falls into the next one, the arrows move
+    // down a column, and Enter never submits — the submit button on this page
+    // spends a gate pass number, so a stray keystroke must not reach it.
+    tbody.addEventListener("keydown", (e) => {
+      const cell = e.target;
+      if (cell.tagName !== "INPUT") return;
+      const isEnter = e.key === "Enter";
+      const vertical = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+      if (!isEnter && !vertical) return;
+      e.preventDefault();
+
+      const rows = [...tbody.querySelectorAll("tr")];
+      const row = cell.closest("tr");
+      let next = null;
+      if (isEnter) {
+        const all = [...tbody.querySelectorAll("input")];
+        next = all[all.indexOf(cell) + 1] || null;
+      } else {
+        const target = rows[rows.indexOf(row) + vertical];
+        const column = [...row.children].indexOf(cell.closest("td"));
+        next = target && target.children[column]
+             ? target.children[column].querySelector("input") : null;
+      }
+      if (next) { next.focus(); next.select(); }
+    });
+
+    // A row that came back from the server with a carton count already in it
+    // was typed by somebody, so it must not start following the quantity again.
+    tbody.querySelectorAll('input[name="cartons"]').forEach((el) => {
+      if (el.value.trim()) el.dataset.touched = "1";
+    });
+
+    renumber();
+  </script>
+{% endblock %}
