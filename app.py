@@ -119,6 +119,19 @@ def create_app(db_path=None, storage_dir=None):
         if conn is not None:
             db.close(conn)
 
+    # A demo instance says so on every page. Set GATE_PASS_BANNER to switch it
+    # on; production leaves it unset and nothing renders.
+    #
+    # It matters because the two instances are the same app, the same layout
+    # and the same login screen. Somebody sent a link, or an old tab, cannot
+    # otherwise tell whether the pass they just issued went into a sandbox or
+    # into the book the company is audited on.
+    app.config["BANNER"] = os.environ.get("GATE_PASS_BANNER", "").strip()
+
+    @app.context_processor
+    def inject_banner():
+        return {"banner": app.config["BANNER"]}
+
     @app.template_global()
     def static_url(filename):
         """`url_for('static', ...)` with the file's modification time on the end.

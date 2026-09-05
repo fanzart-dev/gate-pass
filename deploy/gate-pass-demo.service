@@ -1,0 +1,34 @@
+[Unit]
+# A SECOND instance of the same code, with its own database, for people to try
+# and break. Installed by deploy/demo-instance.sh — do not edit the copy under
+# /etc/systemd, a reinstall overwrites it.
+#
+# It shares nothing with the live service but the code: different storage
+# directory, different database, different port, different systemd unit. That
+# separation is the entire point — a serial number spent here must never appear
+# in the book the company is audited on.
+Description=Fanzart Gate Pass (demo instance)
+After=network.target
+
+[Service]
+Type=notify
+User=__APP_USER__
+Group=__APP_USER__
+WorkingDirectory=__APP_DIR__
+Environment="PATH=__APP_DIR__/.venv/bin"
+Environment="GATE_PASS_STORAGE=__DEMO_DIR__"
+Environment="GATE_PASS_HTTPS=1"
+Environment="GATE_PASS_BANNER=DEMO INSTANCE — a sandbox with its own database. Nothing here reaches the real gate pass register."
+ExecStart=__APP_DIR__/.venv/bin/gunicorn --bind 127.0.0.1:8092 --workers 2 --threads 2 --timeout 120 app:app
+Restart=always
+RestartSec=3
+
+# The demo is the internet-facing one, so it gets the tighter box.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=__DEMO_DIR__
+
+[Install]
+WantedBy=multi-user.target

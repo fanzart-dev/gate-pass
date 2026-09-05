@@ -61,6 +61,10 @@
     </nav>
   </header>
 
+  {% if banner %}
+    <div class="instance-banner" role="status">{{ banner }}</div>
+  {% endif %}
+
   <main class="container {% block container_class %}{% endblock %}">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
