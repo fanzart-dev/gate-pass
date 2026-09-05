@@ -5535,8 +5535,15 @@ def test_a_gate_pass_can_be_typed_without_an_invoice(tmpdir):
     check("and the typing is still there", 'value="FANZART LLP"' in body
           and 'value="LP 9"' in body)
 
-    check("it is reachable from the nav", "Manual" in client.get("/register")
-          .get_data(as_text=True))
+    # Reached from the New Gate Pass page, not from the nav. It is the
+    # exception to that page rather than a section of the app in its own right,
+    # and a sixth tab put it level with Register and Reports.
+    upload_page = client.get("/upload").get_data(as_text=True)
+    check("the way in is on the New Gate Pass page",
+          'href="/manual"' in upload_page
+          and "Create Without Invoice" in upload_page)
+    check("and it is not a nav tab",
+          '/manual' not in client.get("/register").get_data(as_text=True))
     conn.close()
 
 

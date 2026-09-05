@@ -3,9 +3,16 @@
 {% block content %}
   {% with step = 1 %}{% include "_steps.html" %}{% endwith %}
 
-  <div class="page-head">
+  {# The manual form is reached from here rather than from the nav. It is the
+     exception to this page, not a sixth section of the app: you come looking
+     for "new gate pass", find the drop zone is no use because there is no PDF,
+     and the way out is on the same screen. A nav tab put it at the same level
+     as Register and Reports and implied it was the ordinary route. #}
+  <div class="page-head page-head-split">
     <h1>New Gate Pass</h1>
-   
+    <a class="button" href="{{ url_for('manual_gate_pass') }}">
+      + Create Without Invoice
+    </a>
   </div>
 
   <form method="post" enctype="multipart/form-data" id="upload-form">

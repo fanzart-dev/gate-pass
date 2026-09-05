@@ -508,6 +508,21 @@ CONTRAST = """(sel) => {
 }"""
 
 
+CONTRAST_AGAINST = """([selector, behind]) => {
+  const lum = (c) => {
+    const [r, g, b] = c.match(/[\\d.]+/g).slice(0, 3).map(Number).map((v) => {
+      v /= 255;
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const fg = getComputedStyle(document.querySelector(selector)).color;
+  const bg = getComputedStyle(document.querySelector(behind)).backgroundColor;
+  const a = lum(fg), b = lum(bg);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}"""
+
+
 class TestPrintButtonState:
     """The register shows what has reached paper on the Print button itself.
 
@@ -597,6 +612,24 @@ class TestDeleteDraftFromTheRow:
 
         assert page.locator(".toast").count() == 0, "toasted a delete that was declined"
         assert page.locator("tbody tr").count() == before, "removed a row anyway"
+
+
+class TestDropZoneIsReadable:
+    @pytest.mark.parametrize("scheme", ["light", "dark"])
+    def test_the_drop_zone_can_be_read_in_either_theme(self, page, base_url, scheme):
+        """The main control of the whole app, legible in both themes.
+
+        Its panel was a hardcoded light colour while its heading was a token
+        that goes near-white in dark mode: 1.05:1, invisible, and nothing in
+        light mode showed it. Exactly the failure the Print button had, on a
+        more important element.
+        """
+        page.emulate_media(color_scheme=scheme)
+        page.goto(f"{base_url}/upload")
+        page.wait_for_selector(".dropzone")
+        for selector, floor in ((".dropzone-title", 4.5), (".dropzone-sub", 4.5)):
+            got = page.evaluate(CONTRAST_AGAINST, [selector, ".dropzone"])
+            assert got >= floor, f"{selector} is {got:.2f}:1 in {scheme}"
 
 
 class TestManualGatePass:
