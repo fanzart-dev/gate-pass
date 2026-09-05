@@ -1000,6 +1000,19 @@ table.list tbody tr.removing {
   table.list tbody tr.removing { transition: none; }
 }
 
+/* Says which instance this is. Deliberately loud and full width: its whole job
+   is to stop somebody believing a demo pass went into the real book. */
+.instance-banner {
+  padding: 8px 20px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-bottom: 1px solid var(--warn);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-align: center;
+}
+
 /* ------------------------------------------------------------------ toasts */
 /* Confirmation for something that happened without leaving the page. The flash
    strip at the top of the layout only appears on a navigation, and the ✕
