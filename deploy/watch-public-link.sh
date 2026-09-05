@@ -61,9 +61,63 @@ if [ "$MODE" = "--install" ]; then
 fi
 
 # ------------------------------------------------------------------ check ----
-NAME="$(tailscale status --json 2>/dev/null \
-  | python3 -c 'import json,sys; print((json.load(sys.stdin).get("Self") or {}).get("DNSName","").rstrip("."))' 2>/dev/null)"
-[ -n "$NAME" ] || die "cannot read this machine's tailnet name — is tailscaled up?"
+read_name() {
+    tailscale status --json 2>/dev/null \
+      | python3 -c 'import json,sys; print((json.load(sys.stdin).get("Self") or {}).get("DNSName","").rstrip("."))' 2>/dev/null
+}
+
+NAME="$(read_name)"
+if [ -z "$NAME" ]; then
+    # tailscaled itself is not answering. Worth one restart before giving up:
+    # it is a daemon like any other, it can die, and when it does the public
+    # link is gone with it. Giving up here would mean the watchdog goes quiet
+    # in exactly the situation it exists for.
+    log "tailscaled is not answering — restarting it"
+    systemctl restart tailscaled >/dev/null 2>&1
+    sleep 10
+    NAME="$(read_name)"
+fi
+[ -n "$NAME" ] || die "tailscaled is still not answering after a restart — this needs a person"
+
+# The slow fuse, checked before anything else because it is the one failure
+# here that nothing on this machine can repair.
+#
+# A Tailscale node key expires — 180 days by default. When it does, this
+# machine drops off the tailnet, Funnel stops, and the public link dies. There
+# is no warning, it happens months after anyone last touched the setup, and the
+# repair below cannot fix it: re-authenticating needs a person and the admin
+# console. So it gets said loudly, and early, while there is still time to do
+# the one-click fix:
+#
+#   Tailscale admin console -> Machines -> this machine -> ... -> Disable key expiry
+#
+# That is the correct setting for a server that is meant to stay reachable.
+EXPIRY_DAYS="$(tailscale status --json 2>/dev/null | python3 -c '
+import json, sys
+from datetime import datetime, timezone
+self_ = (json.load(sys.stdin).get("Self") or {})
+raw = self_.get("KeyExpiry")
+if not raw:
+    print("never")                      # expiry disabled, which is what we want
+else:
+    when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    print((when - datetime.now(timezone.utc)).days)
+' 2>/dev/null)"
+
+case "$EXPIRY_DAYS" in
+    never|"")   [ "$EXPIRY_DAYS" = "never" ] && log "key expiry is disabled — good, the link cannot die that way" ;;
+    *)
+        if [ "$EXPIRY_DAYS" -lt 0 ] 2>/dev/null; then
+            log "THE NODE KEY HAS EXPIRED. The link is down and no script can fix it."
+            log "  Tailscale admin console -> Machines -> $NAME -> Disable key expiry,"
+            log "  then on this server:  sudo tailscale up"
+        elif [ "$EXPIRY_DAYS" -lt 90 ] 2>/dev/null; then
+            log "WARNING: the node key expires in ${EXPIRY_DAYS} days. When it does, the"
+            log "  public link stops and this watchdog CANNOT repair it. Fix it now:"
+            log "  admin console -> Machines -> $NAME -> ... -> Disable key expiry"
+        fi
+        ;;
+esac
 
 # PUBLIC dns, deliberately. The system resolver here is MagicDNS, which would
 # hand back the tailnet address and make a dead public link look alive.
