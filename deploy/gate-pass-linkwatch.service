@@ -1,0 +1,10 @@
+[Unit]
+# Installed by deploy/watch-public-link.sh --install, which fills in the path.
+# Do not edit the copy under /etc/systemd — a reinstall overwrites it.
+Description=Check the Gate Pass public link from the outside, repair if broken
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=__APP_DIR__/deploy/watch-public-link.sh
