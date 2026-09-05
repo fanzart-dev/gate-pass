@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+{% block title %}Fan &amp; Carton Master{% endblock %}
+{% block container_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-head page-head-split">
+    <div>
+      <h1>Fan &amp; Carton Master</h1>
+      <p class="hint">
+        How many cartons one of each model ships in. A gate pass multiplies this
+        by the quantity on the line — so a fan listed as 2 going out 3 times
+        prints 6 cartons.
+      </p>
+    </div>
+    <button type="button" class="button primary" id="add-open">+ Add New Fan</button>
+  </div>
+
+  {# Editing here changes what FUTURE passes suggest. It cannot reach back into
+     the register: every pass already issued carries the carton count it was
+     issued with, stored on the pass itself. Worth saying on the page, because
+     "will this change last month's paperwork?" is the first thing anyone sensible
+     asks before touching a master list. #}
+  <div class="notice info">
+    <span class="notice-icon">i</span>
+    <span>
+      Changes here affect gate passes issued from now on. Passes already in the
+      register keep the carton counts they were issued with — nothing you do on
+      this page can alter them.
+    </span>
+  </div>
+
+  <div class="toolbar">
+    <input type="text" id="fan-search" class="toolbar-search" value="{{ search }}"
+           placeholder="Search a fan or model name" aria-label="Search the master list"
+           autocomplete="off">
+    <span class="hint" id="row-summary">{{ rows|length }} of {{ total }} shown</span>
+  </div>
+
+  {# The add row lives at the top of the table rather than in a modal. A modal
+     would cover the list you are checking against while you type — and the
+     question being answered ("is this already here, under a slightly different
+     name?") is answered by the list. #}
+  <div class="card add-panel" id="add-panel" hidden>
+    <div class="add-row">
+      <div class="field">
+        <label for="new-name">Fan / model name</label>
+        <input type="text" id="new-name" placeholder="e.g. VENETIAN BLACK - FANDELIER">
+      </div>
+      <div class="field field-narrow">
+        <label for="new-cartons">Cartons per unit</label>
+        <input type="text" id="new-cartons" inputmode="numeric" value="1">
+      </div>
+      <button type="button" class="button primary" id="add-save">Add</button>
+      <button type="button" class="button quiet" id="add-cancel">Cancel</button>
+    </div>
+    <p class="hint" id="add-error" hidden></p>
+  </div>
+
+  <div class="table-wrap">
+    <table class="list fans-table" id="fans-table">
+      <thead>
+        <tr>
+          <th>Fan / Model Name</th>
+          <th class="col-centre">Cartons per Unit</th>
+          <th>Last changed</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr data-id="{{ row.id }}" data-name="{{ row.item_name }}" data-cartons="{{ row.cartons }}">
+          <td class="fan-name">{{ row.item_name }}</td>
+          <td class="col-centre fan-cartons">{{ row.cartons }}</td>
+          <td class="muted-cell">{{ row.updated_at|ist }}</td>
+          <td class="actions-cell">
+            <div class="actions-inner">
+              <button type="button" class="row-edit">Edit</button>
+              <button type="button" class="row-delete" title="Remove from the list"
+                      aria-label="Remove {{ row.item_name }}">&times;</button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if not rows %}
+    <div class="empty">
+      <div class="empty-icon">📦</div>
+      <div class="empty-title">
+        {% if search %}Nothing matches “{{ search }}”{% else %}The master list is empty{% endif %}
+      </div>
+      <div class="empty-sub">
+        {% if search %}Try part of the model name.
+        {% else %}Add fans one at a time, or load a spreadsheet with
+          <code>manage_cartons.py import</code>.{% endif %}
+      </div>
+    </div>
+  {% endif %}
+
+  <p class="hint" style="margin-top:16px">
+    An item that is not on this list leaves the carton box blank on a new pass,
+    which is the honest answer — a blank asks the operator a question, while a
+    number asserts something nobody worked out. Spares, freight and service
+    lines are always left blank whatever the list says.
+  </p>
+
+  <script>
+    const table = document.querySelector("#fans-table tbody");
+    const summary = document.getElementById("row-summary");
+    const TOTAL = {{ total }};
+
+    function toast(message, kind) {
+      let tray = document.querySelector(".toast-tray");
+      if (!tray) {
+        tray = document.createElement("div");
+        tray.className = "toast-tray";
+        document.body.appendChild(tray);
+      }
+      const note = document.createElement("div");
+      note.className = "toast" + (kind ? " " + kind : "");
+      note.setAttribute("role", "status");
+      note.textContent = message;
+      tray.appendChild(note);
+      setTimeout(() => note.remove(), 4000);
+    }
+
+    async function send(url, data) {
+      const body = new FormData();
+      Object.entries(data).forEach(([k, v]) => body.append(k, v));
+      const response = await fetch(url, {
+        method: "POST", body, headers: {"X-Requested-With": "fetch"}});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.error || `HTTP ${response.status}`);
+      }
+      return result;
+    }
+
+    // Search filters the rows already on the page as you type, and only asks
+    // the server when the filter finds nothing — the whole list is a few
+    // hundred rows, so filtering locally is instant and a request per keystroke
+    // would be slower AND worse.
+    const search = document.getElementById("fan-search");
+    search.addEventListener("input", () => {
+      const term = search.value.trim().toUpperCase();
+      let shown = 0;
+      [...table.rows].forEach((row) => {
+        const hit = !term || row.dataset.name.toUpperCase().includes(term);
+        row.hidden = !hit;
+        if (hit) shown += 1;
+      });
+      summary.textContent = `${shown} of ${TOTAL} shown`;
+    });
+
+    // ------------------------------------------------------------- adding --
+    const panel = document.getElementById("add-panel");
+    const addError = document.getElementById("add-error");
+    document.getElementById("add-open").addEventListener("click", () => {
+      panel.hidden = false;
+      document.getElementById("new-name").focus();
+    });
+    document.getElementById("add-cancel").addEventListener("click", () => {
+      panel.hidden = true;
+      addError.hidden = true;
+    });
+
+    document.getElementById("add-save").addEventListener("click", async () => {
+      const name = document.getElementById("new-name");
+      const cartons = document.getElementById("new-cartons");
+      addError.hidden = true;
+      try {
+        const result = await send("{{ url_for('add_carton_master') }}",
+                                  {item_name: name.value, cartons: cartons.value});
+        // Put it straight into the table rather than reloading, so adding a
+        // run of fans is a rhythm instead of a page load each time.
+        const row = table.insertRow(0);
+        row.dataset.id = result.row.id;
+        row.dataset.name = result.row.item_name;
+        row.dataset.cartons = result.row.cartons;
+        row.innerHTML =
+          `<td class="fan-name"></td>` +
+          `<td class="col-centre fan-cartons"></td>` +
+          `<td class="muted-cell">just now</td>` +
+          `<td class="actions-cell"><div class="actions-inner">` +
+          `<button type="button" class="row-edit">Edit</button>` +
+          `<button type="button" class="row-delete" title="Remove from the list">&times;</button>` +
+          `</div></td>`;
+        // textContent, never innerHTML, for anything typed by a person.
+        row.querySelector(".fan-name").textContent = result.row.item_name;
+        row.querySelector(".fan-cartons").textContent = result.row.cartons;
+        toast(result.message, "ok");
+        name.value = "";
+        cartons.value = "1";
+        name.focus();
+      } catch (err) {
+        addError.textContent = err.message;
+        addError.hidden = false;
+      }
+    });
+
+    // ------------------------------------------------ editing and removing --
+    table.addEventListener("click", async (e) => {
+      const row = e.target.closest("tr");
+      if (!row) return;
+
+      if (e.target.classList.contains("row-edit")) {
+        beginEdit(row);
+        return;
+      }
+
+      if (e.target.classList.contains("row-delete")) {
+        if (!confirm(`Remove ${row.dataset.name} from the master list?\n\n` +
+                     `New gate passes will leave its carton box blank. Passes ` +
+                     `already issued keep the counts they were issued with.`)) return;
+        try {
+          const result = await send(`/settings/fans/${row.dataset.id}/delete`, {});
+          row.remove();
+          toast(result.message || "Removed", "ok");
+        } catch (err) {
+          toast("Could not remove that item. Please try again.", "bad");
+        }
+      }
+    });
+
+    function beginEdit(row) {
+      if (row.querySelector("input")) return;          // already editing
+      const name = row.querySelector(".fan-name");
+      const cartons = row.querySelector(".fan-cartons");
+      name.innerHTML = `<input type="text" class="edit-name">`;
+      cartons.innerHTML = `<input type="text" class="edit-cartons" inputmode="numeric">`;
+      name.querySelector("input").value = row.dataset.name;
+      cartons.querySelector("input").value = row.dataset.cartons;
+
+      const actions = row.querySelector(".actions-inner");
+      actions.innerHTML =
+        `<button type="button" class="row-save button-small">Save</button>` +
+        `<button type="button" class="row-cancel">Cancel</button>`;
+      name.querySelector("input").focus();
+      name.querySelector("input").select();
+    }
+
+    function endEdit(row, itemName, cartonCount) {
+      row.dataset.name = itemName;
+      row.dataset.cartons = cartonCount;
+      row.querySelector(".fan-name").textContent = itemName;
+      row.querySelector(".fan-cartons").textContent = cartonCount;
+      row.querySelector(".actions-inner").innerHTML =
+        `<button type="button" class="row-edit">Edit</button>` +
+        `<button type="button" class="row-delete" title="Remove from the list">&times;</button>`;
+    }
+
+    table.addEventListener("click", async (e) => {
+      const row = e.target.closest("tr");
+      if (!row) return;
+      if (e.target.classList.contains("row-cancel")) {
+        endEdit(row, row.dataset.name, row.dataset.cartons);
+        return;
+      }
+      if (!e.target.classList.contains("row-save")) return;
+
+      const itemName = row.querySelector(".edit-name").value;
+      const cartonCount = row.querySelector(".edit-cartons").value;
+      try {
+        const result = await send(`/settings/fans/${row.dataset.id}`,
+                                  {item_name: itemName, cartons: cartonCount});
+        endEdit(row, result.row.item_name, result.row.cartons);
+        row.querySelector(".muted-cell").textContent = "just now";
+        toast(result.message, "ok");
+      } catch (err) {
+        toast(err.message, "bad");
+      }
+    });
+
+    // Enter saves the row being edited, Escape abandons it.
+    table.addEventListener("keydown", (e) => {
+      const row = e.target.closest("tr");
+      if (!row || e.target.tagName !== "INPUT") return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        row.querySelector(".row-save")?.click();
+      } else if (e.key === "Escape") {
+        endEdit(row, row.dataset.name, row.dataset.cartons);
+      }
+    });
+
+    // Enter in the add panel adds, rather than doing nothing.
+    ["new-name", "new-cartons"].forEach((id) => {
+      document.getElementById(id).addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          document.getElementById("add-save").click();
+        }
+      });
+    });
+  </script>
+{% endblock %}

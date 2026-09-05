@@ -1030,6 +1030,121 @@ def upsert_carton_mappings(conn, pairs):
     return added, updated, unchanged
 
 
+def list_carton_mappings(conn, search="", limit=None):
+    """The master list, optionally filtered by a typed fragment.
+
+    Matched on the NORMALIZED name as well as the stored one, so searching
+    "fandelier" finds "CRYSTAL - FANDELIER" whatever spacing or dash the row
+    was entered with — the same key the lookup itself matches on.
+    """
+    sql = "SELECT id, item_name, normalized, cartons, updated_at FROM item_carton_mappings"
+    params = []
+    term = (search or "").strip()
+    if term:
+        like = f"%{normalize_item_name(term)}%"
+        sql += " WHERE normalized LIKE ? OR UPPER(item_name) LIKE ?"
+        params += [like, f"%{term.upper()}%"]
+    sql += " ORDER BY item_name"
+    if limit:
+        sql += " LIMIT ?"
+        params.append(int(limit))
+    return [dict(r) for r in conn.execute(sql, params)]
+
+
+def get_carton_mapping(conn, mapping_id):
+    row = conn.execute(
+        "SELECT id, item_name, normalized, cartons, updated_at "
+        "FROM item_carton_mappings WHERE id = ?", (mapping_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def _clean_carton_row(name, cartons):
+    """Validate one row, or raise ValueError saying what is wrong with it."""
+    item_name = (name or "").strip()
+    if not item_name:
+        raise ValueError("the fan or item name is required")
+    key = normalize_item_name(item_name)
+    if not key:
+        raise ValueError("that name has nothing in it to match on")
+    try:
+        count = int(str(cartons).strip())
+    except (TypeError, ValueError):
+        raise ValueError("cartons per unit must be a whole number")
+    # Zero is not "no cartons", it is a claim that the thing ships in no boxes,
+    # and it would print a 0 onto a signed document. Something that genuinely
+    # has no carton count belongs off the list — an absent row leaves the box
+    # blank, which is the honest answer.
+    if count < 1:
+        raise ValueError("cartons per unit must be at least 1 — "
+                         "leave an item off the list if it has no carton count")
+    if count > 99:
+        raise ValueError("cartons per unit looks wrong above 99")
+    return item_name, key, count
+
+
+def add_carton_mapping(conn, name, cartons):
+    """Add one row. Raises ValueError if the name is already on the list."""
+    item_name, key, count = _clean_carton_row(name, cartons)
+    existing = conn.execute(
+        "SELECT item_name FROM item_carton_mappings WHERE normalized = ?",
+        (key,)).fetchone()
+    if existing:
+        raise ValueError(f"{existing['item_name']} is already on the list")
+    with writing(conn):
+        cur = conn.execute(
+            "INSERT INTO item_carton_mappings (item_name, normalized, cartons, updated_at) "
+            "VALUES (?, ?, ?, ?)", (item_name, key, count, _now()))
+        conn.execute(
+            "INSERT INTO audit_log (action, details, created_at) VALUES (?, ?, ?)",
+            ("carton_master", f"added {item_name} = {count} carton(s) per unit", _now()))
+    return cur.lastrowid
+
+
+def update_carton_mapping(conn, mapping_id, name, cartons):
+    """Change one row, keeping the audit trail of what it was."""
+    before = get_carton_mapping(conn, mapping_id)
+    if before is None:
+        raise ValueError("that item is no longer on the list")
+    item_name, key, count = _clean_carton_row(name, cartons)
+    clash = conn.execute(
+        "SELECT id, item_name FROM item_carton_mappings WHERE normalized = ? AND id != ?",
+        (key, mapping_id)).fetchone()
+    if clash:
+        raise ValueError(f"{clash['item_name']} already uses that name")
+    with writing(conn):
+        conn.execute(
+            "UPDATE item_carton_mappings SET item_name = ?, normalized = ?, "
+            "cartons = ?, updated_at = ? WHERE id = ?",
+            (item_name, key, count, _now(), mapping_id))
+        # The old value beside the new one. A carton count is what a gate pass
+        # asserts at the gate, so a change to one is worth being able to trace.
+        conn.execute(
+            "INSERT INTO audit_log (action, details, created_at) VALUES (?, ?, ?)",
+            ("carton_master",
+             f"{before['item_name']} = {before['cartons']} -> "
+             f"{item_name} = {count} carton(s) per unit", _now()))
+    return get_carton_mapping(conn, mapping_id)
+
+
+def delete_carton_mapping(conn, mapping_id):
+    """Remove one row. Gate passes already issued are untouched.
+
+    Safe in a way editing an issued pass is not: this list only decides what
+    gets SUGGESTED on new lines. Every pass already in the register carries the
+    carton count it was issued with, stored on the pass itself.
+    """
+    before = get_carton_mapping(conn, mapping_id)
+    if before is None:
+        return None
+    with writing(conn):
+        conn.execute("DELETE FROM item_carton_mappings WHERE id = ?", (mapping_id,))
+        conn.execute(
+            "INSERT INTO audit_log (action, details, created_at) VALUES (?, ?, ?)",
+            ("carton_master",
+             f"removed {before['item_name']} (was {before['cartons']} per unit)", _now()))
+    return before
+
+
 def carton_list_is_empty(conn):
     """True when no master list has been imported at all.
 

@@ -1082,6 +1082,79 @@ def register_routes(app):
             flash(f"{gate_pass['serial_no']} cancelled. The number stays reserved.", "ok")
         return redirect(url_for("register"))
 
+    # ------------------------------------------------- the carton master list
+    # Behind can_access_settings, the same permission as the numbering: this
+    # list decides what every future gate pass claims about how many boxes left
+    # the building, so it belongs with the settings that change what the app
+    # asserts rather than what it shows.
+
+    @app.route("/settings/fans")
+    @requires("can_access_settings")
+    def carton_master():
+        search = request.args.get("q", "").strip()
+        rows = db.list_carton_mappings(g.db, search)
+        return render_template("settings_fans.html", rows=rows, search=search,
+                                total=db.carton_mapping_count(g.db),
+                                active="settings")
+
+    @app.route("/settings/fans", methods=["POST"])
+    @requires("can_access_settings")
+    def add_carton_master():
+        try:
+            new_id = db.add_carton_mapping(g.db, request.form.get("item_name"),
+                                            request.form.get("cartons"))
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        return jsonify(ok=True, message="Fan master updated successfully!",
+                       row=db.get_carton_mapping(g.db, new_id),
+                       total=db.carton_mapping_count(g.db))
+
+    @app.route("/settings/fans/<int:mapping_id>", methods=["POST"])
+    @requires("can_access_settings")
+    def update_carton_master(mapping_id):
+        try:
+            row = db.update_carton_mapping(g.db, mapping_id,
+                                            request.form.get("item_name"),
+                                            request.form.get("cartons"))
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        return jsonify(ok=True, message="Fan master updated successfully!", row=row)
+
+    @app.route("/settings/fans/<int:mapping_id>/delete", methods=["POST"])
+    @requires("can_access_settings")
+    def delete_carton_master(mapping_id):
+        removed = db.delete_carton_mapping(g.db, mapping_id)
+        if removed is None:
+            # Already gone is the outcome that was asked for, not an error.
+            return jsonify(ok=True, already_gone=True,
+                           total=db.carton_mapping_count(g.db))
+        return jsonify(ok=True, message=f"Removed {removed['item_name']}",
+                       total=db.carton_mapping_count(g.db))
+
+    @app.route("/api/carton-lookup")
+    @login_required
+    def carton_lookup():
+        """What the master list says about a typed item name.
+
+        Two jobs in one endpoint because the item box needs both at once: the
+        names to suggest while somebody types, and the carton arithmetic for
+        the name they settle on.
+
+        `cartons` is the answer for the WHOLE LINE — per-unit times quantity —
+        worked out by db.cartons_for_line, the same function the PDF upload
+        path uses. Doing the multiplication in JavaScript instead would put a
+        second copy of that rule in the browser, and the two would disagree the
+        first time one of them changed.
+        """
+        term = request.args.get("q", "").strip()
+        quantity = request.args.get("quantity", "").strip()
+        suggestions = [r["item_name"] for r in
+                       db.list_carton_mappings(g.db, term, limit=8)] if term else []
+        exact = db.carton_count_for(g.db, term) if term else None
+        line = db.cartons_for_line(g.db, term, quantity) if term else None
+        return jsonify(suggestions=suggestions, per_unit=exact, cartons=line,
+                       non_stock=db.is_non_stock_item(term) if term else False)
+
     @app.route("/settings", methods=["GET", "POST"])
     @requires("can_access_settings")
     def settings():

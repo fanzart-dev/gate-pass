@@ -633,37 +633,73 @@ class TestDropZoneIsReadable:
 
 
 class TestManualGatePass:
-    def test_cartons_follow_the_quantity_until_they_are_overridden(self, page, base_url):
-        """Typing a quantity fills the carton box, and stops once you edit it.
+    def test_cartons_come_from_the_master_list_times_the_quantity(self, page, base_url):
+        """A fan listed as 2 cartons, three of them, is SIX cartons.
 
-        One fan in one carton is the common case, so typing the same number
-        twice on every line is a chore people skip. The half that matters is
-        the stopping: without it, correcting a row to "4 fans, 1 carton" and
-        then fixing a typo in the quantity would silently throw the correction
-        away, and the pass would go out claiming four cartons.
+        Not three. The old behaviour copied the quantity into the carton box,
+        which is right only for models that ship one-to-a-box and understates
+        every FANDELIER and 100-inch GRANDMASTER — and understating boxes is
+        how a box goes missing without anyone noticing.
         """
         page.goto(f"{base_url}/manual")
         page.wait_for_selector("#items-table")
         row = page.locator("#items-table tbody tr").first
 
-        row.locator('input[name="quantity"]').fill("4")
-        assert row.locator('input[name="cartons"]').input_value() == "4", \
-            "cartons did not follow the quantity"
+        row.locator('input[name="item_name"]').fill("VENETIAN BLACK - FANDELIER")
+        row.locator('input[name="quantity"]').fill("3")
+        # The lookup is a debounced request, so wait for the answer.
+        page.wait_for_function(
+            """() => document.querySelector('#items-table tbody tr input[name=cartons]').value === '6'""",
+            timeout=5000)
 
-        # The override.
-        row.locator('input[name="cartons"]').fill("1")
-        row.locator('input[name="quantity"]').fill("6")
-        assert row.locator('input[name="cartons"]').input_value() == "1", \
-            "a typed carton count was overwritten by a later quantity"
-
-        # A second row is its own decision, unaffected by the first.
+        # A one-carton model is the quantity, because that is what the list says.
         page.click("#add-row")
         second = page.locator("#items-table tbody tr").nth(1)
-        second.locator('input[name="quantity"]').fill("3")
-        assert second.locator('input[name="cartons"]').input_value() == "3"
+        second.locator('input[name="item_name"]').fill("AEROSLIM 1200MM WHITE")
+        second.locator('input[name="quantity"]').fill("4")
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('#items-table tbody tr')][1]
+                     .querySelector('input[name=cartons]').value === '4'""",
+            timeout=5000)
 
-        assert page.locator("#total-qty-display").inner_text() == "9"
-        assert page.locator("#total-cartons-display").inner_text() == "4"
+        assert page.locator("#total-qty-display").inner_text() == "7"
+        assert page.locator("#total-cartons-display").inner_text() == "10"
+
+    def test_an_unknown_item_is_left_blank_rather_than_guessed(self, page, base_url):
+        """Not on the list means no number, and a line saying why.
+
+        A blank asks the operator a question. A number invented from the
+        quantity asserts something nobody worked out, on a document that gets
+        signed at the gate.
+        """
+        page.goto(f"{base_url}/manual")
+        page.wait_for_selector("#items-table")
+        row = page.locator("#items-table tbody tr").first
+        row.locator('input[name="item_name"]').fill("SOMETHING NOBODY HAS LISTED")
+        row.locator('input[name="quantity"]').fill("5")
+        page.wait_for_timeout(900)
+
+        assert row.locator('input[name="cartons"]').input_value() == "", \
+            "an unknown item was given a made-up carton count"
+        assert "not on the master list" in row.locator(".carton-note").inner_text()
+
+    def test_a_typed_carton_count_is_never_overwritten(self, page, base_url):
+        """The override, which is the half that protects a correction."""
+        page.goto(f"{base_url}/manual")
+        page.wait_for_selector("#items-table")
+        row = page.locator("#items-table tbody tr").first
+
+        row.locator('input[name="item_name"]').fill("VENETIAN BLACK - FANDELIER")
+        row.locator('input[name="quantity"]').fill("3")
+        page.wait_for_function(
+            """() => document.querySelector('#items-table tbody tr input[name=cartons]').value === '6'""",
+            timeout=5000)
+
+        row.locator('input[name="cartons"]').fill("1")
+        row.locator('input[name="quantity"]').fill("4")
+        page.wait_for_timeout(900)
+        assert row.locator('input[name="cartons"]').input_value() == "1", \
+            "a typed carton count was overwritten by a later lookup"
 
     def test_rows_can_be_added_and_removed(self, page, base_url):
         page.goto(f"{base_url}/manual")
