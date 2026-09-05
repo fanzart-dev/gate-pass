@@ -1,0 +1,12 @@
+[Unit]
+Description=Check the Gate Pass public link every 5 minutes
+
+[Timer]
+# The first check is a minute after boot: "the server came back but the link
+# did not" is one of the ways this has failed.
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
