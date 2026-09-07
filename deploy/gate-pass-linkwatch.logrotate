@@ -1,0 +1,17 @@
+# Installed by deploy/watch-public-link.sh --install.
+#
+# One line per probe per ingress address, once a minute — roughly 3000 lines a
+# day. Kept for a fortnight because the value of it is the PATTERN: "was it
+# slow all Tuesday afternoon" and "is it getting worse week on week" are the
+# questions this log exists to answer, and a single day cannot answer either.
+#
+# copytruncate because the script appends with >> and holds no handle worth
+# signalling; rotating out from under it would otherwise lose the new lines.
+/var/log/gate-pass-linkwatch.tsv {
+    weekly
+    rotate 2
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
