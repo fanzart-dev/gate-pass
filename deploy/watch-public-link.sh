@@ -4,7 +4,8 @@
 #
 #   sudo deploy/watch-public-link.sh           # check once, repair if broken
 #   sudo deploy/watch-public-link.sh --check   # check only, change nothing
-#   sudo deploy/watch-public-link.sh --install # run it every 5 minutes for ever
+#   sudo deploy/watch-public-link.sh --report   # how slow has it been, in numbers
+#   sudo deploy/watch-public-link.sh --install # run it every minute for ever
 #
 # WHY THIS EXISTS
 # ---------------------------------------------------------------------------
@@ -52,11 +53,45 @@ if [ "$MODE" = "--install" ]; then
             > "/etc/systemd/system/$unit" || die "could not write $unit"
     done
 
+    # The measurement log grows at ~3000 lines a day, so it rotates.
+    if [ -d /etc/logrotate.d ]; then
+        cp "$APP_DIR/deploy/gate-pass-linkwatch.logrotate" \
+           /etc/logrotate.d/gate-pass-linkwatch 2>/dev/null \
+          && log "log rotation installed"
+    fi
+
     systemctl daemon-reload
     systemctl enable --now gate-pass-linkwatch.timer
-    log "installed — checking every 5 minutes"
+    log "installed — checking every minute"
+    log "  sudo $0 --report          how slow it has actually been"
     log "  journalctl -u gate-pass-linkwatch -f     to watch it"
     log "  systemctl list-timers gate-pass-linkwatch"
+    exit 0
+fi
+
+# ------------------------------------------------------------------ report ---
+if [ "$MODE" = "--report" ]; then
+    LOG="/var/log/gate-pass-linkwatch.tsv"
+    [ -f "$LOG" ] || die "no measurements yet at $LOG"
+    printf "\n  Public link, as a browser would experience it\n"
+    printf "  %s\n\n" "------------------------------------------------------"
+    awk -F'\t' '
+        { n++; total += $6; if ($6 > max) { max = $6; when = $1 }
+          if ($3 !~ /^(200|301|302|401|403)$/) failed++
+          else if ($6 > 3) slow++
+          if ($1 >= start) {} }
+        END {
+            if (n == 0) { print "  nothing recorded yet"; exit }
+            printf "  probes            %d\n", n
+            printf "  timed out         %d  (%.1f%%)\n", failed, failed * 100 / n
+            printf "  slow, over 3s     %d  (%.1f%%)\n", slow, slow * 100 / n
+            printf "  average           %.2fs\n", total / n
+            printf "  worst             %.2fs  at %s\n", max, when
+        }' "$LOG"
+    printf "\n  Slowest 8 probes:\n"
+    sort -t"$(printf '\t')" -k6 -rn "$LOG" 2>/dev/null | head -8 \
+      | awk -F'\t' '{printf "    %s  %-16s %s  %ss (TLS %ss)\n", $1, $2, $3, $6, $5}'
+    printf "\n"
     exit 0
 fi
 
@@ -124,18 +159,50 @@ esac
 ADDRS="$(dig +short @1.1.1.1 "$NAME" A 2>/dev/null | grep -E '^[0-9.]+$' | head -4)"
 [ -n "$ADDRS" ] || die "$NAME does not resolve on public DNS — Funnel is not published at all"
 
+# How long a person actually waits. Chrome gives up well before the 20 seconds
+# this used to allow, so a request that took twelve was recorded as "OK" while
+# the operator was looking at ERR_TIMED_OUT. A check that is more patient than
+# the browser it is standing in for reports health that nobody experiences.
+BROWSER_PATIENCE=8
+# Past this it still completes, but the page feels broken and people reload —
+# worth recording, because the pattern over days is the evidence for whether
+# this is getting worse.
+SLOW_SECONDS=3
+LATENCY_LOG="/var/log/gate-pass-linkwatch.tsv"
+
 probe() {
+    # code<TAB>connect<TAB>tls<TAB>total, so a stall can be attributed. A slow
+    # TLS handshake with a fast connect means the ingress path is the problem,
+    # not the network reaching it — which is the distinction that says whether
+    # anything on this machine could possibly help.
     local ip="$1"
-    curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+    curl -s -o /dev/null --max-time "$BROWSER_PATIENCE" \
+         -w '%{http_code}\t%{time_connect}\t%{time_appconnect}\t%{time_total}' \
          --resolve "$NAME:443:$ip" "https://$NAME/login" 2>/dev/null
 }
 
 reachable=0
 for ip in $ADDRS; do
-    code="$(probe "$ip")"
+    IFS=$'\t' read -r code conn tls total <<< "$(probe "$ip")"
+    total="${total:-0}"
+
+    # One line per probe, kept so "it was slow again this afternoon" can be
+    # answered with numbers instead of an impression.
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -Iseconds)" "$ip" \
+        "${code:-0}" "${conn:-0}" "${tls:-0}" "$total" >> "$LATENCY_LOG" 2>/dev/null
+
     case "$code" in
-        200|301|302|401|403) log "OK   via $ip -> $code"; reachable=1 ;;
-        *)                   log "DOWN via $ip -> ${code:-no answer}" ;;
+        200|301|302|401|403)
+            reachable=1
+            if awk "BEGIN{exit !($total > $SLOW_SECONDS)}" 2>/dev/null; then
+                log "SLOW via $ip -> $code in ${total}s (connect ${conn}s, TLS ${tls}s)"
+                log "  a browser may already have given up; the TLS handshake crosses"
+                log "  to the Funnel ingress and back on every new connection"
+            else
+                log "OK   via $ip -> $code in ${total}s"
+            fi
+            ;;
+        *)  log "DOWN via $ip -> ${code:-no answer within ${BROWSER_PATIENCE}s} (connect ${conn:-?}s, TLS ${tls:-?}s)" ;;
     esac
 done
 
