@@ -806,3 +806,117 @@ class TestOptimisticDraftDelete:
             "the row was not restored after the delete failed"
         # And back in its own place, not appended at the bottom.
         assert page.locator(".draft-delete").first.get_attribute("data-draft-id") == first_id
+
+
+class TestRegisterMasterCheckbox:
+    """The header checkbox cycles instead of toggling.
+
+    The reason anybody ticks boxes on this page is to print a batch, and the
+    batch almost always wanted is "the ones not printed yet" — which otherwise
+    means reading down the column picking them out by hand.
+    """
+
+    def _open(self, page, base_url):
+        page.goto(f"{base_url}/register")
+        page.wait_for_selector("table.list")
+        master = page.locator("#select-all")
+        if master.count() == 0:
+            pytest.skip("this account cannot batch print, so there are no ticks")
+        return master
+
+    def _state(self, page):
+        return page.evaluate("""() => {
+          const ticks = [...document.querySelectorAll('.pass-tick')];
+          const master = document.querySelector('#select-all');
+          const unprinted = ticks.filter(t =>
+            t.closest('tr').querySelector('a.print-action.not-printed'));
+          return {
+            total: ticks.length,
+            unprinted: unprinted.length,
+            checked: ticks.filter(t => t.checked).length,
+            unprintedChecked: unprinted.filter(t => t.checked).length,
+            masterChecked: master.checked,
+            masterIndeterminate: master.indeterminate,
+          };
+        }""")
+
+    def test_it_cycles_unprinted_then_all_then_none(self, page, base_url):
+        master = self._open(page, base_url)
+        before = self._state(page)
+        if before["unprinted"] == 0 or before["unprinted"] == before["total"]:
+            pytest.skip("need a mix of printed and unprinted to see all three stages")
+
+        master.click()
+        first = self._state(page)
+        assert first["checked"] == first["unprinted"], (
+            f"click 1 selected {first['checked']}, expected the "
+            f"{first['unprinted']} unprinted")
+        assert first["unprintedChecked"] == first["unprinted"]
+        assert first["masterIndeterminate"], "click 1 should show a partial selection"
+        assert not first["masterChecked"]
+
+        master.click()
+        second = self._state(page)
+        assert second["checked"] == second["total"], "click 2 should select everything"
+        assert second["masterChecked"] and not second["masterIndeterminate"]
+
+        master.click()
+        third = self._state(page)
+        assert third["checked"] == 0, "click 3 should clear the selection"
+        assert not third["masterChecked"] and not third["masterIndeterminate"]
+
+        # And round again, so it is a cycle rather than a one-shot sequence.
+        master.click()
+        assert self._state(page)["checked"] == before["unprinted"]
+
+    @pytest.mark.parametrize("uniform", ["all printed", "none printed"])
+    def test_it_skips_the_unprinted_stage_when_it_would_be_a_dead_click(
+            self, page, base_url, uniform):
+        """With every pass in one print state, the first stage is dropped.
+
+        Selecting "only the unprinted" when there are none selects nothing and
+        looks broken; when they are ALL unprinted it is identical to selecting
+        everything, so the SECOND click looks dead. Either way the cycle should
+        collapse to all -> none, which is what a plain checkbox would do.
+
+        The page is forced into each uniform state rather than skipped, because
+        a branch that only runs on a register nobody has in front of them is a
+        branch nobody has tested.
+        """
+        master = self._open(page, base_url)
+        if uniform == "all printed":
+            page.evaluate("""() => document.querySelectorAll('a.print-action.not-printed')
+                               .forEach(a => a.classList.replace('not-printed', 'is-printed'))""")
+        else:
+            page.evaluate("""() => document.querySelectorAll('a.print-action.is-printed')
+                               .forEach(a => a.classList.replace('is-printed', 'not-printed'))""")
+
+        state = self._state(page)
+        assert state["unprinted"] in (0, state["total"]), "the page is not uniform"
+
+        master.click()
+        after = self._state(page)
+        assert after["checked"] == after["total"], (
+            f"with a uniform page ({uniform}) the first click should select "
+            f"everything, but selected {after['checked']} of {after['total']}")
+        assert after["masterChecked"] and not after["masterIndeterminate"]
+
+        master.click()
+        cleared = self._state(page)
+        assert cleared["checked"] == 0, "the second click should clear it"
+        assert not cleared["masterChecked"] and not cleared["masterIndeterminate"]
+
+    def test_ticking_a_row_by_hand_restarts_the_cycle(self, page, base_url):
+        master = self._open(page, base_url)
+        state = self._state(page)
+        if state["unprinted"] == 0 or state["unprinted"] == state["total"]:
+            pytest.skip("need a mix to tell the first stage from the second")
+
+        master.click()                       # stage 1: unprinted
+        page.locator(".pass-tick").first.click()   # operator intervenes
+        master.click()                       # should start again, not continue
+
+        after = self._state(page)
+        assert after["checked"] == after["unprinted"], (
+            "after a manual tick the header should restart at 'unprinted', "
+            f"but selected {after['checked']} of {after['total']}")
