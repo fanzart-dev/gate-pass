@@ -1,18 +1,51 @@
 # Setting up an office machine
 
-The gate pass server has **one public link that works from anywhere**:
+There are two addresses, and **which one you use matters**.
 
-    https://faniq.tailaf7188.ts.net
+## In the building — use this one
 
-Open it on any machine — Windows, Mac, phone, office broadband or home. There
-is nothing to install: no certificate, no VPN, no Kaspersky exclusion. The
-padlock is clean because that name has a genuine Let's Encrypt certificate,
-the same kind a bank uses, and it renews itself.
+    https://192.168.1.45
 
-**This is the link to give the logistics team.** They are on Windows machines
-that are not on the office LAN, so it is the only one that works for them.
+Roughly ten times faster, because it goes straight across the office network to
+the server in the corner. Nothing leaves the building.
+
+## Anywhere else — use this one
+
+    https://gatepass.tailaf7188.ts.net
+
+Works from any machine, anywhere, with nothing installed: no certificate, no
+VPN, no Kaspersky exclusion. The padlock is clean because that name carries a
+genuine Let's Encrypt certificate that renews itself.
+
+**This is the link for the logistics team**, who are on Windows machines that
+are not on the office LAN, and for anyone working from home.
 
 Set up on the server with `sudo deploy/enable-public-link.sh --replace`.
+
+## Why the office should not use the public link
+
+Because of where it is served from. Tailscale publishes it through an ingress
+in **Tokyo**, and the encrypted handshake for every new connection travels
+Bangalore → Tokyo → your browser before the first byte of the page arrives:
+
+    https://192.168.1.45              0.14 - 0.35s
+    https://gatepass...ts.net         1.1  - 3.2s, occasionally longer
+
+When that handshake takes longer than the browser is willing to wait, the page
+fails with **ERR_TIMED_OUT**. Reloading usually works, because a second attempt
+gets a fresh connection.
+
+That is not a fault anybody can fix on the server — it is where Tailscale
+serves the name from. It is also completely avoidable for anyone sitting in the
+building, which is the point of this section: if you are in the office, use the
+LAN address and none of it applies to you.
+
+If the public link times out and you are NOT in the office:
+
+1. Reload the page. Most timeouts clear on the second attempt.
+2. If it keeps failing, the server records every check —
+   `sudo deploy/watch-public-link.sh --report` shows how bad it has actually
+   been, rather than how bad it felt.
 
 ### What being public means
 
