@@ -1411,7 +1411,10 @@ def test_the_register_shows_what_has_reached_paper(tmpdir):
 
     page = client.get("/register").get_data(as_text=True)
     check("the register shows it printed", "print-action is-printed" in page)
-    check("and stops asking for paper", "not-printed" not in page)
+    # markup_only: the header checkbox's cycle script names the class too, and
+    # counting the script's mention of a thing as an instance of that thing is
+    # the same trap as counting the draft-tick handler as a draft tick.
+    check("and stops asking for paper", "not-printed" not in markup_only(page))
 
     # Reprints are worth seeing: a pass run off four times is worth a look, and
     # the count is the only place that shows.
@@ -5541,7 +5544,7 @@ def test_a_gate_pass_can_be_typed_without_an_invoice(tmpdir):
     upload_page = client.get("/upload").get_data(as_text=True)
     check("the way in is on the New Gate Pass page",
           'href="/manual"' in upload_page
-          and "Create Without Invoice" in upload_page)
+          and "Create Gate Pass" in upload_page)
     check("and it is not a nav tab",
           '/manual' not in client.get("/register").get_data(as_text=True))
     conn.close()

@@ -212,16 +212,85 @@
         }
       }
 
-      ticks.forEach((tick) => tick.addEventListener("change", refresh));
-      if (selectAll) {
-        selectAll.addEventListener("change", () => {
-          ticks.forEach((t) => { t.checked = selectAll.checked; });
-          refresh();
+      ticks.forEach((tick) => tick.addEventListener("change", () => {
+        // Touching a row by hand abandons wherever the header cycle had got
+        // to, so the next header click starts from the beginning rather than
+        // continuing a sequence the operator has stopped following.
+        stage = 0;
+        refresh();
+      }));
+
+      // The header box cycles rather than toggles: what still needs printing,
+      // then everything, then nothing.
+      //
+      // The first stage is the one that earns it. The reason anybody ticks
+      // boxes on this page is to print a batch, and the batch they almost
+      // always want is "the ones that have not been printed yet" — which
+      // otherwise means reading down the column picking them out by hand.
+      //
+      // Stages are built from what is actually on the page, not fixed at
+      // three. If every pass here is already printed, "unprinted only" would
+      // select nothing and the first click would look broken; if none of them
+      // are, it would be identical to "everything" and the second click would
+      // look dead. Either way that stage is dropped and the cycle is simply
+      // all -> none.
+      function unprintedTicks() {
+        return ticks.filter((t) => {
+          const row = t.closest("tr");
+          return row && row.querySelector("a.print-action.not-printed");
         });
+      }
+
+      function stages() {
+        const unprinted = unprintedTicks();
+        const useful = unprinted.length > 0 && unprinted.length < ticks.length;
+        return useful ? ["unprinted", "all", "none"] : ["all", "none"];
+      }
+
+      let stage = 0;
+
+      function describeNext() {
+        if (!selectAll) return;
+        const next = stages()[stage % stages().length];
+        selectAll.title = next === "unprinted" ? "Select the passes not yet printed"
+                        : next === "all" ? "Select every pass on this page"
+                        : "Clear the selection";
+      }
+
+      if (selectAll) {
+        selectAll.addEventListener("click", () => {
+          // NOT preventDefault. Cancelling a checkbox click runs the "canceled
+          // activation steps", which restore BOTH checkedness AND indeterminate
+          // to what they were before the click — and they run after this
+          // handler, so anything set here is quietly undone. The first version
+          // did cancel, and the partial state never appeared: refresh() set
+          // indeterminate, the browser put it straight back, and the box looked
+          // empty while two rows were ticked.
+          //
+          // So the browser's toggle is allowed to happen and then overwritten:
+          // the rows are set from the stage, and refresh() derives the header's
+          // appearance from the rows, which is the only thing that can keep the
+          // two in agreement.
+          const order = stages();
+          const choice = order[stage % order.length];
+          stage += 1;
+
+          if (choice === "unprinted") {
+            const wanted = new Set(unprintedTicks());
+            ticks.forEach((t) => { t.checked = wanted.has(t); });
+          } else {
+            ticks.forEach((t) => { t.checked = choice === "all"; });
+          }
+          refresh();
+          describeNext();
+        });
+        describeNext();
       }
       document.getElementById("bulk-clear").addEventListener("click", () => {
         ticks.forEach((t) => { t.checked = false; });
+        stage = 0;
         refresh();
+        describeNext();
       });
 
       // Straight to the printable page, which raises the print dialog itself.

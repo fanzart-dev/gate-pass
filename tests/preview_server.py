@@ -106,6 +106,15 @@ def main():
         prepared_by="Dinesh D")
     db.close(conn)
 
+    # One pass marked printed, so the register shows BOTH print states and the
+    # header checkbox's "select what still needs printing" stage has something
+    # to distinguish. With every pass in one state that stage is dropped, which
+    # is correct behaviour but leaves it untested.
+    conn = db.connect(app.config["DB_PATH"])
+    first = sorted(db.list_gate_passes(conn), key=lambda p: p["serial_seq"])[0]
+    db.mark_printed(conn, first["id"])
+    db.close(conn)
+
     # Two drafts sharing a document number, and one matching an issued pass, so
     # the duplicate warnings can be looked at. The prefixes differ deliberately:
     # "TO NO: FR ..." and a bare "FR ..." are the same number, and catching that
