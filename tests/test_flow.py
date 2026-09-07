@@ -5689,6 +5689,30 @@ def test_the_carton_lookup_answers_what_the_item_box_needs(tmpdir):
     conn.close()
 
 
+def test_the_office_instructions_do_not_name_a_dead_host(tmpdir):
+    """The document handed to staff points at an address that still exists.
+
+    It pointed at faniq.tailaf7188.ts.net for weeks after the machine was
+    renamed to gatepass — so the one page anybody is given when they ask "how
+    do I get in" led to a link that resolves to nothing. Nobody noticed because
+    the people who could have noticed all had the working link already.
+    """
+    doc = (ROOT / "deploy" / "OFFICE-MACHINES.md").read_text()
+
+    # Every tailnet hostname the document offers.
+    hosts = set(re.findall(r"https://([a-z0-9-]+)\.tail[a-z0-9]+\.ts\.net", doc))
+    check("the document names a public link at all", hosts)
+    check("and only the current one", hosts <= {"gatepass"})
+    if hosts - {"gatepass"}:
+        print(f"    stale hostnames in the document: {sorted(hosts - {'gatepass'})}")
+
+    # And it must still tell people in the building to use the fast path, or
+    # the whole office pays a Tokyo round trip for no reason.
+    check("it gives the LAN address too", "192.168.1.45" in doc)
+    check("and says which to use where",
+          "In the building" in doc and "Anywhere else" in doc)
+
+
 def markup_only(page):
     """The page with its <script> blocks stripped out.
 
@@ -5758,6 +5782,7 @@ def main():
         test_the_carton_master_can_be_managed_from_the_browser(tmpdir)
         test_the_carton_master_is_admin_only(tmpdir)
         test_the_carton_lookup_answers_what_the_item_box_needs(tmpdir)
+        test_the_office_instructions_do_not_name_a_dead_host(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)
         test_the_printed_totals_are_bolder_than_the_rows(tmpdir)
