@@ -18,8 +18,13 @@
 # If Kaspersky (or any other antivirus that scans HTTPS) is installed, this
 # script is not enough on its own — see the note it prints at the end.
 
+# The IP, not fanzart-server.local, because this script exists to fix machines
+# that cannot reach the server — and on Windows the commonest reason is that
+# `.local` does not resolve at all. Defaulting to the name meant the repair
+# tool failed for exactly the machines that needed it. Pass -Server to use a
+# name if you have one that works.
 param(
-    [string]$Server = "fanzart-server.local",
+    [string]$Server = "192.168.1.45",
     [string]$File   = ""
 )
 

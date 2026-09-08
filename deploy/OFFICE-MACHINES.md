@@ -64,11 +64,29 @@ every page behind it needs a password — but the door is now in public, so:
 When there is time, the stronger version is Cloudflare Access in front of it,
 so only a company email address reaches the sign-in page at all.
 
-## In the office: `https://fanzart-server.local`
+## In the office: `https://192.168.1.45`
 
-Slightly faster on the LAN because it does not leave the building, but each
-machine needs the certificate installed once. **If that is a nuisance, just use
-the public link above** — it works on the LAN too.
+**Use the IP address, not the name.** `fanzart-server.local` works on Macs and
+Linux but fails on many Windows machines with DNS_PROBE_FINISHED_NXDOMAIN,
+because `.local` is mDNS — a different mechanism from ordinary DNS, which
+Windows supports patchily and which office Wi-Fi frequently blocks outright.
+The server advertises the name correctly; the machine simply cannot hear it,
+and there is nothing to fix on the server end.
+
+The IP always resolves, because nothing has to resolve it. The certificate
+covers `192.168.1.45` as well as the name, so the padlock is just as clean.
+
+Each machine still needs the certificate installed once. **If that is a
+nuisance, just use the public link above** — it works on the LAN too, needs no
+certificate, and is the right answer for a visitor or a machine nobody wants to
+set up.
+
+If you would rather type a name than an address, add this line to
+`C:\Windows\System32\drivers\etc\hosts` (Notepad, run as Administrator):
+
+    192.168.1.45    fanzart-server.local
+
+That bypasses mDNS entirely and the name then works like any other.
 
 Each machine needs the server's certificate installed **once**. Until it is,
 the browser says "Not secure" and staff have to click through a security
@@ -89,7 +107,10 @@ anything, or give the server any access to the machine.
 
 ## Windows
 
-1. Open `http://fanzart-server.local/fanzart-ca.pem` — it downloads.
+1. Open `http://192.168.1.45/fanzart-ca.pem` — it downloads.
+   (The IP, not the name: a machine that cannot resolve
+   `fanzart-server.local` cannot download the file that fixes it either,
+   which is the circle this step used to send people round.)
 2. Right-click it → **Install Certificate**
 3. Choose **Local Machine** (not Current User, or only you get it)
 4. **Place all certificates in the following store** → Browse →
@@ -119,7 +140,8 @@ told about our authority.
 **Add the server to Kaspersky's trusted addresses.** Roughly:
 
 > Settings → Network settings → Encrypted connection scanning →
-> Trusted addresses / Manage exclusions → add `fanzart-server.local`
+> Trusted addresses / Manage exclusions → add `192.168.1.45`
+> (and `fanzart-server.local` too, if that name works on this machine)
 
 The exact wording moves between Kaspersky versions and between the home and
 business products; look for "encrypted connection" together with "trusted" or
@@ -134,7 +156,7 @@ than being worked around.
 
 Failing that, plain HTTP on the LAN:
 
-    http://fanzart-server.local
+    http://192.168.1.45
 
 The traffic never leaves the office LAN. That is a reasonable position; it is
 where this server was until recently, and it is better than teaching people to
@@ -143,7 +165,7 @@ click past security warnings.
 ## Linux
 
 ```bash
-curl -fsSO http://fanzart-server.local/fanzart-ca.pem
+curl -fsSO http://192.168.1.45/fanzart-ca.pem
 sudo apt install -y libnss3-tools     # browsers keep their own store
 bash trust-ca.sh fanzart-ca.pem
 ```
@@ -156,7 +178,7 @@ it looks as though the certificate did not work.
 
 ## macOS
 
-1. Download `http://fanzart-server.local/fanzart-ca.pem`
+1. Download `http://192.168.1.45/fanzart-ca.pem`
 2. Double-click → Keychain Access opens → add it to the **System** keychain
 3. Find "Fanzart Gate Pass Local CA", open it, expand **Trust**, set
    **When using this certificate: Always Trust**
@@ -172,7 +194,7 @@ and is why this is done by hand rather than pushed out silently.
 
 ## Checking it worked
 
-Open `https://fanzart-server.local` (or the Tailscale address). The padlock
+Open `https://192.168.1.45` (or the Tailscale address). The padlock
 should be plain, with no warning and no "Not secure".
 
 **Do not use `http://100.123.239.33`.** It now redirects to the Tailscale
