@@ -5715,6 +5715,26 @@ def test_the_office_instructions_do_not_name_a_dead_host(tmpdir):
     check("and says which to use where",
           "In the building" in doc and "Anywhere else" in doc)
 
+    # The setup steps must not depend on the name they are there to fix.
+    #
+    # They did: the first instruction was to download the CA from
+    # http://fanzart-server.local/fanzart-ca.pem, on a Windows machine whose
+    # symptom is that fanzart-server.local does not resolve. The repair told
+    # people to fetch a file from an address they had just proved they could
+    # not reach, which is a circle nobody can get out of.
+    setup = doc[doc.index("## Windows"):] if "## Windows" in doc else doc
+    downloads = re.findall(r"https?://([^/\s`]+)/fanzart-ca\.pem", setup)
+    check("the certificate is fetched by address, not by the mDNS name",
+          downloads and all(d[0].isdigit() for d in downloads))
+    if downloads and not all(d[0].isdigit() for d in downloads):
+        print(f"    CA download points at: {downloads}")
+
+    # And the script that automates it must default to something reachable.
+    ps = (ROOT / "deploy" / "trust-ca-windows.ps1").read_text()
+    default = re.search(r'\$Server\s*=\s*"([^"]+)"', ps)
+    check("the Windows helper defaults to an address, not the name",
+          default and default.group(1)[0].isdigit())
+
 
 def markup_only(page):
     """The page with its <script> blocks stripped out.
