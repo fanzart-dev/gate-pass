@@ -11,6 +11,8 @@ from pathlib import Path
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import invoice_parser
+import validation
+from validation import ValidationError  # noqa: F401  (re-exported for callers)
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
@@ -1414,15 +1416,19 @@ def delete_draft(conn, draft_id):
 def create_gate_pass(conn, draft_id, supplier_name, customer_name, invoice_no,
                       invoice_date, vehicle_no, items, invoice_pdf_path=None,
                       prepared_by="", prepared_by_user_id=None, remarks=""):
-    items = [i for i in items if str(i.get("item_name", "")).strip()]
-    if not items:
-        raise ValueError("at least one item with a name is required to issue a gate pass")
-    for item in items:
-        if not str(item.get("quantity", "")).strip():
-            raise ValueError("every item needs a quantity")
-        # Cartons are NOT required. They depend on how the goods are actually
-        # packed, which is known at the gate rather than at the keyboard, so the
-        # column prints blank and is filled in by hand on the paper copy.
+    # Checked BEFORE the write lock is taken, so a bad form does not open a
+    # transaction and does not touch the counter. _insert_gate_pass validates
+    # again — that is the one that actually guards the table, and this one only
+    # exists so the failure happens early and cheaply.
+    #
+    # Cartons are NOT required anywhere: they depend on how the goods are
+    # actually packed, which is known at the gate rather than at the keyboard,
+    # so the column prints blank and is filled in by hand on the paper copy.
+    validation.clean_gate_pass(
+        {"supplier_name": supplier_name, "customer_name": customer_name,
+         "invoice_no": invoice_no, "invoice_date": invoice_date,
+         "vehicle_no": vehicle_no, "remarks": remarks},
+        items)
 
     # The prefix names the current run. It only changes when an admin starts a
     # new one, so the count carries on across years by default.
@@ -1579,6 +1585,45 @@ def duplicate_document_report(conn, drafts):
     return report
 
 
+def passes_with_document_no(conn, invoice_no):
+    """Issued passes already carrying this document number.
+
+    The Drafts screen has warned about this since the duplicate work; the
+    manual form never did, so the one path with no PDF behind it — the path
+    most likely to be typed twice — was the only one that would spend a second
+    number on a document silently.
+
+    Cancelled passes are left out. A cancelled number is not a consignment that
+    left, so warning about it would train people to click past the warning.
+
+    Matched on the normalized number, so "FR-262702176" finds
+    "TO NO: FR 262702176" — the same rule the batch uses.
+    """
+    key = normalize_document_no(invoice_no)
+    if not key:
+        return []
+    found = []
+    for row in conn.execute(
+            "SELECT id, serial_no, invoice_no, customer_name, issued_at "
+            "FROM gate_passes WHERE status = 'issued' ORDER BY serial_seq DESC"):
+        if normalize_document_no(row["invoice_no"]) == key:
+            found.append(dict(row))
+    return found
+
+
+def pass_history(conn, gate_pass_id):
+    """Everything the book records about one pass, oldest first.
+
+    The audit log has always held this, but only somebody with a shell could
+    read it — so a corrected pass looked identical to one that had never been
+    touched, and "was this changed?" could not be answered by the people who
+    needed to answer it.
+    """
+    return [dict(r) for r in conn.execute(
+        "SELECT action, details, created_at FROM audit_log "
+        "WHERE gate_pass_id = ? ORDER BY id", (gate_pass_id,))]
+
+
 def blocking_duplicates(conn, draft_ids):
     """The subset of these drafts that cannot be issued as a batch.
 
@@ -1701,7 +1746,25 @@ def create_gate_passes_batch(conn, draft_ids, prepared_by="", prepared_by_user_i
 def _insert_gate_pass(conn, prefix, seq, supplier_name, customer_name, invoice_no,
                        invoice_date, vehicle_no, items, invoice_pdf_path,
                        prepared_by, prepared_by_user_id, source, remarks=""):
-    """One pass at an already-allocated number. Caller holds the write lock."""
+    """One pass at an already-allocated number. Caller holds the write lock.
+
+    Every issuance path in the app arrives here — the review screen, a batch,
+    and the manual form — which is why the validation lives here rather than in
+    each of them. It used to live in three places that disagreed, and the one
+    with the fewest checks was the one a browser could post to directly: a
+    blank supplier and a quantity of "abc" both issued a real pass.
+    """
+    fields, items = validation.clean_gate_pass(
+        {"supplier_name": supplier_name, "customer_name": customer_name,
+         "invoice_no": invoice_no, "invoice_date": invoice_date,
+         "vehicle_no": vehicle_no, "remarks": remarks},
+        items)
+    supplier_name = fields["supplier_name"]
+    customer_name = fields["customer_name"]
+    invoice_no = fields["invoice_no"]
+    invoice_date = fields["invoice_date"]
+    vehicle_no = fields["vehicle_no"]
+    remarks = fields["remarks"]
     serial_no = serial_for(prefix, seq)
     # The COLUMN gets the canonical run, not the prefix as spelled. Storing
     # "FZ27-" here while next_seq looked the run up as "FZ27" made MAX() find
@@ -1954,6 +2017,34 @@ EDITABLE_FIELDS = ("supplier_name", "customer_name", "invoice_no",
                    "invoice_date", "vehicle_no", "remarks")
 
 
+def _describe_item_change(position, old_row, new_row):
+    """What actually changed on one line, naming every value on both sides.
+
+    The old version labelled the line with its OLD name and then reported only
+    quantity and cartons, so renaming "Original item" to "Replacement item"
+    with the numbers untouched was recorded as
+
+        Original item: qty 5->5, cartons 5->5
+
+    which does not merely omit the new name — it positively states that nothing
+    changed, on the one record whose job is to say what did. An audit line that
+    is wrong is worse than no audit line, because it will be believed.
+    """
+    old_name, old_qty, old_ctn = old_row
+    new_name, new_qty, new_ctn = new_row
+    parts = []
+    if old_name != new_name:
+        parts.append(f"renamed {old_name!r} -> {new_name!r}")
+    if old_qty != new_qty:
+        parts.append(f"qty {old_qty or '(blank)'} -> {new_qty or '(blank)'}")
+    if old_ctn != new_ctn:
+        parts.append(f"cartons {old_ctn or '(blank)'} -> {new_ctn or '(blank)'}")
+    # The line is identified by its position AND by what it was called, so the
+    # entry still makes sense to somebody reading it a year later who cannot
+    # see the pass.
+    return f"line {position} ({old_name!r}): " + ", ".join(parts)
+
+
 def update_gate_pass(conn, gate_pass_id, items=None, edited_by="", **fields):
     """Correct an already-issued pass, and record that it was corrected.
 
@@ -1991,24 +2082,24 @@ def update_gate_pass(conn, gate_pass_id, items=None, edited_by="", **fields):
             changes.append(f"{name}: {old or '(blank)'} -> {new or '(blank)'}")
 
     if items is not None:
-        cleaned = [i for i in items if str(i.get("item_name", "")).strip()]
-        if not cleaned:
-            raise ValueError("a gate pass needs at least one item")
+        # The same checks every issuance path uses. A correction can put a
+        # value on a pass that is already printed, so it has no business being
+        # laxer than the form that created it — this used to accept anything
+        # with a name on it.
+        cleaned = validation.clean_items(items)
         before = [(i["item_name"], i["quantity"], i["cartons"]) for i in existing["items"]]
-        after = [(str(i.get("item_name", "")).strip(), str(i.get("quantity", "")).strip(),
-                  str(i.get("cartons", "")).strip()) for i in cleaned]
+        after = [(i["item_name"], i["quantity"], i["cartons"]) for i in cleaned]
         if before != after:
             if len(before) != len(after):
                 changes.append(f"items: {len(before)} line(s) -> {len(after)} line(s)")
-            for old_row, new_row in zip(before, after):
+            for position, (old_row, new_row) in enumerate(zip(before, after), start=1):
                 if old_row != new_row:
-                    changes.append(
-                        f"{old_row[0]}: qty {old_row[1]}->{new_row[1]}, "
-                        f"cartons {old_row[2] or '(blank)'}->{new_row[2] or '(blank)'}")
+                    changes.append(_describe_item_change(position, old_row, new_row))
             for extra in after[len(before):]:
-                changes.append(f"added {extra[0]} qty {extra[1]}")
+                changes.append(f"line added: {extra[0]!r} qty {extra[1]}"
+                               + (f", cartons {extra[2]}" if extra[2] else ""))
             for gone in before[len(after):]:
-                changes.append(f"removed {gone[0]} qty {gone[1]}")
+                changes.append(f"line removed: {gone[0]!r} qty {gone[1]}")
     else:
         cleaned = None
 

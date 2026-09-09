@@ -589,15 +589,45 @@ def register_routes(app):
         review screen's Issue button, and lands on the printed pass.
         """
         today = datetime.now(db.IST).strftime("%Y-%m-%d")
+
+        def show(form=None, items=None, duplicate=None):
+            """Render the form, always with a FRESH token.
+
+            Fresh on every render including after a rejection: the token the
+            browser was holding has been spent by the attempt that failed, and
+            handing back the same one would make the corrected resubmission
+            look like the replay this is here to stop.
+            """
+            return render_template(
+                "manual.html", today=today, items_per_page=db.ITEMS_PER_PAGE,
+                active="manual", form=form or {}, items=items or [],
+                duplicate=duplicate, form_token=_mint_form_token())
+
         if request.method == "GET":
-            return render_template("manual.html", today=today,
-                                    items_per_page=db.ITEMS_PER_PAGE,
-                                    active="manual", form={}, items=[])
+            return show()
+
+        # Before anything is read, let alone written.
+        if not _spend_form_token(request.form.get("form_token")):
+            flash("That form had already been submitted, so nothing was issued "
+                  "again. If you meant to create a second gate pass, start a "
+                  "new one — the first is in the register.", "warn")
+            return redirect(url_for("register"))
 
         fields = {name: request.form.get(name, "").strip() for name in
                   ("supplier_name", "customer_name", "invoice_no",
                    "invoice_date", "vehicle_no", "remarks")}
         items = _items_from_form(request.form)
+
+        # The same warning the Drafts screen gives, which this path never had:
+        # a document number already in the register is usually a mistake and
+        # occasionally a split delivery, so it asks rather than refuses.
+        # Confirmed once, the answer travels back in the form.
+        if request.form.get("duplicate_ack") != "1":
+            seen = db.passes_with_document_no(g.db, fields["invoice_no"])
+            if seen:
+                # No flash: the warning belongs beside the number it is about,
+                # not in a strip at the top of the page.
+                return show(form=fields, items=items, duplicate=seen)
 
         try:
             gate_pass = db.create_gate_pass(
@@ -612,10 +642,9 @@ def register_routes(app):
             # Back to the form with what was typed still in it. Losing a
             # twenty-line item table to a missing vehicle number would make
             # people avoid the screen.
-            flash(str(exc), "error")
-            return render_template("manual.html", today=today,
-                                    items_per_page=db.ITEMS_PER_PAGE,
-                                    active="manual", form=fields, items=items)
+            for problem in getattr(exc, "problems", [str(exc)]):
+                flash(problem, "error")
+            return show(form=fields, items=items)
 
         return redirect(url_for("print_gate_pass", gate_pass_id=gate_pass["id"]))
 
@@ -1045,8 +1074,16 @@ def register_routes(app):
                   "closed record and cannot be edited.", "error")
             return redirect(url_for("register"))
 
+        def show():
+            # The history goes with the form, so somebody about to change a
+            # pass can see what has already been changed on it — including by
+            # somebody else, an hour ago.
+            return render_template("edit_pass.html", gate_pass=gate_pass,
+                                    history=db.pass_history(g.db, gate_pass_id),
+                                    active="register")
+
         if request.method == "GET":
-            return render_template("edit_pass.html", gate_pass=gate_pass, active="register")
+            return show()
 
         items = _items_from_form(request.form)
         try:
@@ -1055,8 +1092,12 @@ def register_routes(app):
                 edited_by=g.user["display_name"],
                 **{name: request.form.get(name, "") for name in db.EDITABLE_FIELDS})
         except ValueError as exc:
-            flash(str(exc)[0].upper() + str(exc)[1:] + ".", "error")
-            return render_template("edit_pass.html", gate_pass=gate_pass, active="register")
+            for problem in getattr(exc, "problems", [str(exc)]):
+                flash(problem[0].upper() + problem[1:] + ".", "error")
+            # Re-read: the failed attempt may have been rejected precisely
+            # because somebody else changed the pass underneath this form.
+            gate_pass = db.get_gate_pass(g.db, gate_pass_id) or gate_pass
+            return show()
 
         if changes:
             flash(f"Gate Pass {gate_pass['serial_no']} updated successfully. "
@@ -1420,6 +1461,39 @@ def _fill_blanks_only(draft, form):
             merged[key] = was_read or str(offered.get(key) or "").strip()
         items.append(merged)
     return fields, items
+
+
+# One-use tokens for forms that spend a gate pass number.
+#
+# The manual form could be submitted twice — a double click, a refresh on the
+# POST, an impatient second press while the first request was in flight — and
+# each submission took its own serial. Two numbers, one consignment, and the
+# register showing a delivery that left twice.
+#
+# The token is minted when the form is rendered and consumed when it is
+# accepted, so the SECOND arrival of the same form finds nothing to consume and
+# is refused. A set rather than a single value because people legitimately open
+# two tabs; capped because a session that opened forty forms and abandoned them
+# should not carry forty tokens for ever.
+MAX_OPEN_FORMS = 20
+
+
+def _mint_form_token():
+    token = secrets.token_urlsafe(16)
+    open_tokens = session.get("form_tokens", [])
+    open_tokens.append(token)
+    session["form_tokens"] = open_tokens[-MAX_OPEN_FORMS:]
+    return token
+
+
+def _spend_form_token(token):
+    """True if this submission is the first one carrying that token."""
+    open_tokens = session.get("form_tokens", [])
+    if not token or token not in open_tokens:
+        return False
+    open_tokens.remove(token)
+    session["form_tokens"] = open_tokens
+    return True
 
 
 def _as_stored_date(value):

@@ -1072,6 +1072,19 @@ table.list.fans-table td input {
   color: var(--danger);
 }
 
+/* The audit history on a pass. Collapsed when there is only the issue entry,
+   open once something has actually been changed — the whole reason to look. */
+details.history summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.history-list { margin: 12px 0 0; padding-left: 20px; }
+.history-list li { margin-bottom: 8px; font-size: 13px; line-height: 1.5; }
+.history-when { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
+.history-detail { color: var(--ink-2); }
+
 /* ------------------------------------------------------------------ toasts */
 /* Confirmation for something that happened without leaving the page. The flash
    strip at the top of the layout only appears on a navigation, and the ✕
