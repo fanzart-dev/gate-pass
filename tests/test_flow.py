@@ -23,6 +23,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 import db  # noqa: E402
+import validation  # noqa: E402
 import app as appmod  # noqa: E402
 import app as app_module  # noqa: E402
 import invoice_parser  # noqa: E402
@@ -1538,7 +1539,7 @@ def test_correcting_an_issued_pass(tmpdir):
     check("naming who made it", "Dinesh D" in details)
     check("and keeping the old value beside the new",
           "OLD CUSTOMER -> NEW CUSTOMER" in details)
-    check("including the quantity that changed", "qty 3->5" in details)
+    check("including the quantity that changed", "qty 3 -> 5" in details)
 
     # An edit that changes nothing must not fabricate a record of a change.
     same = db.update_gate_pass(conn, gp["id"], edited_by="Dinesh D",
@@ -5485,6 +5486,7 @@ def test_a_gate_pass_can_be_typed_without_an_invoice(tmpdir):
 
     before = db.count_gate_passes(conn)
     resp = client.post("/manual", headers={"Origin": "http://localhost"}, data={
+        "form_token": manual_token(client),
         "supplier_name": "FANZART LLP",
         "customer_name": "MBS DECOR LLP",
         "invoice_no": "LP 262700338",
@@ -5528,6 +5530,7 @@ def test_a_gate_pass_can_be_typed_without_an_invoice(tmpdir):
     # what was typed comes back rather than being thrown away.
     before = db.count_gate_passes(conn)
     resp = client.post("/manual", headers={"Origin": "http://localhost"}, data={
+        "form_token": manual_token(client),
         "supplier_name": "FANZART LLP", "customer_name": "SOMEBODY",
         "invoice_no": "LP 9", "invoice_date": "2026-09-05",
         "item_name": [""], "quantity": [""], "cartons": [""],
@@ -5736,6 +5739,242 @@ def test_the_office_instructions_do_not_name_a_dead_host(tmpdir):
           default and default.group(1)[0].isdigit())
 
 
+def test_the_same_manual_form_cannot_issue_twice(tmpdir):
+    """A double click, a refresh, an impatient second press: one number.
+
+    Reported from a review: the same manual form submitted twice produced two
+    different gate pass numbers, so the register showed one consignment leaving
+    twice and the two passes could not be told apart.
+    """
+    flask_app, client = logged_in_app(tmpdir, "replay")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    H = {"Origin": "http://localhost"}
+
+    form = {"supplier_name": "FANZART LLP", "customer_name": "MBS DECOR LLP",
+            "invoice_no": "LP 262700338", "invoice_date": "2026-09-09",
+            "item_name": ["Ceiling Fan"], "quantity": ["4"], "cartons": ["4"]}
+
+    token = manual_token(client)
+    first = client.post("/manual", headers=H, data=dict(form, form_token=token))
+    check("the first submission issues", first.status_code == 302)
+    check("and lands on the printed pass", "/print/" in first.headers["Location"])
+    check("one number spent", db.count_gate_passes(conn) == 1)
+
+    # The identical POST again — exactly what a refresh or a double click sends.
+    second = client.post("/manual", headers=H, data=dict(form, form_token=token))
+    check("the replay is refused", second.status_code == 302)
+    check("and goes to the register, not to a new pass",
+          "/register" in second.headers["Location"])
+    check("NO second number was spent", db.count_gate_passes(conn) == 1)
+
+    # A post with no token at all — a script, or a form from a stale page.
+    client.post("/manual", headers=H, data=form)
+    check("a submission with no token spends nothing", db.count_gate_passes(conn) == 1)
+
+    # And a genuine second pass is still possible: a new form, a new token.
+    token = manual_token(client)
+    again = client.post("/manual", headers=H,
+                        data=dict(form, form_token=token, invoice_no="LP 999",
+                                   duplicate_ack="1"))
+    check("a deliberate new pass still works", again.status_code == 302)
+    check("which spends the next number", db.count_gate_passes(conn) == 2)
+    conn.close()
+
+
+def test_a_repeated_document_number_asks_before_spending_a_number(tmpdir):
+    """The warning Drafts has always given, on the path that never had it.
+
+    A split delivery against one invoice and a reissue after a correction are
+    both ordinary, so this asks rather than refuses. What is not ordinary is
+    spending a second number on a document without noticing.
+    """
+    flask_app, client = logged_in_app(tmpdir, "manualdupe")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    H = {"Origin": "http://localhost"}
+    form = {"supplier_name": "S", "customer_name": "C", "invoice_no": "FR 262702176",
+            "invoice_date": "2026-09-09", "item_name": ["Fan"], "quantity": ["2"],
+            "cartons": [""]}
+
+    client.post("/manual", headers=H, data=dict(form, form_token=manual_token(client)))
+    check("the first one issues", db.count_gate_passes(conn) == 1)
+
+    # Same number again: held, and told why.
+    resp = client.post("/manual", headers=H,
+                       data=dict(form, form_token=manual_token(client)))
+    check("the second is held back, not issued", db.count_gate_passes(conn) == 1)
+    body = resp.get_data(as_text=True)
+    check("the page says which pass already has it", "FZ-00001" in body)
+    check("and offers the way through", "duplicate_ack" in body)
+    check("with what was typed still in the form", 'value="FR 262702176"' in body)
+
+    # Confirmed, it goes — a split delivery is a real thing.
+    client.post("/manual", headers=H,
+                data=dict(form, form_token=manual_token(client), duplicate_ack="1"))
+    check("confirming issues the second pass", db.count_gate_passes(conn) == 2)
+
+    # Spacing and punctuation do not get round it.
+    resp = client.post("/manual", headers=H,
+                       data=dict(form, form_token=manual_token(client),
+                                  invoice_no="FR-262702176"))
+    check("a differently spaced number is still caught",
+          db.count_gate_passes(conn) == 2)
+
+    # A cancelled pass is not a consignment that left, so it must not warn —
+    # warning about one teaches people to click past the warning.
+    passes = sorted(db.list_gate_passes(conn), key=lambda p: p["serial_seq"])
+    for one in passes:
+        db.cancel_gate_pass(conn, one["id"], "test", cancelled_by="Ravi Kumar")
+    resp = client.post("/manual", headers=H,
+                       data=dict(form, form_token=manual_token(client)))
+    check("a cancelled pass does not trigger the warning",
+          db.count_gate_passes(conn) == 3)
+    conn.close()
+
+
+def test_every_issuance_path_validates_the_same_way(tmpdir):
+    """Blank fields and nonsense numbers are refused wherever they arrive.
+
+    Reported from a review: a manual request with a blank supplier issued a
+    pass, and a quantity of "abc" issued a pass. The browser's `required`
+    attribute is a courtesy to the person typing, never a control — a form can
+    be posted by anything. The checks now live at the one point every path
+    goes through.
+    """
+    flask_app, client = logged_in_app(tmpdir, "validate")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    H = {"Origin": "http://localhost"}
+
+    def manual(**over):
+        form = {"supplier_name": "FANZART LLP", "customer_name": "SOMEBODY",
+                "invoice_no": "LP 1", "invoice_date": "2026-09-09",
+                "item_name": ["Fan"], "quantity": ["2"], "cartons": [""]}
+        form.update(over)
+        form["form_token"] = manual_token(client)
+        before = db.count_gate_passes(conn)
+        client.post("/manual", headers=H, data=form)
+        return db.count_gate_passes(conn) - before
+
+    for label, over in (
+            ("a blank supplier", {"supplier_name": ""}),
+            ("a blank customer", {"customer_name": ""}),
+            ("a blank document number", {"invoice_no": ""}),
+            ("a blank date", {"invoice_date": ""}),
+            ("a date that is not a date", {"invoice_date": "not-a-date"}),
+            ("a quantity of abc", {"quantity": ["abc"]}),
+            ("a quantity of zero", {"quantity": ["0"]}),
+            ("a negative quantity", {"quantity": ["-5"]}),
+            ("cartons that are not a number", {"cartons": ["abc"]}),
+            ("an item with no name but a quantity",
+             {"item_name": [""], "quantity": ["4"]}),
+            ("no items at all", {"item_name": [""], "quantity": [""], "cartons": [""]}),
+    ):
+        check(f"{label} spends no number", manual(**over) == 0)
+
+    # And the shapes people legitimately type are still accepted, tidied.
+    check("a normal pass still issues", manual(invoice_no="LP 100") == 1)
+    check("blank cartons are fine — they are written in at the gate",
+          manual(invoice_no="LP 101", cartons=[""]) == 1)
+    check("'12 nos' is understood", manual(invoice_no="LP 102", quantity=["12 nos"]) == 1)
+    stored = [p for p in db.list_gate_passes(conn) if p["invoice_no"] == "LP 102"]
+    full = db.get_gate_pass(conn, stored[0]["id"])
+    check("and stored as a plain number", full["items"][0]["quantity"] == "12")
+    check("the date is stored in the book's own format",
+          full["invoice_date"] == "09-09-2026")
+
+    # The library itself, since the routes are only one of its callers.
+    for bad in ({"supplier_name": ""}, {"invoice_date": "31-02-2026"},
+                 {"customer_name": ""}):
+        fields = {"supplier_name": "S", "customer_name": "C", "invoice_no": "I",
+                  "invoice_date": "01-01-2026"}
+        fields.update(bad)
+        try:
+            validation.clean_gate_pass(fields, [{"item_name": "X", "quantity": "1"}])
+            check(f"clean_gate_pass rejects {bad}", False)
+        except validation.ValidationError:
+            check(f"clean_gate_pass rejects {bad}", True)
+
+    check("an impossible date is caught", validation.normalize_date("31-02-2026") is None)
+    check("the picker's format is accepted", validation.normalize_date("2026-09-09") == "09-09-2026")
+    check("the book's own format survives", validation.normalize_date("09-09-2026") == "09-09-2026")
+    check("a two-digit year is refused rather than guessed",
+          validation.normalize_date("09-09-26") is None)
+
+    # A correction must be no laxer than the form that created the pass.
+    gp = db.create_gate_pass(conn, None, "S", "C", "I", "01-01-2026", "",
+                              [{"item_name": "Fan", "quantity": "2", "cartons": ""}],
+                              prepared_by="Ravi Kumar")
+    for bad_items in ([{"item_name": "Fan", "quantity": "abc"}],
+                       [{"item_name": "", "quantity": "2"}],
+                       [{"item_name": "Fan", "quantity": "0"}]):
+        try:
+            db.update_gate_pass(conn, gp["id"], items=bad_items, edited_by="Ravi Kumar")
+            check(f"a correction rejects {bad_items[0]}", False)
+        except ValueError:
+            check(f"a correction rejects {bad_items[0]}", True)
+    conn.close()
+
+
+def test_a_correction_records_what_the_item_became(tmpdir):
+    """The audit line names both sides of every change, including the name.
+
+    Reported from a review: renaming an item produced an entry showing only the
+    ORIGINAL name and quantities marked unchanged. That does not merely omit
+    the new name — it positively states that nothing changed, on the one record
+    whose job is to say what did, and a wrong audit line is worse than none
+    because it will be believed.
+    """
+    flask_app, client = logged_in_app(tmpdir, "audittrail")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    gp = db.create_gate_pass(conn, None, "S", "C", "I", "01-01-2026", "",
+                              [{"item_name": "Original item", "quantity": "5",
+                                "cartons": "5"}], prepared_by="Ravi Kumar")
+
+    changes = db.update_gate_pass(
+        conn, gp["id"], edited_by="Ravi Kumar",
+        items=[{"item_name": "Replacement item", "quantity": "5", "cartons": "5"}])
+    line = "; ".join(changes)
+    check("the old name is recorded", "Original item" in line)
+    check("AND the new name is recorded", "Replacement item" in line)
+    check("and it says a rename happened", "renamed" in line)
+    check("without claiming the quantity changed", "qty" not in line)
+
+    # A change to everything at once still names everything.
+    changes = db.update_gate_pass(
+        conn, gp["id"], edited_by="Ravi Kumar",
+        items=[{"item_name": "Third item", "quantity": "9", "cartons": "2"}])
+    line = "; ".join(changes)
+    for expected in ("Replacement item", "Third item", "qty 5 -> 9", "cartons 5 -> 2"):
+        check(f"the entry carries {expected!r}", expected in line)
+
+    # It is in the log, not just returned to the caller.
+    stored = conn.execute(
+        "SELECT details FROM audit_log WHERE gate_pass_id = ? AND action = 'edit' "
+        "ORDER BY id DESC LIMIT 1", (gp["id"],)).fetchone()["details"]
+    check("and the log holds the same detail", "Third item" in stored)
+
+    # Readable by the people who need it, not only through a shell.
+    history = db.pass_history(conn, gp["id"])
+    check("the history starts with the issue", history[0]["action"] == "issue")
+    check("and lists both corrections",
+          sum(1 for h in history if h["action"] == "edit") == 2)
+    page = client.get(f"/gate-passes/{gp['id']}/edit").get_data(as_text=True)
+    check("the edit screen shows the history", "History" in page)
+    check("naming what the item became", "Third item" in page)
+    conn.close()
+
+
+def manual_token(client):
+    """The one-use token from a freshly rendered manual form.
+
+    Every real submission carries one, because the browser got it from the
+    page. A test that posts without one is testing a request no browser makes.
+    """
+    page = client.get("/manual").get_data(as_text=True)
+    found = re.search(r'name="form_token" value="([^"]+)"', page)
+    assert found, "the manual form did not render a submission token"
+    return found.group(1)
+
+
 def markup_only(page):
     """The page with its <script> blocks stripped out.
 
@@ -5805,6 +6044,10 @@ def main():
         test_the_carton_master_can_be_managed_from_the_browser(tmpdir)
         test_the_carton_master_is_admin_only(tmpdir)
         test_the_carton_lookup_answers_what_the_item_box_needs(tmpdir)
+        test_the_same_manual_form_cannot_issue_twice(tmpdir)
+        test_a_repeated_document_number_asks_before_spending_a_number(tmpdir)
+        test_every_issuance_path_validates_the_same_way(tmpdir)
+        test_a_correction_records_what_the_item_became(tmpdir)
         test_the_office_instructions_do_not_name_a_dead_host(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)

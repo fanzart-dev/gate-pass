@@ -16,7 +16,44 @@
      purpose: this screen exists for the consignments that do not fit the usual
      shape, and a picker that only offers customers already in the book would
      defeat the whole point of it. #}
+  {% if duplicate %}
+    {# The same warning Drafts gives, which this screen never had. It asks
+       rather than refuses: a split delivery against one invoice, or a reissue
+       after a correction, are both ordinary. What is not ordinary is spending
+       a second number without noticing. #}
+    <div class="notice" style="border-left-color:var(--warn)">
+      <span class="notice-icon">&#9888;</span>
+      <span>
+        <strong>{{ duplicate|length }} gate pass{{ 'es' if duplicate|length != 1 else '' }}
+        already carr{{ 'y' if duplicate|length != 1 else 'ies' }} this document number.</strong>
+        <ul style="margin:6px 0 0; padding-left:18px">
+          {% for other in duplicate %}
+            <li>
+              <a href="{{ url_for('print_gate_pass', gate_pass_id=other.id) }}">{{ other.serial_no }}</a>
+              — {{ other.customer_name }}, issued {{ other.issued_at|ist }}
+            </li>
+          {% endfor %}
+        </ul>
+        <div style="margin-top:8px">
+          If this is a split delivery or a reissue, tick the box and press
+          Issue again. Otherwise open the pass above — it may be the one you
+          meant.
+        </div>
+        <label style="display:block;margin-top:8px;text-transform:none;letter-spacing:0">
+          <input type="checkbox" name="duplicate_ack" value="1" form="manual-form">
+          Yes, issue a second gate pass for this document number
+        </label>
+      </span>
+    </div>
+  {% endif %}
+
   <form method="post" id="manual-form" class="card">
+    {# One use only. A double click, a refresh on the POST, or an impatient
+       second press used to take a second serial number for the same
+       consignment — the register then showed one delivery leaving twice. The
+       token is minted when this page is rendered and spent when it is
+       accepted, so a second arrival has nothing left to spend. #}
+    <input type="hidden" name="form_token" value="{{ form_token }}">
     <div class="grid-2">
       <div class="field">
         <label for="supplier_name">From</label>

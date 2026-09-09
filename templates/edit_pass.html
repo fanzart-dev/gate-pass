@@ -17,6 +17,25 @@
     </span>
   </div>
 
+  {% if history %}
+    {# What has already happened to this pass. The audit log has always held
+       it, but only somebody with a shell could read it — so a corrected pass
+       looked exactly like one that had never been touched, and "has this been
+       changed?" could not be answered by the people who needed to answer it. #}
+    <details class="card history" {% if history|length > 1 %}open{% endif %}>
+      <summary>History — {{ history|length }} entr{{ 'ies' if history|length != 1 else 'y' }}</summary>
+      <ol class="history-list">
+        {% for entry in history %}
+          <li>
+            <span class="history-when">{{ entry.created_at|ist }}</span>
+            <span class="pill {{ 'cancelled' if entry.action == 'cancel' else 'issued' }}">{{ entry.action }}</span>
+            <span class="history-detail">{{ entry.details }}</span>
+          </li>
+        {% endfor %}
+      </ol>
+    </details>
+  {% endif %}
+
   <form method="post" id="review-form" class="card">
     <div class="grid-2">
       {# Serial and issue date are shown, never posted: the database refuses to
