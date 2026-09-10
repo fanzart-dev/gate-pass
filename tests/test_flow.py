@@ -1335,10 +1335,13 @@ def test_totals_are_shown_live_and_derived_on_save(tmpdir):
         # Delegated from the tbody, so a row added later is covered without
         # anything being bound to it — a per-row listener is one that gets
         # forgotten on the next "+ Add item".
+        # The behaviour moved into the shared module; the page still has to
+        # carry the markup it works on.
         check(f"{screen} listens on the table, not on each row",
-              'tbody.addEventListener("input"' in page)
+              'tbody.addEventListener("input"' in items_editor_js())
         check(f"{screen} ignores blanks rather than summing NaN",
-              "Number.isNaN" in page)
+              "Number.isNaN" in items_editor_js())
+        check(f"{screen} loads the shared editor", "items-editor.js" in page)
 
     check("the edit screen has them too",
           "total-qty-display" in (ROOT / "templates" / "edit_pass.html").read_text())
@@ -2162,7 +2165,7 @@ def test_review_screen_explains_multiple_pages(tmpdir):
     check("the review screen carries the page notice", b'id="page-note"' in page)
     check("the notice is informational, not an error", b'class="notice info"' in page)
     check("the old blocking wording is gone", b"split this into two" not in page)
-    check("the screen knows the page size", b"ITEMS_PER_PAGE = 26" in page)
+    check("the screen knows the page size", b"itemsPerPage: 26" in page)
 
     check("the drafts screen offers it for issuing",
           b"Needs attention" not in client.get("/drafts").data)
@@ -3809,20 +3812,31 @@ def test_item_table_keyboard_navigation(tmpdir):
     conn.close()
     page = client.get(f"/review/{draft_id}").get_data(as_text=True)
 
-    check("the items table listens for keys", 'tbody.addEventListener("keydown"' in page)
-    check("the arrows are handled", '"ArrowDown"' in page and '"ArrowUp"' in page)
-    check("Enter is handled", '"Enter"' in page)
+    check("the items table listens for keys",
+          'tbody.addEventListener("keydown"' in items_editor_js())
+    js = items_editor_js()
+    check("the review screen loads the shared editor", "items-editor.js" in page)
+    check("the arrows are handled", '"ArrowDown"' in js and '"ArrowUp"' in js)
+    check("Enter is handled", '"Enter"' in js)
     check("Enter walks the inputs in document order, so it crosses rows",
-          'tbody.querySelectorAll("input")' in page)
+          'tbody.querySelectorAll("input")' in js)
     check("the arrows still move by row, keeping the column",
-          "rowIndex + vertical" in page)
+          "rows.indexOf(row) + vertical" in js)
 
     # Enter inside a form submits it by default. On a review screen that issues
     # a gate pass on a stray keystroke, so it has to be stopped every time —
     # including in the very last cell, where there is nowhere to move to.
     check("Enter can never submit the form",
-          "e.preventDefault();" in page
-          and page.index("e.preventDefault();") < page.index("let next = null;"))
+          "e.preventDefault();" in js
+          and js.index("e.preventDefault();") < js.index("let next = null;"))
+
+    # All three screens run the same file now, which is the point of extracting
+    # it — the copies had already drifted.
+    for screen in ("review.html", "manual.html", "edit_pass.html"):
+        markup = (ROOT / "templates" / screen).read_text()
+        check(f"{screen} uses the shared editor", "items-editor.js" in markup)
+        check(f"{screen} has no item-editor logic of its own",
+              'addEventListener("keydown"' not in markup)
 
 
 def test_login_cannot_be_brute_forced(tmpdir):
@@ -5961,6 +5975,17 @@ def test_a_correction_records_what_the_item_became(tmpdir):
     check("the edit screen shows the history", "History" in page)
     check("naming what the item became", "Third item" in page)
     conn.close()
+
+
+def items_editor_js():
+    """The one item-editor script, which three screens now share.
+
+    These assertions used to read the review template, because the JavaScript
+    was written into it — and into manual.html, and into edit_pass.html, three
+    times, where the copies drifted. Checking the shared file instead is the
+    same check on the code that actually runs.
+    """
+    return (ROOT / "static" / "js" / "items-editor.js").read_text()
 
 
 def manual_token(client):

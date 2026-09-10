@@ -109,7 +109,12 @@
             <td class="col-qty-cell"><input type="text" name="quantity" value="{{ item.quantity }}"></td>
             <td class="col-ctn-cell"><input type="text" name="cartons" value="{{ item.cartons }}"></td>
             <td class="row-tools">
-              <button type="button" class="row-remove" title="Remove this line">&times;</button>
+              {# remove-row, not row-remove: the stylesheet has only ever had a
+                 rule for the former, so this button was unstyled from the day
+                 the screen was written. Nobody saw it because the two other
+                 screens with the same button spell it correctly. #}
+              <button type="button" class="remove-row" title="Remove this line"
+                      aria-label="Remove this line">&times;</button>
             </td>
           </tr>
           {% endfor %}
@@ -140,81 +145,20 @@
     </div>
   </form>
 
+  <script src="{{ static_url('js/items-editor.js') }}"></script>
   <script>
-    // The same two behaviours as the review screen: Enter walks across the row
-    // and falls into the next, the arrows move down a column, and Enter never
-    // submits — on this screen submitting rewrites a pass that is already out
-    // in the world.
-    const tbody = document.querySelector("#items-table tbody");
-
-    document.getElementById("add-row").addEventListener("click", () => {
-      const row = tbody.rows[0].cloneNode(true);
-      row.querySelectorAll("input").forEach((el) => { el.value = ""; });
-      tbody.appendChild(row);
-      renumber();
-      row.querySelector("input").focus();
+    // Correcting a pass that is already printed and signed, so the guard
+    // matters most here: losing a half-typed correction means doing it again
+    // against a piece of paper somebody is holding.
+    const editor = ItemsEditor.attach({
+      addButton: "#add-row",
+      guardUnsaved: true,
     });
 
-    tbody.addEventListener("click", (e) => {
-      if (!e.target.classList.contains("row-remove")) return;
-      // Never down to nothing: a pass with no items is not a pass, and the
-      // server refuses it anyway. Emptying the last row is the same intent.
-      if (tbody.rows.length === 1) {
-        tbody.rows[0].querySelectorAll("input").forEach((el) => { el.value = ""; });
-      } else {
-        e.target.closest("tr").remove();
-      }
-      renumber();
-    });
-
-    function renumber() {
-      [...tbody.rows].forEach((row, i) => { row.cells[0].textContent = i + 1; });
-      recalcTotals();
-    }
-
-    // Blanks and part-typed values count as nothing rather than breaking the
-    // sum into NaN.
-    function sumColumn(name) {
-      let total = 0;
-      tbody.querySelectorAll(`input[name="${name}"]`).forEach((el) => {
-        const n = parseInt(el.value.trim(), 10);
-        if (!Number.isNaN(n)) total += n;
-      });
-      return total;
-    }
-
-    function recalcTotals() {
-      document.getElementById("total-qty-display").textContent = sumColumn("quantity");
-      document.getElementById("total-cartons-display").textContent = sumColumn("cartons");
-    }
-
-    // Delegated, so rows added later need nothing bound to them.
-    tbody.addEventListener("input", (e) => {
-      if (e.target.name === "quantity" || e.target.name === "cartons") recalcTotals();
-    });
-    recalcTotals();
-
-    tbody.addEventListener("keydown", (e) => {
-      const cell = e.target;
-      if (cell.tagName !== "INPUT") return;
-      const isEnter = e.key === "Enter";
-      const vertical = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
-      if (!isEnter && !vertical) return;
-      e.preventDefault();
-
-      const rows = [...tbody.querySelectorAll("tr")];
-      const row = cell.closest("tr");
-      let next = null;
-      if (isEnter) {
-        const all = [...tbody.querySelectorAll("input")];
-        next = all[all.indexOf(cell) + 1] || null;
-      } else {
-        const target = rows[rows.indexOf(row) + vertical];
-        const column = [...row.children].indexOf(cell.closest("td"));
-        next = target && target.children[column]
-             ? target.children[column].querySelector("input") : null;
-      }
-      if (next) { next.focus(); next.select(); }
+    // Discard is a deliberate departure, not an accident, so it must not be
+    // challenged by the unsaved-changes prompt.
+    document.querySelectorAll("a.button.quiet").forEach((link) => {
+      link.addEventListener("click", () => editor.releaseGuard());
     });
   </script>
 {% endblock %}

@@ -920,3 +920,74 @@ class TestRegisterMasterCheckbox:
         assert after["checked"] == after["unprinted"], (
             "after a manual tick the header should restart at 'unprinted', "
             f"but selected {after['checked']} of {after['total']}")
+
+
+class TestUnsavedChangesGuard:
+    """Leaving a half-typed pass asks first.
+
+    Nothing on these screens is stored until the form is submitted, and a
+    twenty-line item table is twenty minutes of somebody's afternoon. Asked for
+    in review, after a draft edit was lost.
+
+    Tested by dispatching beforeunload and reading defaultPrevented rather than
+    by driving a real navigation: the browser's own dialog cannot be inspected,
+    but whether the page asked for it can be, and that is the behaviour.
+    """
+
+    ASKED = """() => {
+      const e = new Event('beforeunload', {cancelable: true});
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    }"""
+
+    def test_an_untouched_form_leaves_without_a_word(self, page, base_url):
+        page.goto(f"{base_url}/manual")
+        page.wait_for_selector("#items-table")
+        assert not page.evaluate(self.ASKED), \
+            "an untouched form should never interrupt someone leaving"
+
+    def test_a_typed_form_asks_before_leaving(self, page, base_url):
+        page.goto(f"{base_url}/manual")
+        page.wait_for_selector("#items-table")
+        page.fill("#customer_name", "MBS DECOR LLP")
+        assert page.evaluate(self.ASKED), \
+            "a form with typing in it left without asking"
+
+    def test_typing_only_in_the_item_table_still_counts(self, page, base_url):
+        """The rows are inside the form, so editing one is editing the form."""
+        page.goto(f"{base_url}/manual")
+        page.wait_for_selector("#items-table")
+        page.locator('#items-table tbody input[name="item_name"]').first.fill("Ceiling Fan")
+        assert page.evaluate(self.ASKED)
+
+    def test_submitting_is_not_leaving(self, page, base_url):
+        """Issuing the pass must not be challenged by the guard."""
+        page.goto(f"{base_url}/manual")
+        page.wait_for_selector("#items-table")
+        page.fill("#supplier_name", "FANZART LLP")
+        page.fill("#customer_name", "MBS DECOR LLP")
+        page.fill("#invoice_no", "LP 262700338")
+        row = page.locator("#items-table tbody tr").first
+        row.locator('input[name="item_name"]').fill("Ceiling Fan")
+        row.locator('input[name="quantity"]').fill("4")
+
+        page.on("dialog", lambda d: d.accept())
+        page.click("button[type=submit].primary")
+        page.wait_for_url(re.compile(r"/(print|manual)"), timeout=15000)
+        # Whatever it landed on, it must not have been blocked by our guard.
+        assert "/manual" not in page.url or page.locator(".notice").count() > 0, \
+            "the guard interfered with a real submission"
+
+    def test_the_edit_screen_guards_too(self, page, base_url):
+        """The screen where losing work costs most: the pass is already printed."""
+        page.goto(f"{base_url}/register")
+        page.wait_for_selector("table.list")
+        edit = page.locator("a[href*='/edit']")
+        if edit.count() == 0:
+            pytest.skip("this account cannot edit issued passes")
+        edit.first.click()
+        page.wait_for_selector("#items-table")
+
+        assert not page.evaluate(self.ASKED), "untouched edit form asked to confirm"
+        page.locator('#items-table tbody input[name="quantity"]').first.fill("99")
+        assert page.evaluate(self.ASKED), "a changed correction left without asking"
