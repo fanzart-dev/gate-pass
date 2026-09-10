@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Put the gate pass book back, and prove beforehand that it can be put back.
 #
-#   deploy/restore.sh --drill              # prove the newest backup is usable
+#   deploy/restore.sh --drill              # prove the newest local backup works
+#   deploy/restore.sh --drill cloud        # prove the newest OFF-MACHINE one does
 #   deploy/restore.sh --drill <file.gz>    # prove a particular one is
 #   deploy/restore.sh --list               # what backups exist, and how old
 #   sudo deploy/restore.sh --restore <file.gz>   # actually put it back
@@ -36,6 +37,17 @@ PYTHON="$APP_DIR/.venv/bin/python3"
 MODE="${1:-}"
 FILE="${2:-}"
 
+# The cloud copy, if one is configured. This matters most in the situation the
+# whole thing exists for: if the office server is gone, so is $BACKUP_DIR, and
+# the only backups left are the ones somewhere else. Being able to list and
+# pull them from here — or from any machine with the same rclone config — is
+# the difference between having a backup and having had one.
+[ -f "$APP_DIR/.env" ] && . "$APP_DIR/.env"
+CLOUD=""
+for m in ${GATE_PASS_BACKUP_MIRRORS:-}; do
+    case "$m" in rclone:*) CLOUD="${m#rclone:}"; break ;; esac
+done
+
 say()  { printf "\n\033[1m==> %s\033[0m\n" "$*"; }
 note() { printf "    %s\n" "$*"; }
 die()  { printf "\n\033[31mERROR: %s\033[0m\n" "$*" >&2; exit 1; }
@@ -54,11 +66,38 @@ if [ "$MODE" = "--list" ]; then
         found=$((found + 1))
     done
     [ "$found" -gt 0 ] || note "none — nothing has ever been backed up here"
+
+    if [ -n "$CLOUD" ] && command -v rclone >/dev/null; then
+        say "Off-machine copies in $CLOUD"
+        rclone lsl "$CLOUD" 2>/dev/null | tail -8 | sed 's/^/    /' \
+            || note "could not reach $CLOUD — check: rclone lsd ${CLOUD%%:*}:"
+        note ""
+        note "To pull one down:  rclone copy $CLOUD/<name> ."
+    else
+        say "Off-machine copies"
+        note "none configured — see GATE_PASS_BACKUP_MIRRORS in deploy/env.example"
+        note "Until one is, the register exists in exactly one place."
+    fi
     exit 0
 fi
 
 [ "$MODE" = "--drill" ] || [ "$MODE" = "--restore" ] \
     || die "usage: $0 --drill | --list | --restore <file.gz>"
+
+# "cloud" drills the newest OFF-MACHINE copy rather than the local one. That is
+# the copy that will still exist in the emergency, so it is the one worth
+# proving — a local backup passing a drill says nothing about the remote one.
+if [ "$FILE" = "cloud" ]; then
+    [ -n "$CLOUD" ] || die "no rclone mirror configured in $APP_DIR/.env"
+    command -v rclone >/dev/null || die "rclone is not installed"
+    newest="$(rclone lsf "$CLOUD" 2>/dev/null | grep '\.db\.gz$' | sort | tail -1)"
+    [ -n "$newest" ] || die "no backups found in $CLOUD"
+    PULLED="$(mktemp -d)/$newest"
+    rclone copyto "$CLOUD/$newest" "$PULLED" 2>/dev/null \
+        || die "could not download $newest from $CLOUD"
+    note "pulled $newest from $CLOUD"
+    FILE="$PULLED"
+fi
 
 [ -n "$FILE" ] || FILE="$(newest_backup)"
 [ -n "$FILE" ] || die "no backups found in $BACKUP_DIR"
