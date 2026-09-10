@@ -43,7 +43,11 @@ Verified against DOC63/DOC66/DOC69_WEBPOS_TO.pdf.
 
 import re
 
-import invoice_parser
+# NOT `import invoice_parser`. invoice_parser imports THIS module to route a
+# transfer memo to it, so importing it back made a cycle — and the import was
+# never used: the only mentions of invoice_parser here are in docstrings,
+# describing the shape this module returns. A cycle that exists to satisfy a
+# comment is a cycle that will eventually be load-bearing by accident.
 
 # Either marker routes a document here; the real memos carry both, on their
 # first two lines.

@@ -991,3 +991,101 @@ class TestUnsavedChangesGuard:
         assert not page.evaluate(self.ASKED), "untouched edit form asked to confirm"
         page.locator('#items-table tbody input[name="quantity"]').first.fill("99")
         assert page.evaluate(self.ASKED), "a changed correction left without asking"
+
+
+class TestReviewDocumentPanel:
+    """The uploaded PDF beside the fields it was read from.
+
+    Asked for in review: an extraction error is obvious against the original
+    and invisible without it — a wrong quantity looks exactly like a right one
+    until you can see the invoice.
+    """
+
+    def _open_draft_with_pdf(self, page, base_url):
+        page.goto(f"{base_url}/drafts")
+        page.wait_for_selector("table.list")
+        rows = page.locator("tbody tr")
+        for i in range(rows.count()):
+            row = rows.nth(i)
+            link = row.locator("a[href*='/review/']")
+            if link.count() == 0:
+                continue
+            link.first.click()
+            page.wait_for_url(re.compile(r"/review/"))
+            if page.locator("#review-document").count() > 0:
+                return True
+            page.goto(f"{base_url}/drafts")
+            page.wait_for_selector("table.list")
+        return False
+
+    def test_the_original_is_shown_beside_the_form(self, page, base_url):
+        if not self._open_draft_with_pdf(page, base_url):
+            pytest.skip("no draft with its PDF still on disk")
+
+        frame = page.locator(".document-frame")
+        assert frame.count() == 1, "the document panel is not on the page"
+        src = frame.get_attribute("src")
+        assert "/invoices/" in src, f"the frame points somewhere odd: {src}"
+
+        # Side by side, not stacked, on a wide screen — the whole point.
+        page.set_viewport_size({"width": 1600, "height": 1000})
+        columns = page.evaluate(
+            "() => getComputedStyle(document.getElementById('review-split')).gridTemplateColumns")
+        assert len(columns.split()) == 2, f"expected two columns, got {columns!r}"
+
+    def test_the_pdf_is_actually_served_and_framable(self, page, base_url):
+        """X-Frame-Options is DENY app-wide, which would blank this panel.
+
+        The header has to be relaxed to SAMEORIGIN for this one route or the
+        frame renders empty — and an empty frame looks like a broken PDF
+        rather than like a misconfigured header.
+        """
+        if not self._open_draft_with_pdf(page, base_url):
+            pytest.skip("no draft with its PDF still on disk")
+
+        src = page.locator(".document-frame").get_attribute("src")
+        response = page.request.get(f"{base_url}{src}")
+        assert response.status == 200, f"the PDF did not load: {response.status}"
+        assert response.headers.get("x-frame-options", "").upper() == "SAMEORIGIN", (
+            "the invoice route must allow same-origin framing, got "
+            f"{response.headers.get('x-frame-options')!r}")
+        # No size assertion. Other tests in this suite upload deliberately tiny
+        # 16-byte stand-in PDFs, and whichever draft this one happens to open
+        # may be one of them — "the file is big enough" is not something this
+        # test can know. That it is served, and framable, is.
+        assert response.body(), "the served file is empty"
+
+    def test_hiding_it_is_remembered(self, page, base_url):
+        if not self._open_draft_with_pdf(page, base_url):
+            pytest.skip("no draft with its PDF still on disk")
+
+        page.click("#hide-document")
+        assert page.locator("#review-document").is_hidden()
+        assert page.locator("#show-document").is_visible()
+        columns = page.evaluate(
+            "() => getComputedStyle(document.getElementById('review-split')).gridTemplateColumns")
+        assert len(columns.split()) == 1, "the form should take the full width when hidden"
+
+        # It is a preference of this browser, so it survives a reload.
+        page.reload()
+        page.wait_for_selector("#review-split")
+        assert page.locator("#review-document").is_hidden(), \
+            "hiding the document was not remembered"
+
+        page.click("#show-document")
+        page.reload()
+        page.wait_for_selector("#review-split")
+        assert page.locator("#review-document").is_visible()
+
+    def test_it_stacks_rather_than_squeezing_on_a_narrow_screen(self, page, base_url):
+        """Two half-width columns are worse than one of each."""
+        if not self._open_draft_with_pdf(page, base_url):
+            pytest.skip("no draft with its PDF still on disk")
+
+        page.set_viewport_size({"width": 900, "height": 950})
+        columns = page.evaluate(
+            "() => getComputedStyle(document.getElementById('review-split')).gridTemplateColumns")
+        assert len(columns.split()) == 1, f"should stack at 900px, got {columns!r}"
+        assert not page.evaluate(
+            "() => document.documentElement.scrollWidth > window.innerWidth + 1"), \
+            "the page scrolls sideways at 900px"

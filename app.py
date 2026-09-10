@@ -523,10 +523,20 @@ def register_routes(app):
 
         may_edit = db.user_can(g.user, "can_edit_parsed_details")
 
+        # Whether the PDF is still THERE, not merely whether a path was
+        # recorded. A path outlives its file — an interrupted upload, a
+        # cleaned-up storage folder, a database restored beside a different
+        # invoices directory — and the panel would then frame a 404, which
+        # renders as an empty white box that looks like a broken PDF rather
+        # than like a missing one.
+        has_document = bool(draft["invoice_pdf_path"]) and (
+            Path(app.config["STORAGE_DIR"]) / draft["invoice_pdf_path"]).is_file()
+
         if request.method == "GET":
             return render_template("review.html", draft=draft,
                                     items_per_page=db.ITEMS_PER_PAGE,
                                     may_edit=may_edit,
+                                    has_document=has_document,
                                     active="drafts")
 
         action = request.form.get("action", "save")
@@ -1260,7 +1270,14 @@ def register_routes(app):
         leading folder is stripped before joining.
         """
         relpath = relpath.removeprefix("invoices/")
-        return send_from_directory(app.config["INVOICES_DIR"], relpath)
+        response = send_from_directory(app.config["INVOICES_DIR"], relpath)
+        # The review screen shows this PDF in a frame beside the form so an
+        # extraction error can be seen against the document it came from. The
+        # app-wide default is X-Frame-Options: DENY, which blocks framing by
+        # ANY page including our own, so this one route relaxes to SAMEORIGIN.
+        # Still no other site can frame it — which is what that header is for.
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        return response
 
 
 def _permissions_from_form():
