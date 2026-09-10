@@ -6060,6 +6060,22 @@ def test_the_backup_warns_when_there_is_no_off_machine_copy():
           "sha256sum" in script and "does not match" in script)
     check("a failed mirror is an error, not a log line",
           "exit $failed" in script)
+    # Every verification runs inside a command substitution, and this script
+    # runs under `set -euo pipefail` — so a failing rclone or ssh would abort
+    # the whole thing AFTER the "ok" line, leaving a log that stops mid-way and
+    # reads exactly like success. Each one needs `|| true` so the mismatch is
+    # reported instead of the script disappearing.
+    # Backslash continuations joined first: the ssh one spans two lines, so
+    # reading them separately would look at the half without the guard on it.
+    joined = script.replace("\\\n", " ")
+    for line in joined.splitlines():
+        if 'remote_sum="$(' in line or 'LOCAL_SUM="$(' in line:
+            check(f"verification survives a failure: {line.strip()[:40]}",
+                  "|| true" in line)
+    check("it works with cloud storage, not only a second disk",
+          "rclone" in script)
+    check("and verifies the cloud copy by reading it BACK",
+          "rclone cat" in script)
 
     example = (ROOT / "deploy" / "env.example").read_text()
     check("the setting is documented where it is set",

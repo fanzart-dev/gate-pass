@@ -112,14 +112,44 @@ if [ -z "$MIRRORS" ]; then
     exit 0
 fi
 
-LOCAL_SUM="$(sha256sum "$BACKUP_FILE" | awk '{print $1}')"
+LOCAL_SUM="$(sha256sum "$BACKUP_FILE" | awk '{print $1}' || true)"
+[ -n "$LOCAL_SUM" ] || { stamp "ERROR: could not hash the backup just written"; exit 1; }
 failed=0
 for target in $MIRRORS; do
     name="$(basename "$BACKUP_FILE")"
-    if [ -d "$target" ]; then
+    if [ "${target#rclone:}" != "$target" ]; then
+        # Cloud storage — Google Drive, Backblaze, anything rclone speaks.
+        # Written "rclone:remote:path", e.g. rclone:gdrive:gate-pass-backups.
+        #
+        # This is the one that does not depend on a device being switched on.
+        # A laptop shut in a bag at 9pm receives nothing, and a USB stick has
+        # to be remembered; a cloud target is there whether anybody is or not.
+        spec="${target#rclone:}"
+        if ! command -v rclone >/dev/null; then
+            stamp "ERROR: $target needs rclone, which is not installed"
+            failed=1
+            continue
+        fi
+        if rclone copyto "$BACKUP_FILE" "$spec/$name" --no-traverse 2>/dev/null; then
+            # Verified by READING IT BACK, not by trusting the upload. That is
+            # the only check that proves what matters — that the bytes can be
+            # retrieved on the day the server is gone. At 21 KB it costs
+            # nothing to be sure, and it works through an encrypted remote,
+            # where comparing stored hashes would not.
+            # `|| true` is load-bearing. This script runs under `set -euo
+            # pipefail`, so a failing rclone in a command substitution aborts
+            # the whole script — and it aborts AFTER the "ok" line, so the log
+            # simply stops and reads exactly like a successful backup. A cloud
+            # that accepts the write and then fails the read is precisely the
+            # case this check exists for; it must report, not vanish.
+            remote_sum="$(rclone cat "$spec/$name" 2>/dev/null | sha256sum | awk '{print $1}' || true)"
+        else
+            remote_sum=""
+        fi
+    elif [ -d "$target" ]; then
         # A mounted disk: a USB stick, a NAS share.
         if cp "$BACKUP_FILE" "$target/$name" 2>/dev/null; then
-            remote_sum="$(sha256sum "$target/$name" | awk '{print $1}')"
+            remote_sum="$(sha256sum "$target/$name" | awk '{print $1}' || true)"
         else
             remote_sum=""
         fi
@@ -128,7 +158,7 @@ for target in $MIRRORS; do
         if scp -q -o BatchMode=yes -o ConnectTimeout=30 "$BACKUP_FILE" "$target/" 2>/dev/null; then
             host="${target%%:*}"; path="${target#*:}"
             remote_sum="$(ssh -o BatchMode=yes -o ConnectTimeout=30 "$host" \
-                          "sha256sum '$path/$name' 2>/dev/null | awk '{print \$1}'" 2>/dev/null)"
+                          "sha256sum '$path/$name' 2>/dev/null | awk '{print \$1}'" 2>/dev/null || true)"
         else
             remote_sum=""
         fi
