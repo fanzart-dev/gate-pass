@@ -131,6 +131,25 @@ def main():
                                 "cartons": qty} for name, qty in DEMO_ITEMS[:2]])
     db.close(conn)
 
+    # A draft WITH its PDF still on disk, so the review screen's document panel
+    # has something to show. That panel is the point of the screen now: an
+    # extraction error is obvious against the original and invisible without
+    # it, so a preview lacking one hides the feature being previewed.
+    import shutil as _shutil
+    sample = Path(__file__).parent / "sample_invoices" / "golden_touch_sample.pdf"
+    if sample.exists():
+        (storage / "invoices").mkdir(parents=True, exist_ok=True)
+        _shutil.copy(sample, storage / "invoices" / "20260903120000_sample.pdf")
+        conn = db.connect(app.config["DB_PATH"])
+        db.create_draft(
+            conn, supplier_name="Golden Touch Exports",
+            customer_name="NIKSHAN ELECTRONICS",
+            invoice_no="FR 262702181", invoice_date="03-09-2026",
+            invoice_pdf_path="invoices/20260903120000_sample.pdf",
+            items=[{"sl_no": i, "item_name": name, "quantity": qty, "cartons": ""}
+                   for i, (name, qty) in enumerate(DEMO_ITEMS[:3], 1)])
+        db.close(conn)
+
     # A draft, so /review can be looked at too. The print pages are not the
     # only screen with a layout worth eyeballing.
     conn = db.connect(app.config["DB_PATH"])

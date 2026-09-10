@@ -6070,6 +6070,65 @@ def test_the_backup_warns_when_there_is_no_off_machine_copy():
           "restore.sh --drill" in install)
 
 
+def test_no_module_imports_itself_in_a_circle():
+    """The import graph has no cycles.
+
+    invoice_parser imports stock_transfer_parser to route a transfer memo to
+    it, and stock_transfer_parser imported invoice_parser straight back. The
+    import was never used — the only mentions were in docstrings describing the
+    shape the module returns — so the cycle existed to satisfy a comment. Those
+    are the dangerous ones: harmless until somebody adds a real use at the top
+    of one file and the other stops importing.
+    """
+    import ast
+
+    ours = {p.stem for p in ROOT.glob("*.py")} - {"manage_users", "manage_cartons",
+                                                   "manage_reset"}
+    graph = {}
+    for name in sorted(ours):
+        source = (ROOT / f"{name}.py").read_text()
+        tree = ast.parse(source)
+        imports = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".")[0] in ours:
+                        imports.add(alias.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                if node.module.split(".")[0] in ours:
+                    imports.add(node.module.split(".")[0])
+        graph[name] = imports - {name}
+
+    # Depth-first, reporting the actual loop rather than just its existence —
+    # "there is a cycle" is not enough to go and fix one.
+    def find_cycle(node, seen, stack):
+        for other in sorted(graph.get(node, ())):
+            if other in stack:
+                return stack[stack.index(other):] + [other]
+            if other in seen:
+                continue
+            seen.add(other)
+            found = find_cycle(other, seen, stack + [other])
+            if found:
+                return found
+        return None
+
+    cycle = None
+    for start in sorted(graph):
+        cycle = find_cycle(start, {start}, [start])
+        if cycle:
+            break
+    check("no import cycle between the app's own modules", cycle is None)
+    if cycle:
+        print(f"    cycle: {' -> '.join(cycle)}")
+
+    # And the specific one that was there, since a test that only checks the
+    # general property can pass while the old line is quietly restored.
+    transfer = (ROOT / "stock_transfer_parser.py").read_text()
+    check("stock_transfer_parser does not import invoice_parser",
+          "\nimport invoice_parser" not in transfer)
+
+
 def items_editor_js():
     """The one item-editor script, which three screens now share.
 
@@ -6168,6 +6227,7 @@ def main():
         test_a_correction_records_what_the_item_became(tmpdir)
         test_a_backup_can_actually_be_restored(tmpdir)
         test_the_backup_warns_when_there_is_no_off_machine_copy()
+        test_no_module_imports_itself_in_a_circle()
         test_the_office_instructions_do_not_name_a_dead_host(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)

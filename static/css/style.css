@@ -1085,6 +1085,58 @@ details.history summary {
 .history-when { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
 .history-detail { color: var(--ink-2); }
 
+/* --------------------------------- the review screen's document panel */
+/* Form and original side by side, so an extraction error can be seen against
+   the document it came from. Below 1100px they stack instead: two half-width
+   columns are worse than one of each, and the item table needs its width. */
+.review-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.85fr);
+  gap: 20px;
+  align-items: start;
+}
+.review-split.document-hidden { grid-template-columns: minmax(0, 1fr); }
+
+@media (max-width: 1100px) {
+  .review-split { grid-template-columns: minmax(0, 1fr); }
+}
+
+.review-document { padding: 0; overflow: hidden; position: sticky; top: 16px; }
+.document-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--head-bg);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--label);
+}
+.document-head a, .document-head button {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 10px;
+}
+.document-frame {
+  display: block;
+  width: 100%;
+  /* Tall enough to read a line off without scrolling the frame for every
+     field, short enough that the page still scrolls as one thing. */
+  height: 78vh;
+  min-height: 420px;
+  border: 0;
+  background: var(--head-bg);
+}
+@media (max-width: 1100px) {
+  .review-document { position: static; }
+  .document-frame { height: 60vh; }
+}
+
 /* ------------------------------------------------------------------ toasts */
 /* Confirmation for something that happened without leaving the page. The flash
    strip at the top of the layout only appears on a navigation, and the ✕

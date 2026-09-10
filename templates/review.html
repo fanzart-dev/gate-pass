@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Review Draft{% endblock %}
+{# Wide, because the document sits beside the form. Without the PDF panel this
+   is the same reading width as before — the column simply is not there. #}
+{% block container_class %}{{ 'container-wide' if has_document else '' }}{% endblock %}
 {% block content %}
   {% with step = 2 %}{% include "_steps.html" %}{% endwith %}
 
@@ -42,6 +45,10 @@
       {% endif %}
     </div>
   {% endmacro %}
+
+  {% if has_document %}
+    <div class="review-split" id="review-split">
+  {% endif %}
 
   <form method="post" id="review-form" class="card">
     {% if not may_edit %}
@@ -138,6 +145,36 @@
     </div>
   </form>
 
+  {% if has_document %}
+      {# The document the fields were read from, beside the fields. An
+         extraction error is obvious against the original and invisible
+         without it — a wrong quantity looks exactly like a right one until
+         you can see the invoice.
+
+         An <iframe> rather than a rendering library: every browser in this
+         office already has a PDF viewer, and shipping one would be a megabyte
+         of JavaScript to show a file the browser can already open. #}
+      <aside class="review-document card" id="review-document">
+        <div class="document-head">
+          <span>Original document</span>
+          <span>
+            <a href="{{ url_for('uploaded_invoice', relpath=draft.invoice_pdf_path) }}"
+               target="_blank" rel="noopener">Open full size</a>
+            <button type="button" id="hide-document" class="link-button">Hide</button>
+          </span>
+        </div>
+        <iframe class="document-frame"
+                src="{{ url_for('uploaded_invoice', relpath=draft.invoice_pdf_path) }}"
+                title="The uploaded invoice this draft was read from"
+                loading="lazy"></iframe>
+      </aside>
+    </div>
+
+    <button type="button" id="show-document" class="button" hidden>
+      Show the original document
+    </button>
+  {% endif %}
+
   <script src="{{ static_url('js/items-editor.js') }}"></script>
   <script>
     // Rows can only be added or removed where the parser found no items at
@@ -157,5 +194,30 @@
     document.querySelectorAll("button.danger, a.button.quiet").forEach((el) => {
       el.addEventListener("click", () => editor.releaseGuard());
     });
+
+    // Showing the document is a preference, not a setting: it belongs to this
+    // browser and nobody else's. localStorage can throw in a private window,
+    // so every touch of it is guarded — a page that fails to load because a
+    // preference could not be read would be a poor trade for a panel.
+    const split = document.getElementById("review-split");
+    if (split) {
+      const panel = document.getElementById("review-document");
+      const showButton = document.getElementById("show-document");
+      const KEY = "gatepass.reviewDocument";
+
+      function setShown(shown) {
+        panel.hidden = !shown;
+        split.classList.toggle("document-hidden", !shown);
+        showButton.hidden = shown;
+        try { localStorage.setItem(KEY, shown ? "1" : "0"); } catch (e) { /* fine */ }
+      }
+
+      let remembered = "1";
+      try { remembered = localStorage.getItem(KEY) ?? "1"; } catch (e) { /* fine */ }
+      setShown(remembered !== "0");
+
+      document.getElementById("hide-document").addEventListener("click", () => setShown(false));
+      showButton.addEventListener("click", () => setShown(true));
+    }
   </script>
 {% endblock %}
