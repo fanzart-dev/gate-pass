@@ -275,6 +275,18 @@ SHELL=/bin/bash
 0 21 * * * $APP_USER $APP_DIR/deploy/backup.sh >> /var/log/gate-pass-backup.log 2>&1
 CRON
 chmod 644 /etc/cron.d/gate-pass-backup
+
+# Prove the backups can actually be restored, monthly. A backup nobody has
+# restored is a guess: it can be the right size, pass an integrity check, and
+# still be the wrong database or one this version of the code cannot open.
+# The drill touches nothing live — it unpacks the newest backup to a temporary
+# copy, opens it with the app's own module and counts what is inside.
+cat > /etc/cron.d/gate-pass-restore-drill <<DRILL
+# Restore drill, 06:30 on the 1st of each month.
+SHELL=/bin/bash
+30 6 1 * * $APP_USER $APP_DIR/deploy/restore.sh --drill >> /var/log/gate-pass-backup.log 2>&1
+DRILL
+chmod 644 /etc/cron.d/gate-pass-restore-drill
 touch /var/log/gate-pass-backup.log
 chown "$APP_USER:$APP_USER" /var/log/gate-pass-backup.log
 

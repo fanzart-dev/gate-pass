@@ -21,7 +21,22 @@ DEST="${1:-$APP_DIR/storage/backups}"
 PYTHON="$APP_DIR/.venv/bin/python3"
 [ -x "$PYTHON" ] || PYTHON=python3
 
-KEEP_DAYS=90 DEST="$DEST" APP_DIR="$APP_DIR" "$PYTHON" - <<'PY'
+# Where else a copy goes. A backup on the same disk as the database protects
+# against a mistake — a bad import, a wrong delete — and against nothing else.
+# It does not survive the disk failing, the machine being stolen, or the office
+# flooding, and this app deletes the source PDFs once a pass is issued, so the
+# register is the ONLY copy of the book.
+#
+# Set in /opt/gate-pass/.env, space-separated, anything scp understands:
+#
+#   GATE_PASS_BACKUP_MIRRORS="fanzart@100.123.71.31:/home/fanzart/gate-pass-backups /mnt/usb/gate-pass"
+#
+# A tailnet address works from anywhere the other machine happens to be, which
+# is the point: the second copy should not be in the same building.
+[ -f "$APP_DIR/.env" ] && . "$APP_DIR/.env"
+MIRRORS="${GATE_PASS_BACKUP_MIRRORS:-}"
+
+OUTPUT="$(KEEP_DAYS=90 DEST="$DEST" APP_DIR="$APP_DIR" "$PYTHON" - <<'PY'
 import gzip, os, shutil, sqlite3, sys, time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -71,4 +86,63 @@ for old in dest.glob("gate_pass-*.db.gz"):
     if old.stat().st_mtime < cutoff:
         old.unlink()
         log(f"removed expired {old.name}")
+
+# Named on stdout so the shell below knows what to copy, without guessing at
+# the newest file and racing a concurrent run.
+print(f"BACKUP_FILE={out}.gz")
 PY
+)"
+
+# The log gets everything the snapshot said; BACKUP_FILE is for this script.
+printf '%s\n' "$OUTPUT" | grep -v '^BACKUP_FILE=' || true
+BACKUP_FILE="$(printf '%s\n' "$OUTPUT" | sed -n 's/^BACKUP_FILE=//p')"
+
+stamp() { printf '%s  %s\n' "$(date '+%F %T')" "$*"; }
+
+if [ -z "$BACKUP_FILE" ] || [ ! -f "$BACKUP_FILE" ]; then
+    stamp "ERROR: the snapshot did not report a file — nothing to mirror"
+    exit 1
+fi
+
+# ------------------------------------------------------------------ mirrors --
+if [ -z "$MIRRORS" ]; then
+    stamp "WARNING: no off-machine copy. The only backup of the register is on"
+    stamp "  the same disk as the register. Set GATE_PASS_BACKUP_MIRRORS in"
+    stamp "  $APP_DIR/.env — see deploy/env.example."
+    exit 0
+fi
+
+LOCAL_SUM="$(sha256sum "$BACKUP_FILE" | awk '{print $1}')"
+failed=0
+for target in $MIRRORS; do
+    name="$(basename "$BACKUP_FILE")"
+    if [ -d "$target" ]; then
+        # A mounted disk: a USB stick, a NAS share.
+        if cp "$BACKUP_FILE" "$target/$name" 2>/dev/null; then
+            remote_sum="$(sha256sum "$target/$name" | awk '{print $1}')"
+        else
+            remote_sum=""
+        fi
+    else
+        # Anything scp understands, including a tailnet address.
+        if scp -q -o BatchMode=yes -o ConnectTimeout=30 "$BACKUP_FILE" "$target/" 2>/dev/null; then
+            host="${target%%:*}"; path="${target#*:}"
+            remote_sum="$(ssh -o BatchMode=yes -o ConnectTimeout=30 "$host" \
+                          "sha256sum '$path/$name' 2>/dev/null | awk '{print \$1}'" 2>/dev/null)"
+        else
+            remote_sum=""
+        fi
+    fi
+
+    # Compared, not assumed. A copy that silently truncated is the backup you
+    # discover is useless on the day you need it.
+    if [ "$remote_sum" = "$LOCAL_SUM" ]; then
+        stamp "mirrored to $target (sha256 matches)"
+    else
+        stamp "ERROR: mirror to $target FAILED or does not match"
+        failed=1
+    fi
+done
+
+[ "$failed" -eq 0 ] || stamp "at least one off-machine copy did not land — the register is not safe"
+exit $failed
