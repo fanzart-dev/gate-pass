@@ -71,6 +71,20 @@ if as_app rclone listremotes 2>/dev/null | grep -qx "${REMOTE}:"; then
         [ "$MODE" = "--check" ] || die "fix the remote, then run this again"
     fi
 else
+    # The prompts differ between rclone versions, and getting them wrong sends
+    # people looking for a question that is not on their screen. Ubuntu ships
+    # 1.60, where the headless question reads "Use auto config?"; 1.63 and
+    # later ask "Use web browser to automatically authenticate?". Both mean the
+    # same thing and both want NO on a machine with no browser.
+    RCLONE_MAJOR="$(rclone version 2>/dev/null | head -1 | sed -E 's/.*v([0-9]+)\.([0-9]+).*/\1\2/')"
+    if [ "${RCLONE_MAJOR:-0}" -lt 163 ] 2>/dev/null; then
+        BROWSER_PROMPT='Use auto config?'
+        EXTRA_PROMPT='        root_folder_id>          leave BLANK, press Enter'
+    else
+        BROWSER_PROMPT='Use web browser to automatically authenticate?'
+        EXTRA_PROMPT=''
+    fi
+
     cat <<SETUP
 
     There is no '$REMOTE' remote yet, and this script cannot create it for you:
@@ -86,20 +100,30 @@ else
         client_id>               leave BLANK, press Enter
         client_secret>           leave BLANK, press Enter
         scope>  1                (full access — it has to write)
+$EXTRA_PROMPT
         service_account_file>    leave BLANK, press Enter
         Edit advanced config?  n
-        Use web browser to automatically authenticate?  n     <-- THIS ONE
+        $BROWSER_PROMPT  n     <-- THIS ONE
 
-    That last answer is the one people get wrong. This server has no browser.
-    Answering 'n' makes rclone print a command like
+    That last answer is the one people get wrong. This server has no browser,
+    so 'n' is right. rclone then prints a command to run somewhere that does.
 
-        rclone authorize "drive" "....."
+    You need rclone on that machine too. On Windows there is nothing to
+    install — download rclone.exe, unzip it, and run it from that folder:
 
-    Run THAT on your laptop. A browser opens; sign in as
+        https://rclone.org/downloads/     (Windows AMD64, .zip)
+
+    In that folder, open a Command Prompt and run the command rclone gave
+    you, which will look like:
+
+        rclone authorize "drive"
+
+    A browser opens. Sign in as
 
         $ACCOUNT
 
-    and approve. It prints a long token — paste it back into the server.
+    and approve. It prints a long token between ---> and <--- markers.
+    Copy everything between them and paste it back into the server.
 
         Configure this as a Shared Drive?  n
         y) Yes this is OK
