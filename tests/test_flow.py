@@ -5977,6 +5977,99 @@ def test_a_correction_records_what_the_item_became(tmpdir):
     conn.close()
 
 
+def test_a_backup_can_actually_be_restored(tmpdir):
+    """The drill, run for real: back up a book, then prove it comes back.
+
+    Raised in review — backups defaulted to the same machine as the database.
+    Two things were missing: a copy that survives losing the machine, and any
+    evidence that a backup is restorable at all. A backup nobody has restored
+    is a guess: it can be the right size, pass an integrity check, and still be
+    the wrong database or a schema this code cannot open.
+    """
+    import gzip
+    import shutil
+    import subprocess
+
+    flask_app, _ = logged_in_app(tmpdir, "restore")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    for n in range(3):
+        db.create_gate_pass(conn, None, "Golden Touch Exports", "FANZART LLP",
+                             f"FR 26270{n}", "01-09-2026", "",
+                             sample_items(), prepared_by="Ravi Kumar")
+    expected = db.count_gate_passes(conn)
+    newest = sorted(db.list_gate_passes(conn), key=lambda p: p["serial_seq"])[-1]
+    conn.close()
+
+    # A backup made the way backup.sh makes one: VACUUM INTO, then gzip.
+    backups = Path(tmpdir) / "backups"
+    backups.mkdir(exist_ok=True)
+    snapshot = backups / "gate_pass-20260910-090000.db"
+    source = sqlite3.connect(flask_app.config["DB_PATH"])
+    source.execute("VACUUM INTO ?", (str(snapshot),))
+    source.close()
+    with open(snapshot, "rb") as raw, gzip.open(f"{snapshot}.gz", "wb") as packed:
+        shutil.copyfileobj(raw, packed)
+    snapshot.unlink()
+
+    result = subprocess.run(
+        [str(ROOT / "deploy" / "restore.sh"), "--drill"],
+        capture_output=True, text=True,
+        env={**os.environ, "GATE_PASS_BACKUP_DIR": str(backups)})
+    out = result.stdout + result.stderr
+
+    check("the drill succeeds on a real backup", result.returncode == 0)
+    check("it reports how many passes are in it", f"gate passes      {expected}" in out)
+    check("and names the newest one, so the DATE can be checked",
+          newest["serial_no"] in out)
+    check("and what the next number would be", "next would be" in out)
+    check("and says nothing live was touched", "Nothing live was touched" in out)
+
+    # The failure that matters: a backup that unpacks but is empty restores
+    # perfectly and loses everything. It must say so rather than report success.
+    empty = backups / "gate_pass-20260101-000000.db"
+    blank = sqlite3.connect(empty)
+    blank.close()
+    with open(empty, "rb") as raw, gzip.open(f"{empty}.gz", "wb") as packed:
+        shutil.copyfileobj(raw, packed)
+    empty.unlink()
+    result = subprocess.run(
+        [str(ROOT / "deploy" / "restore.sh"), "--drill", f"{empty}.gz"],
+        capture_output=True, text=True,
+        env={**os.environ, "GATE_PASS_BACKUP_DIR": str(backups)})
+    out = result.stdout + result.stderr
+    check("an empty backup is called out, not passed",
+          "NO gate passes" in out or result.returncode != 0)
+
+    # And a corrupt one must fail rather than look fine.
+    broken = backups / "gate_pass-20260102-000000.db.gz"
+    broken.write_bytes(b"this is not a gzip file")
+    result = subprocess.run(
+        [str(ROOT / "deploy" / "restore.sh"), "--drill", str(broken)],
+        capture_output=True, text=True,
+        env={**os.environ, "GATE_PASS_BACKUP_DIR": str(backups)})
+    check("a corrupt backup fails the drill", result.returncode != 0)
+
+
+def test_the_backup_warns_when_there_is_no_off_machine_copy():
+    """Silence about a missing second copy is how it stays missing."""
+    script = (ROOT / "deploy" / "backup.sh").read_text()
+    check("backup.sh knows about mirrors", "GATE_PASS_BACKUP_MIRRORS" in script)
+    check("it says so when none are configured",
+          "no off-machine copy" in script)
+    check("and it verifies a mirror rather than assuming it landed",
+          "sha256sum" in script and "does not match" in script)
+    check("a failed mirror is an error, not a log line",
+          "exit $failed" in script)
+
+    example = (ROOT / "deploy" / "env.example").read_text()
+    check("the setting is documented where it is set",
+          "GATE_PASS_BACKUP_MIRRORS" in example)
+
+    install = (ROOT / "deploy" / "install.sh").read_text()
+    check("the restore drill is scheduled, not left to somebody remembering",
+          "restore.sh --drill" in install)
+
+
 def items_editor_js():
     """The one item-editor script, which three screens now share.
 
@@ -6073,6 +6166,8 @@ def main():
         test_a_repeated_document_number_asks_before_spending_a_number(tmpdir)
         test_every_issuance_path_validates_the_same_way(tmpdir)
         test_a_correction_records_what_the_item_became(tmpdir)
+        test_a_backup_can_actually_be_restored(tmpdir)
+        test_the_backup_warns_when_there_is_no_off_machine_copy()
         test_the_office_instructions_do_not_name_a_dead_host(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)
