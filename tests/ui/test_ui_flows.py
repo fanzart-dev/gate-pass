@@ -158,7 +158,12 @@ class TestItemTableKeyboard:
         page.click("#submit-btn")
         page.wait_for_url(re.compile(r"/(review|drafts)"), timeout=30000)
         if "/drafts" in page.url:
-            page.click("a[href*='/review/']")
+            # The LAST link, not the first. The drafts list is in upload order
+            # — oldest at the top — so the draft this helper just created is at
+            # the bottom. Taking the first one opened somebody else's draft,
+            # which had items in it already and made the totals assertions
+            # fail for reasons that had nothing to do with totals.
+            page.locator("a[href*='/review/']").last.click()
             page.wait_for_url(re.compile(r"/review/"))
         page.wait_for_selector("#items-table")
 

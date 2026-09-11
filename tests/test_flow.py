@@ -5254,67 +5254,78 @@ def test_a_batch_is_numbered_in_document_order(tmpdir):
     conn.close()
 
 
-def test_the_drafts_list_previews_the_numbering_order(tmpdir):
-    """What the Drafts screen shows is the order the numbers will be given out.
+def test_the_drafts_list_keeps_upload_order_and_issuing_sorts(tmpdir):
+    """Two different orders on purpose, and each has to hold.
 
-    These are two separate pieces of code — one lists rows for a page, the
-    other allocates serial numbers — and if they order drafts differently then
-    the screen is quietly lying about which draft becomes which gate pass. So
-    the test is not "the list is sorted", it is "the list and the batch agree",
-    compared item for item.
+    The SCREEN keeps the order the files were uploaded in, so the fourth row is
+    the fourth file somebody dropped and a PDF that failed to parse is where
+    they expect to find it — rather than sorted off somewhere by a document
+    number that could not be read.
+
+    The NUMBERING is by document number, applied when Issue is pressed, so a
+    run of gate passes reads in the same order as the paperwork it came from.
+
+    This was briefly the other way round: the list was sorted too, making it a
+    preview of the run. That reads well in principle and badly in practice,
+    because rows jump as soon as somebody corrects a document number. Both
+    orders are asserted here so neither can drift back.
     """
-    flask_app, client = logged_in_app(tmpdir, "previeworder")
+    flask_app, client = logged_in_app(tmpdir, "draftorder")
     conn = db.connect(flask_app.config["DB_PATH"])
 
-    scrambled = ["SN 262700900", "FR 262702558", "BI 262700158", "FR 26270256",
-                 "TO NO: FR 262702176", "MU 262700307", "FR 262702176"]
-    for n, number in enumerate(scrambled):
+    # Deliberately uploaded out of document order, across three prefixes.
+    uploaded = ["SN 262700900", "FR 262702558", "BI 262700158", "FR 26270256",
+                "MU 262700307"]
+    for n, number in enumerate(uploaded):
         db.create_draft(conn, supplier_name="S", customer_name="C",
                          invoice_no=number, invoice_date="01-01-2026",
                          invoice_pdf_path=f"invoices/2026_{n}.pdf",
                          items=sample_items())
 
     listed = db.list_drafts(conn)
-    check("the list is in document order",
-          [d["invoice_no"] for d in listed]
-          # The transfer memo and the invoice normalize to one number, so the
-          # tie-break decides — and it is the older draft, which is the memo.
-          == ["BI 262700158", "FR 26270256", "TO NO: FR 262702176",
-              "FR 262702176", "FR 262702558", "MU 262700307",
-              "SN 262700900"])
+    check("the list is in UPLOAD order, not document order",
+          [d["invoice_no"] for d in listed] == uploaded)
 
-    # The page renders them in that order too, not just the function.
+    # And the page renders them that way, not just the function.
     page = client.get("/drafts").get_data(as_text=True)
-    # data-draft-id, not the checkbox: a blocked duplicate has no checkbox, and
-    # this batch deliberately contains one.
     positions = [page.index(f'data-draft-id="{d["id"]}"') for d in listed]
-    check("and the page renders them in that order",
-          positions == sorted(positions))
+    check("and the page renders them in that order", positions == sorted(positions))
 
-    # The claim being made: issuing them hands out numbers in the SAME order.
+    # Issuing is where the sort happens — and the ids are handed over in the
+    # page's order, which is exactly what a form post of ticked boxes sends.
     issued, skipped = db.create_gate_passes_batch(
         conn, [d["id"] for d in listed], prepared_by="Ravi Kumar")
-    check("all of them were issued", len(issued) == len(scrambled) and not skipped)
-    check("the numbering follows the list exactly",
-          [p["invoice_no"] for p in sorted(issued, key=lambda p: p["serial_seq"])]
-          == [d["invoice_no"] for d in listed])
+    check("all of them were issued", len(issued) == len(uploaded) and not skipped)
 
-    # And it still agrees when the ids are handed over shuffled, which is what
-    # a form post of ticked checkboxes actually is.
-    for number in ("RT 262700325", "RT-262700325", "BI 262700001"):
+    numbered = [p["invoice_no"] for p in sorted(issued, key=lambda p: p["serial_seq"])]
+    check("the NUMBERING is by document number",
+          numbered == ["BI 262700158", "FR 26270256", "FR 262702558",
+                       "MU 262700307", "SN 262700900"])
+    check("which is deliberately NOT the order they were listed in",
+          numbered != uploaded)
+    check("and the serials are an unbroken block",
+          [p["serial_no"] for p in sorted(issued, key=lambda p: p["serial_seq"])]
+          == [f"FZ-0000{i}" for i in range(1, 6)])
+
+    # The order the ids arrive in must not matter — only the documents.
+    for number in ("RT 262700325", "BI 262700001"):
         db.create_draft(conn, supplier_name="S", customer_name="C",
                          invoice_no=number, invoice_date="01-01-2026",
                          invoice_pdf_path=f"invoices/{number}.pdf",
                          items=sample_items())
-    listed = db.list_drafts(conn)
-    issued, _ = db.create_gate_passes_batch(
-        conn, list(reversed([d["id"] for d in listed])), prepared_by="Ravi Kumar")
-    check("order comes from the documents, not from how they were submitted",
+    ids = [d["id"] for d in db.list_drafts(conn)]
+    issued, _ = db.create_gate_passes_batch(conn, list(reversed(ids)),
+                                             prepared_by="Ravi Kumar")
+    check("submitting them backwards changes nothing",
           [p["invoice_no"] for p in sorted(issued, key=lambda p: p["serial_seq"])]
-          == [d["invoice_no"] for d in listed])
+          == ["BI 262700001", "RT 262700325"])
 
+    # The register shows the newest first, so a freshly issued batch is at the
+    # top with the highest number of the run leading it.
+    register = db.list_gate_passes(conn)
+    check("the register lists newest first",
+          register[0]["serial_seq"] > register[-1]["serial_seq"])
     conn.close()
-
 
 def test_issuing_never_alters_a_pass_that_already_exists(tmpdir):
     """A pass, once issued, is fixed. Nothing issued later may touch it.
@@ -6336,7 +6347,7 @@ def main():
         test_two_drafts_with_one_number_cannot_both_be_issued(tmpdir)
         test_a_draft_can_be_removed_from_the_row_it_is_on(tmpdir)
         test_a_batch_is_numbered_in_document_order(tmpdir)
-        test_the_drafts_list_previews_the_numbering_order(tmpdir)
+        test_the_drafts_list_keeps_upload_order_and_issuing_sorts(tmpdir)
         test_issuing_never_alters_a_pass_that_already_exists(tmpdir)
         test_every_timestamp_is_indian_standard_time(tmpdir)
         test_a_gate_pass_can_be_typed_without_an_invoice(tmpdir)
