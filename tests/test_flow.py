@@ -6145,6 +6145,112 @@ def test_no_module_imports_itself_in_a_circle():
           "\nimport invoice_parser" not in transfer)
 
 
+def test_the_review_document_is_rendered_not_embedded(tmpdir):
+    """The original is shown as an image, so every browser draws it the same.
+
+    An embedded PDF is not one thing: it is whatever viewer the browser ships.
+    Chromium draws a dark reader with a thumbnail sidebar and a toolbar;
+    Firefox draws a clean light page edge to edge. Same file, same markup, two
+    different screens — and the Chromium one is the wrong shape for a panel
+    beside a form. Chromium also ignores the #toolbar=0&navpanes=0 parameters
+    that used to control this, so there is no cheap way to make it agree.
+
+    Rendering server-side settles it: an image cannot disagree with itself.
+    """
+    import shutil
+
+    flask_app, client = logged_in_app(tmpdir, "pdfrender")
+    storage = Path(flask_app.config["STORAGE_DIR"])
+    (storage / "invoices").mkdir(parents=True, exist_ok=True)
+    sample = ROOT / "tests" / "sample_invoices" / "golden_touch_sample.pdf"
+    if not sample.exists():
+        return                      # the real invoices are not in the repo
+    shutil.copy(sample, storage / "invoices" / "test.pdf")
+
+    resp = client.get("/invoices/invoices/test.pdf/page/1.png")
+    check("a page renders", resp.status_code == 200)
+    check("as a PNG", resp.headers["Content-Type"] == "image/png")
+    check("of a useful size", 20_000 < len(resp.data) < 900_000)
+    # PNG, not JPEG: an invoice is text and thin rules on white, which JPEG
+    # turns to grey fringes at exactly the sizes that matter.
+    check("really is a PNG", resp.data[:8] == b"\x89PNG\r\n\x1a\n")
+
+    # Customer documents on a shared machine, and the source PDF is deleted
+    # once a pass is issued — the browser must not keep what the server took
+    # care to remove.
+    check("it is not cached by the browser",
+          "no-store" in resp.headers.get("Cache-Control", ""))
+
+    # Rendered once. The same draft is looked at repeatedly while somebody
+    # types, and the file cannot change underneath them.
+    cached = list((storage / "previews").glob("test-p1.png"))
+    check("and cached on disk", len(cached) == 1)
+    first_mtime = cached[0].stat().st_mtime
+    client.get("/invoices/invoices/test.pdf/page/1.png")
+    check("a second view re-uses the render",
+          cached[0].stat().st_mtime == first_mtime)
+
+    check("a page that does not exist is 404",
+          client.get("/invoices/invoices/test.pdf/page/9.png").status_code == 404)
+    check("and so is a path trying to climb out",
+          client.get("/invoices/../../etc/passwd/page/1.png").status_code == 404)
+
+    # The renders belong to the PDF. Left behind they would accumulate for
+    # every invoice ever uploaded, on the machine that holds the register.
+    from app import _discard_invoice_file
+    _discard_invoice_file(flask_app, "invoices/test.pdf")
+    check("discarding the invoice removes its renders",
+          not list((storage / "previews").glob("test-p*.png")))
+
+    # And the page itself must use the image, not an embedded viewer.
+    draft_id = db.create_draft(
+        db.connect(flask_app.config["DB_PATH"]),
+        supplier_name="S", customer_name="C", invoice_no="I",
+        invoice_date="01-01-2026", invoice_pdf_path="invoices/second.pdf",
+        items=sample_items())
+    shutil.copy(sample, storage / "invoices" / "second.pdf")
+    page = client.get(f"/review/{draft_id}").get_data(as_text=True)
+    check("the review screen shows an image", "document-page" in page)
+    check("and no embedded PDF viewer", "<iframe" not in page)
+    check("with the real PDF still one click away", "Open full size" in page)
+
+    # A file that is present but cannot be rendered — a truncated upload, or
+    # something that is not really a PDF — must not get a panel. A broken image
+    # reads as a broken app rather than as a document that cannot be shown.
+    (storage / "invoices" / "junk.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    junk_id = db.create_draft(
+        db.connect(flask_app.config["DB_PATH"]),
+        supplier_name="S", customer_name="C", invoice_no="J",
+        invoice_date="01-01-2026", invoice_pdf_path="invoices/junk.pdf",
+        items=sample_items())
+    junk_page = client.get(f"/review/{junk_id}").get_data(as_text=True)
+    # markup_only: the toggle script names the element by id whether or not the
+    # panel was drawn, so searching the whole response finds the JavaScript.
+    check("an unreadable PDF gets no panel at all",
+          "document-page" not in markup_only(junk_page))
+    check("and the form still renders normally", "Issue Gate Pass" in junk_page)
+
+
+def test_the_renderer_handles_what_it_is_given():
+    """The rendering itself, without a web request in the way."""
+    sample = ROOT / "tests" / "sample_invoices" / "golden_touch_sample.pdf"
+    if not sample.exists():
+        return
+
+    png = invoice_parser.render_page_png(sample, 1)
+    check("page 1 renders", png is not None and png[:4] == b"\x89PNG")
+    check("the document's page count is known",
+          invoice_parser.page_count(sample) >= 1)
+    check("a page beyond the end returns nothing, rather than raising",
+          invoice_parser.render_page_png(sample, 99) is None)
+    check("and so does page zero", invoice_parser.render_page_png(sample, 0) is None)
+    check("a file that is not a PDF returns nothing",
+          invoice_parser.render_page_png(ROOT / "app.py", 1) is None)
+    check("and a file that is not there", 
+          invoice_parser.render_page_png(ROOT / "nope.pdf", 1) is None)
+    check("a non-PDF has no pages", invoice_parser.page_count(ROOT / "app.py") == 0)
+
+
 def items_editor_js():
     """The one item-editor script, which three screens now share.
 
@@ -6244,6 +6350,8 @@ def main():
         test_a_backup_can_actually_be_restored(tmpdir)
         test_the_backup_warns_when_there_is_no_off_machine_copy()
         test_no_module_imports_itself_in_a_circle()
+        test_the_review_document_is_rendered_not_embedded(tmpdir)
+        test_the_renderer_handles_what_it_is_given()
         test_the_office_instructions_do_not_name_a_dead_host(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)

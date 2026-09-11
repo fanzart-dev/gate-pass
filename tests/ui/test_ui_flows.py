@@ -1022,10 +1022,18 @@ class TestReviewDocumentPanel:
         if not self._open_draft_with_pdf(page, base_url):
             pytest.skip("no draft with its PDF still on disk")
 
-        frame = page.locator(".document-frame")
-        assert frame.count() == 1, "the document panel is not on the page"
-        src = frame.get_attribute("src")
-        assert "/invoices/" in src, f"the frame points somewhere odd: {src}"
+        image = page.locator(".document-page")
+        assert image.count() == 1, "the document panel is not on the page"
+        assert page.locator("iframe").count() == 0, (
+            "the document is embedded as a PDF again — every browser then draws "
+            "it with its own viewer and they do not agree")
+        src = image.get_attribute("src")
+        assert "/page/" in src and src.endswith(".png"), \
+            f"the panel is not showing a rendered page: {src}"
+        # It actually loaded, rather than sitting there as broken alt text.
+        assert page.evaluate(
+            "() => document.querySelector('.document-page').naturalWidth > 0"), \
+            "the rendered page did not load"
 
         # Side by side, not stacked, on a wide screen — the whole point.
         page.set_viewport_size({"width": 1600, "height": 1000})
@@ -1043,17 +1051,53 @@ class TestReviewDocumentPanel:
         if not self._open_draft_with_pdf(page, base_url):
             pytest.skip("no draft with its PDF still on disk")
 
-        src = page.locator(".document-frame").get_attribute("src")
+        src = page.locator(".document-page").get_attribute("src")
         response = page.request.get(f"{base_url}{src}")
-        assert response.status == 200, f"the PDF did not load: {response.status}"
-        assert response.headers.get("x-frame-options", "").upper() == "SAMEORIGIN", (
-            "the invoice route must allow same-origin framing, got "
-            f"{response.headers.get('x-frame-options')!r}")
+        assert response.status == 200, f"the page image did not load: {response.status}"
+        assert response.headers.get("content-type") == "image/png", (
+            "the panel must be served a real image, got "
+            f"{response.headers.get('content-type')!r}")
+        # Customer documents on a shared machine, and the source PDF is deleted
+        # once a pass is issued.
+        assert "no-store" in response.headers.get("cache-control", ""), \
+            "the rendered invoice must not be cached by the browser"
         # No size assertion. Other tests in this suite upload deliberately tiny
         # 16-byte stand-in PDFs, and whichever draft this one happens to open
         # may be one of them — "the file is big enough" is not something this
         # test can know. That it is served, and framable, is.
         assert response.body(), "the served file is empty"
+
+    def test_it_looks_the_same_whatever_the_browser_would_have_done(self, page, base_url):
+        """White page, full panel width, no viewer chrome.
+
+        The point of rendering server-side: Chromium's PDF viewer paints a
+        #323639 background with a thumbnail sidebar and a toolbar, and ignores
+        the #toolbar=0&navpanes=0 parameters that used to turn those off.
+        Firefox paints a clean light page. An image has none of that to
+        disagree about.
+        """
+        if not self._open_draft_with_pdf(page, base_url):
+            pytest.skip("no draft with its PDF still on disk")
+
+        page.set_viewport_size({"width": 1500, "height": 1000})
+        state = page.evaluate("""() => {
+          const img = document.querySelector('.document-page');
+          const vp = document.querySelector('.document-viewport');
+          return {
+            background: getComputedStyle(vp).backgroundColor,
+            imageWidth: Math.round(img.getBoundingClientRect().width),
+            panelWidth: vp.clientWidth,
+            loaded: img.naturalWidth > 0,
+          };
+        }""")
+        assert state["loaded"], "the page image did not load"
+        # White, not the dark grey a Chromium PDF viewer would paint.
+        assert state["background"] == "rgb(255, 255, 255)", \
+            f"the document sits on {state['background']}, not white"
+        # Fits the width of the panel, which is what somebody comparing a line
+        # against a form actually wants.
+        assert abs(state["imageWidth"] - state["panelWidth"]) <= 3, \
+            f"image is {state['imageWidth']}px in a {state['panelWidth']}px panel"
 
     def test_hiding_it_is_remembered(self, page, base_url):
         if not self._open_draft_with_pdf(page, base_url):

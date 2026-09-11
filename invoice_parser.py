@@ -66,6 +66,65 @@ LINE_TOLERANCE = 3.0  # points; words within this vertical distance are one line
 EDGE_TOLERANCE = 2.0  # points; vertical rules closer than this are the same divider
 
 
+def page_count(path):
+    """How many pages the document has, or 0 if it cannot be opened."""
+    try:
+        import pypdfium2
+        with pypdfium2.PdfDocument(str(path)) as doc:
+            return len(doc)
+    except Exception:
+        return 0
+
+
+def render_page_png(path, number, width=1100):
+    """One page as PNG bytes, or None if that page does not exist.
+
+    Used by the review screen, which shows the original beside the extracted
+    fields so a misread can be seen against the document it came from.
+
+    pypdfium2 rather than a rendering library in the browser: it is already
+    installed (pdfplumber renders through it), it takes about 80ms, and it
+    produces roughly 35 KB against the 3.3 MB of shipping PDF.js to the
+    browser. The reason for rendering at all is that an embedded PDF is not
+    one thing — every browser supplies its own viewer, and they disagree about
+    theme, toolbar and sidebar. A PNG cannot disagree with itself.
+
+    `number` is 1-based, because it is a page number as a person would say it.
+
+    The width is fixed rather than following the panel: the result is cached,
+    so it has to be one size, and 1100px is enough to read an invoice line at
+    the size the panel displays while staying small enough to be cheap.
+    """
+    try:
+        import pypdfium2
+    except ImportError:
+        return None
+
+    try:
+        with pypdfium2.PdfDocument(str(path)) as doc:
+            if number < 1 or number > len(doc):
+                return None
+            page = doc[number - 1]
+            # Scale from the page's own width so every document arrives at the
+            # same pixel width whatever paper size it was made on.
+            scale = width / page.get_width() if page.get_width() else 1.5
+            # Clamped: a tiny page would otherwise be blown up into an enormous
+            # bitmap, and a huge one rendered uselessly small.
+            scale = max(0.5, min(scale, 4.0))
+            image = page.render(scale=scale).to_pil()
+    except Exception:
+        return None
+
+    import io
+    buffer = io.BytesIO()
+    # PNG, not JPEG: an invoice is text and thin rules on white, which JPEG
+    # blurs into grey fringes at exactly the sizes that matter — and it is
+    # SMALLER here anyway (35 KB against 149 KB) because the page is flat
+    # colour rather than a photograph.
+    image.save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
 def parse_invoice(pdf_path):
     """Returns a dict: supplier_name, customer_name, invoice_no, invoice_date,
     items (list of {sl_no, item_name, quantity}), notes (list of str)."""

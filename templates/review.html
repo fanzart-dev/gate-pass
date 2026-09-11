@@ -158,15 +158,36 @@
         <div class="document-head">
           <span>Original document</span>
           <span>
+            {% if document_pages > 1 %}
+              {# Only when there is more than one page. A single-page invoice —
+                 which is nearly all of them — gets no controls to ignore. #}
+              <button type="button" class="link-button" id="page-prev" aria-label="Previous page">&lsaquo;</button>
+              <span class="page-indicator"><span id="page-now">1</span> / {{ document_pages }}</span>
+              <button type="button" class="link-button" id="page-next" aria-label="Next page">&rsaquo;</button>
+            {% endif %}
             <a href="{{ url_for('uploaded_invoice', relpath=draft.invoice_pdf_path) }}"
                target="_blank" rel="noopener">Open full size</a>
             <button type="button" id="hide-document" class="link-button">Hide</button>
           </span>
         </div>
-        <iframe class="document-frame"
-                src="{{ url_for('uploaded_invoice', relpath=draft.invoice_pdf_path) }}"
-                title="The uploaded invoice this draft was read from"
-                loading="lazy"></iframe>
+        {# An IMAGE of the page, not the PDF itself.
+
+           An embedded PDF is not one thing: it is whatever viewer the browser
+           ships. Chromium draws a dark reader with a thumbnail sidebar and a
+           toolbar, Firefox draws a clean light page edge to edge — same file,
+           same markup, two different screens, and Chromium's is the wrong
+           shape for a panel beside a form. Forcing agreement the other way
+           means shipping PDF.js, which is 3.3 MB.
+
+           A PNG cannot disagree with itself. 258 KB, rendered once on the
+           server and cached. "Open full size" above is still the real PDF for
+           anyone who wants to select text or zoom properly. #}
+        <div class="document-viewport">
+          <img class="document-page" id="document-page"
+               src="{{ url_for('invoice_page_image', relpath=draft.invoice_pdf_path, number=1) }}"
+               alt="Page 1 of the uploaded invoice this draft was read from"
+               data-pages="{{ document_pages }}">
+        </div>
       </aside>
     </div>
 
@@ -218,6 +239,31 @@
 
       document.getElementById("hide-document").addEventListener("click", () => setShown(false));
       showButton.addEventListener("click", () => setShown(true));
+
+      // Page controls, only rendered when the document has more than one page.
+      const image = document.getElementById("document-page");
+      const prev = document.getElementById("page-prev");
+      const next = document.getElementById("page-next");
+      if (image && prev && next) {
+        const pages = parseInt(image.dataset.pages, 10) || 1;
+        let page = 1;
+
+        function show(n) {
+          page = Math.min(Math.max(n, 1), pages);
+          // The URL differs only in its page number, so it is derived from the
+          // one the server already rendered rather than rebuilt from parts —
+          // no guessing at how the path is escaped.
+          image.src = image.src.replace(/\/page\/\d+\.png/, `/page/${page}.png`);
+          image.alt = `Page ${page} of the uploaded invoice this draft was read from`;
+          document.getElementById("page-now").textContent = page;
+          prev.disabled = page === 1;
+          next.disabled = page === pages;
+        }
+
+        prev.addEventListener("click", () => show(page - 1));
+        next.addEventListener("click", () => show(page + 1));
+        show(1);
+      }
     }
   </script>
 {% endblock %}
