@@ -1122,19 +1122,42 @@ details.history summary {
   letter-spacing: 0;
   margin-left: 10px;
 }
-.document-frame {
-  display: block;
-  width: 100%;
-  /* Tall enough to read a line off without scrolling the frame for every
-     field, short enough that the page still scrolls as one thing. */
+/* The rendered page. White behind it whatever the theme: this is a picture of
+   a piece of paper, and paper is white — a dark surround would make the scan
+   look like it had been photographed on a desk at night. It is also what makes
+   every browser agree, which is the whole reason the page is rendered here
+   rather than embedded as a PDF. */
+.document-viewport {
+  background: #ffffff;
+  /* Tall enough to read a line off without scrolling for every field, short
+     enough that the page still scrolls as one thing. */
   height: 78vh;
   min-height: 420px;
-  border: 0;
-  background: var(--head-bg);
+  overflow: auto;
+  /* The image is a fixed pixel width; centre it if the panel is wider. */
+  text-align: center;
 }
+.document-page {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* Fit the width of the panel, which is what somebody comparing a line
+     against a form actually wants — not a page zoomed to fit vertically and
+     unreadable. */
+  max-width: 100%;
+}
+.page-indicator {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  margin: 0 2px;
+}
+.document-head button:disabled { opacity: .35; cursor: default; }
+
 @media (max-width: 1100px) {
   .review-document { position: static; }
-  .document-frame { height: 60vh; }
+  .document-viewport { height: 60vh; }
 }
 
 /* ------------------------------------------------------------------ toasts */

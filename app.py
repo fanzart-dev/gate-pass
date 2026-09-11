@@ -529,14 +529,26 @@ def register_routes(app):
         # invoices directory — and the panel would then frame a 404, which
         # renders as an empty white box that looks like a broken PDF rather
         # than like a missing one.
-        has_document = bool(draft["invoice_pdf_path"]) and (
-            Path(app.config["STORAGE_DIR"]) / draft["invoice_pdf_path"]).is_file()
+        # Whether the document can actually be SHOWN, which is a stronger
+        # question than whether a file is sitting there. A path outlives its
+        # file, and a file can be present and unreadable — a truncated upload,
+        # something that is not really a PDF, an encrypted one. Asking only
+        # "does it exist" put a panel on the page that then failed to render,
+        # and a broken image reads as a broken app rather than as a document
+        # that cannot be displayed.
+        #
+        # page_count answers both at once: zero means do not offer the panel.
+        document = _safe_invoice_path(app, draft["invoice_pdf_path"] or "")
+        document_pages = (invoice_parser.page_count(document)
+                          if document is not None and document.is_file() else 0)
+        has_document = document_pages > 0
 
         if request.method == "GET":
             return render_template("review.html", draft=draft,
                                     items_per_page=db.ITEMS_PER_PAGE,
                                     may_edit=may_edit,
                                     has_document=has_document,
+                                    document_pages=document_pages,
                                     active="drafts")
 
         action = request.form.get("action", "save")
@@ -1271,12 +1283,64 @@ def register_routes(app):
         """
         relpath = relpath.removeprefix("invoices/")
         response = send_from_directory(app.config["INVOICES_DIR"], relpath)
+        _no_store(response)
         # The review screen shows this PDF in a frame beside the form so an
         # extraction error can be seen against the document it came from. The
         # app-wide default is X-Frame-Options: DENY, which blocks framing by
         # ANY page including our own, so this one route relaxes to SAMEORIGIN.
         # Still no other site can frame it — which is what that header is for.
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        return response
+
+    @app.route("/invoices/<path:relpath>/page/<int:number>.png")
+    @login_required
+    def invoice_page_image(relpath, number):
+        """One page of an uploaded invoice, rendered to a PNG on the server.
+
+        The review screen shows this instead of embedding the PDF, because an
+        embedded PDF is not one thing — it is whatever viewer the browser
+        happens to ship. Chromium draws its own dark reader with a thumbnail
+        sidebar and a toolbar; Firefox draws a clean light page edge to edge.
+        Same file, same markup, two completely different screens, and the one
+        Chromium gives is the wrong shape for a panel beside a form.
+
+        An image is an image. It looks the same in every browser by definition,
+        needs no viewer, has no theme, and costs 35 KB here against the 3.3 MB
+        of shipping PDF.js to force agreement the other way. What is lost is
+        selectable text and zooming, which is why "Open full size" still links
+        to the real PDF for anyone who wants either.
+
+        Rendered once and cached: the same draft gets looked at repeatedly
+        while somebody types, and re-rendering per request would be work done
+        over and over for a file that cannot change.
+        """
+        source = _safe_invoice_path(app, relpath)
+        if source is None or not source.is_file():
+            abort(404)
+
+        cache_dir = Path(app.config["STORAGE_DIR"]) / "previews"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cached = cache_dir / f"{source.stem}-p{number}.png"
+
+        # Stale if the PDF is newer than the render — a re-upload under the
+        # same name would otherwise show the previous document, which on this
+        # screen means checking a gate pass against the wrong invoice.
+        if not cached.is_file() or cached.stat().st_mtime < source.stat().st_mtime:
+            try:
+                rendered = invoice_parser.render_page_png(source, number)
+            except Exception:
+                # Logged, not swallowed. A bare `except: abort(404)` here cost
+                # real time: a routing mistake looked exactly like a missing
+                # page, and the reason was thrown away before anything could
+                # report it.
+                app.logger.exception("could not render %s page %s", source, number)
+                abort(404)
+            if rendered is None:
+                abort(404)
+            cached.write_bytes(rendered)
+
+        response = send_from_directory(cache_dir, cached.name)
+        _no_store(response)
         return response
 
 
@@ -1332,6 +1396,45 @@ def _valid_date(value):
         return None
 
 
+def _no_store(response):
+    """Never cache an invoice in the browser.
+
+    These are customer documents on a machine several people share. A cached
+    copy outlives the draft — and the draft's PDF is deleted the moment a pass
+    is issued, deliberately, so the browser should not be quietly keeping the
+    one thing the server took care to remove.
+    """
+    response.headers["Cache-Control"] = "no-store, private"
+    return response
+
+
+def _safe_invoice_path(app, relpath):
+    """An invoice path, resolved and proved to be inside the invoices folder.
+    None if it wanders out.
+
+    Accepts the path either way round — with the leading "invoices/" as it is
+    stored in the database, or without it as the URL rule hands it over after
+    stripping. Taking only one of those is how the first version of this looked
+    for the file one directory too high and returned 404 for a file that was
+    plainly there.
+
+    Same containment check as _discard_invoice_file, for the same reason: the
+    string comes from a row rather than a request, but a wrong row should not
+    be able to read outside the folder any more than it should be able to
+    delete outside it.
+    """
+    invoices = Path(app.config["INVOICES_DIR"]).resolve()
+    name = str(relpath or "").removeprefix("invoices/")
+    if not name:
+        return None
+    try:
+        target = (invoices / name).resolve()
+        target.relative_to(invoices)
+    except (ValueError, OSError):
+        return None
+    return target
+
+
 def _discard_invoice_file(app, relpath):
     """Delete an uploaded invoice once nothing refers to it any more.
 
@@ -1349,6 +1452,17 @@ def _discard_invoice_file(app, relpath):
         target.relative_to(invoices)
     except (ValueError, OSError):
         return False
+    # The rendered previews belong to this PDF and are meaningless without it.
+    # Left behind they would accumulate for every invoice ever uploaded, on the
+    # machine that holds the register.
+    previews = root / "previews"
+    if previews.is_dir():
+        for stale in previews.glob(f"{target.stem}-p*.png"):
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+
     try:
         target.unlink()
         return True
