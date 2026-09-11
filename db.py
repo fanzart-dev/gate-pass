@@ -1366,28 +1366,28 @@ def get_draft(conn, draft_id):
 
 
 def list_drafts(conn):
-    """Waiting drafts, in the order they will be numbered.
+    """Waiting drafts, in the order they were uploaded.
 
-    Document order, not upload order, and sorted with exactly the key
-    create_gate_passes_batch allocates by — including the draft-id tie-break —
-    so the Drafts list is a preview of the run rather than a differently
-    ordered list of the same rows. Before this the screen showed newest first
-    while the batch was numbered by document number, so the operator could not
-    tell from the page which draft was about to become which gate pass.
+    Oldest first, so a batch read off a pile stays in the order the pile was
+    in. That is what the operator can check against: the fourth row is the
+    fourth file they dropped, and a PDF that failed to parse is where they
+    expect to find it rather than sorted off somewhere by a document number
+    that could not be read.
 
-    Sorted here rather than in ORDER BY: the digits have to compare as an
-    integer, and SQLite would compare the whole string, which is the ordering
-    this exists to avoid.
+    NOT the order the numbers will be handed out in. Those are sorted by
+    document number, but only at the moment Issue is pressed — see
+    create_gate_passes_batch. Sorting the screen as well was tried and taken
+    back out: it made the list a preview of the run, which reads well in
+    principle and badly in practice, because the rows move as soon as somebody
+    corrects a document number on the review screen.
 
-    Drafts that cannot be told apart by document number — a duplicate pair, or
-    several with nothing typed in yet — fall back to draft id, so the older one
-    is listed first. That is the batch's tie-break too, and it has to be: a
-    preview that breaks ties the other way would show the pair in the opposite
-    order to the numbers they are about to get.
+    id as the tie-break rather than created_at alone: a bulk upload writes
+    every draft inside one second, so the timestamps tie and the insertion
+    order is the only thing left that reflects the order the files arrived in.
     """
-    rows = conn.execute("SELECT * FROM drafts").fetchall()
-    return sorted((dict(r) for r in rows),
-                  key=lambda d: document_sort_key(d["invoice_no"]) + (d["id"],))
+    rows = conn.execute(
+        "SELECT * FROM drafts ORDER BY created_at ASC, id ASC").fetchall()
+    return [dict(r) for r in rows]
 
 
 def update_draft(conn, draft_id, supplier_name, customer_name, invoice_no,
