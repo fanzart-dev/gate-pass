@@ -785,27 +785,46 @@ def test_bi_series_invoice():
 
 @needs_fixtures
 def test_service_line_invoice():
-    """An invoice mixing fans, rods and a service line. Everything is offered to
-    the operator; deciding what physically leaves the gate is their call."""
+    """An invoice mixing fans, rods and a service line.
+
+    The service line is left OFF the gate pass. A gate pass lists what
+    physically leaves the building and gets signed for at the gate, and an
+    installation service is money rather than a carton — it has nothing to
+    hand over.
+
+    This used to keep such lines and leave the decision to the operator. That
+    meant every invoice carrying a delivery charge needed the same manual
+    deletion, every time, by someone who had to remember to do it.
+    """
     result = invoice_parser.parse_invoice(SERVICE_LINE_INVOICE)
     items = result["items"]
 
-    check("service-line invoice parses without notes", result["notes"] == [])
+    # A note, not silence. An excluded line and a line the parser failed to
+    # read look identical in a shortened list, and they need opposite
+    # responses — ignore the first, type the second back in.
+    check("the exclusion is reported, not silent",
+          any("charge/service line" in n for n in result["notes"]))
+    check("and the note names what went",
+          any("ERECTION" in n.upper() for n in result["notes"]))
     # Asserted by shape, not by name: the point is that a customer who is a
     # person rather than Fanzart itself is read correctly, and the fixture is a
     # real invoice, so spelling the buyer's name out here would publish it.
     check("reads a non-Fanzart customer",
           result["customer_name"].startswith("MR ") and len(result["customer_name"]) > 5)
     check("reads the invoice number", result["invoice_no"] == "FR 262702176")
-    check("reads all three lines", len(items) == 3)
+    check("the two real goods lines are kept", len(items) == 2)
     check("reads a two-digit quantity",
           items and items[1]["quantity"] == "18")
     check("keeps an item name containing brackets and underscores",
           items and items[1]["item_name"] == "FAN ROD19MM_(IN INCHES)")
-    check("keeps the service line for the operator to remove",
-          items and "ERECTION" in items[2]["item_name"])
+    check("the service line is gone from the items",
+          not any("ERECTION" in i["item_name"].upper() for i in items))
     check("no item is left without a quantity",
           all(i["quantity"] for i in items))
+    # Renumbered, so the printed pass reads 1, 2 rather than 1, 2 with a gap
+    # where the charge used to be.
+    check("what is left is renumbered from 1",
+          [i["sl_no"] for i in items] == [1, 2])
 
 
 @needs_fixtures
@@ -6262,6 +6281,143 @@ def test_the_renderer_handles_what_it_is_given():
     check("a non-PDF has no pages", invoice_parser.page_count(ROOT / "app.py") == 0)
 
 
+def test_charge_and_service_lines_never_reach_a_gate_pass():
+    """Every wording the accounts package produces, and what must survive it.
+
+    A gate pass lists what physically leaves the building and gets signed for
+    at the gate. A delivery charge is money, not a carton — there is nothing to
+    hand over and nothing to count.
+    """
+    excluded = [
+        "DELIVERY CHARGES", "DELIVERY CHARGE",
+        "ERECTION COMMISSIONING AND INSTALLATION SERVICES",
+        "ERECTION COMMISSIONING AND INSTALLATION SERVICES (CRYSTAL FANS)",
+        "CUSTOMIZATION CHARGES", "CUSTOMIZATION CHARGE",
+        "MAINTENANCE OR REPAIR SERVICES", "MAINTENANCE & REPAIR SERVICES",
+        # Case and spacing must not matter: these arrive however the accounts
+        # package felt like printing them that day.
+        "  delivery charges  ", "Erection Commissioning And Installation Services",
+        "customization CHARGES",
+        # Freight is money, not a thing: there is nothing to hand over.
+        "FREIGHT", "FREIGHT CHARGES",
+    ]
+    for name in excluded:
+        check(f"excluded: {name.strip()[:44]}",
+              invoice_parser.is_charge_or_service_item(name))
+
+    # The other half, and the more important one: a real fan must never be
+    # dropped. A gate pass missing goods is worse than one carrying a charge.
+    kept = [
+        "CRYSTAL - FANDELIER", "AEROSLIM 1200MM WHITE", "MICRON MODREN OAK",
+        "VENETIAN BLACK - FANDELIER", "FAN ROD19MM_(IN INCHES)",
+        "GRANDMASTER 100 INCH", "WINDFLOWER - FANDELIER", "PHOENIX 52 WALNUT",
+        "BRISA 1400MM", "TIVOLI 48 BRASS", "STELLA LED", "DAZZLE",
+        # A word that merely CONTAINS a keyword is not the keyword.
+        "DISCHARGE 1200",
+        # Spares are GOODS. They have no carton of their own — a spare rod
+        # ships inside somebody else's box — but they leave the building and
+        # are signed for at the gate, so they belong on the pass. These four
+        # spellings are taken from passes already issued; dropping them would
+        # have sent real parts out with no record.
+        "FAN ROD FALCON 26MM_IN Spares", "FAN ROD19MM_(IN INCHES) Spares",
+        "CANOPY BIG MATT SILVER AVALON Spares", "CANOPY BIG AVALON WHITE Spares",
+        "SPARE BLADE SET", "HARDWARE KIT", "ACCESSORY BOX",
+    ]
+    for name in kept:
+        check(f"kept: {name[:44]}", not invoice_parser.is_charge_or_service_item(name))
+
+    # The two questions are different and must stay different. db's predicate
+    # asks "does this have a carton of its own?" and says no for a spare; this
+    # module's asks "is this goods at all?" and says yes. Merging them drops
+    # real parts off gate passes.
+    check("a spare has no carton of its own", db.is_non_stock_item("SPARE BLADE SET"))
+    check("but it is still goods",
+          not invoice_parser.is_charge_or_service_item("SPARE BLADE SET"))
+    check("a delivery charge is neither",
+          db.is_non_stock_item("DELIVERY CHARGES")
+          and invoice_parser.is_charge_or_service_item("DELIVERY CHARGES"))
+
+
+def test_dropping_charges_renumbers_and_reports():
+    """The list is filtered after it is built, and says what it removed."""
+    items = [
+        {"sl_no": 1, "item_name": "CRYSTAL - FANDELIER", "quantity": "2"},
+        {"sl_no": 2, "item_name": "DELIVERY CHARGES", "quantity": "1"},
+        {"sl_no": 3, "item_name": "AEROSLIM 1200MM WHITE", "quantity": "4"},
+        {"sl_no": 4, "item_name": "ERECTION COMMISSIONING AND INSTALLATION SERVICES",
+         "quantity": "1"},
+    ]
+    kept, dropped = invoice_parser.drop_charge_and_service_items(items)
+
+    check("only the goods remain", [i["item_name"] for i in kept]
+          == ["CRYSTAL - FANDELIER", "AEROSLIM 1200MM WHITE"])
+    check("both charge lines are reported", len(dropped) == 2)
+    check("named, so an exclusion can be told from a misread",
+          "DELIVERY CHARGES" in dropped)
+    # Renumbered: the printed pass reads 1, 2 rather than 1, 3 with holes.
+    check("what is left is renumbered from 1", [i["sl_no"] for i in kept] == [1, 2])
+    check("quantities are untouched", [i["quantity"] for i in kept] == ["2", "4"])
+
+    kept, dropped = invoice_parser.drop_charge_and_service_items(
+        [{"sl_no": 1, "item_name": "CRYSTAL - FANDELIER", "quantity": "2"}])
+    check("an invoice with no charges reports nothing", dropped == [])
+    check("and keeps its item", len(kept) == 1)
+    check("an empty list is handled", invoice_parser.drop_charge_and_service_items([]) == ([], []))
+    check("and so is None", invoice_parser.drop_charge_and_service_items(None) == ([], []))
+
+
+def test_an_invoice_of_nothing_but_charges_says_so(tmpdir):
+    """Every line excluded leaves a draft with no items, which must be legible.
+
+    It cannot be issued, and should not be: there are no goods on it. What
+    matters is that the operator is told WHY, rather than shown an empty table
+    and left to wonder whether the parser failed.
+    """
+    result = {"items": [
+        {"sl_no": 1, "item_name": "DELIVERY CHARGES", "quantity": "1"},
+        {"sl_no": 2, "item_name": "CUSTOMIZATION CHARGE", "quantity": "1"},
+    ], "notes": []}
+    invoice_parser._drop_charges(result)
+    check("nothing is left", result["items"] == [])
+    check("and the note explains why",
+          any("charge/service line" in n for n in result["notes"]))
+    check("naming them", any("DELIVERY CHARGES" in n for n in result["notes"]))
+    check("and says outright there are no goods",
+          invoice_parser.ONLY_CHARGES_NOTE in result["notes"])
+    # The default empty-list message would be a lie here: it tells the operator
+    # the PDF could not be read and to type the items in, which would mean
+    # typing the charge lines back onto the pass.
+    check("without claiming the PDF could not be read",
+          not any("could not find an item table" in n for n in result["notes"]))
+
+    flask_app, client = logged_in_app(tmpdir, "allcharges")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    draft_id = db.create_draft(conn, supplier_name="S", customer_name="C",
+                                invoice_no="FR 1", invoice_date="01-01-2026",
+                                invoice_pdf_path="invoices/x.pdf",
+                                parse_notes=invoice_parser.ONLY_CHARGES_NOTE,
+                                items=[])
+    draft = db.get_draft(conn, draft_id)
+    problem = db.draft_problem(draft)
+    check("a draft with no goods cannot be issued", problem is not None)
+    check("and the reason given is the true one",
+          problem == invoice_parser.ONLY_CHARGES_NOTE)
+    page = markup_only(client.get("/drafts").get_data(as_text=True))
+    check("which the Drafts page shows", "no goods" in page)
+    check("rather than sending them off to retype it",
+          "type them in" not in page)
+
+    # The genuine failure must still say what it always said: these two look
+    # identical on screen — an empty item list — and need opposite responses.
+    unreadable = db.create_draft(conn, supplier_name="S", customer_name="C",
+                                 invoice_no="FR 2", invoice_date="01-01-2026",
+                                 invoice_pdf_path="invoices/y.pdf",
+                                 parse_notes="", items=[])
+    check("an unreadable PDF still asks for the items",
+          "type them in" in (db.draft_problem(db.get_draft(conn, unreadable)) or ""))
+    conn.close()
+
+
 def items_editor_js():
     """The one item-editor script, which three screens now share.
 
@@ -6363,6 +6519,9 @@ def main():
         test_no_module_imports_itself_in_a_circle()
         test_the_review_document_is_rendered_not_embedded(tmpdir)
         test_the_renderer_handles_what_it_is_given()
+        test_charge_and_service_lines_never_reach_a_gate_pass()
+        test_dropping_charges_renumbers_and_reports()
+        test_an_invoice_of_nothing_but_charges_says_so(tmpdir)
         test_the_office_instructions_do_not_name_a_dead_host(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)
