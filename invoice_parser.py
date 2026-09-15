@@ -48,7 +48,7 @@ BILL_TO_NAME_RE = re.compile(r"Name\s*:?\s*(?:M/S\s*)?(.+?)(?=\s+Name\s*:|\n|$)"
 NAME_HEADERS = ("model", "item")
 QTY_HEADERS = ("qty", "quantity")
 SL_HEADERS = ("s.no", "sl", "sno")
-# "Model No" is a code column, never the name -- see _name_column_index.
+# "Model No" is a code column, never the name — see _name_column_index.
 NUMBER_HEADING_RE = re.compile(r"\bno\.?\b|\bcode\b|\bnumber\b")
 
 # Set as the only note when one of our own printed passes is uploaded. db.py
@@ -57,6 +57,16 @@ NUMBER_HEADING_RE = re.compile(r"\bno\.?\b|\bcode\b|\bnumber\b")
 GATE_PASS_UPLOADED_NOTE = (
     "this is a printed gate pass, not a supplier invoice — upload the "
     "supplier's tax invoice instead"
+)
+
+# Set when the exclusion below empties the item list — every line was a charge.
+# Also matched by db.py, and for the same reason as the note above: the default
+# "no items" message tells the operator the PDF could not be read and to type
+# the items in by hand, which here would mean typing the charge lines back onto
+# the gate pass. Nothing was missed; there is simply nothing to hand over.
+ONLY_CHARGES_NOTE = (
+    "every line on this invoice is a charge or service — there are no goods "
+    "to put on a gate pass"
 )
 
 # Text that marks the end of the item area, whichever appears first.
@@ -125,6 +135,89 @@ def render_page_png(path, number, width=1100):
     return buffer.getvalue()
 
 
+# Lines that are not goods. A gate pass is a list of things physically leaving
+# the building and being signed for at the gate, so a delivery charge or an
+# installation service has no business on it — it is money, not a carton.
+#
+# This lives HERE, in the parser, rather than in db, for two reasons. It is
+# needed at parse time, before a draft exists; and db already imports this
+# module, so putting it the other way round would rebuild the import cycle that
+# was just taken out.
+#
+# NOT the same question as db.is_non_stock_item, and the difference is the
+# whole point of this block. That one asks "does this line have a carton of its
+# own?", and answers no for a spare — a spare fan rod ships inside somebody
+# else's box, so its carton count is left blank rather than written as 0 or 1.
+# It is still a rod. It still leaves the building and is still signed for.
+#
+# This asks the narrower question "is this line a thing at all?", and only
+# money and labour answer no. Reusing the carton predicate here would have
+# dropped four kinds of goods that real gate passes have already carried:
+# FAN ROD FALCON 26MM_IN Spares, FAN ROD19MM_(IN INCHES) Spares, and two
+# CANOPY BIG ... Spares — physical parts with "Spares" as a supplier suffix.
+#
+# So: no SPARE, no HARDWARE, no ACCESSORY. Those are goods.
+#
+# The regex below is the only list. A parallel tuple of the same words reads
+# nicely and then quietly stops matching it.
+#
+# Whole words, plural or singular: real invoices carry "DELIVERY CHARGE" and
+# "DELIVERY CHARGES", "MAINTENANCE OR REPAIR SERVICES", "MAINTENANCE & REPAIR
+# SERVICES" and "ERECTION COMMISSIONING AND INSTALLATION SERVICES (CRYSTAL
+# FANS)". Whole words matter in both directions: \b stops "DISCHARGE 1200"
+# being read as a charge, and a fan genuinely named "SERVICE STATION" would
+# still be dropped — none exists in the 313-row master list, which was
+# checked, but that is the trade being made against matching exact phrases.
+_CHARGE_OR_SERVICE_RE = re.compile(
+    r"\b(?:CHARGES?|SERVICES?|FREIGHTS?|INSTALLATION|COMMISSIONING"
+    r"|CUSTOMIS?ATION|CUSTOMIZATION)\b")
+
+
+# Matched in the same shape db.normalize_item_name uses, and defined here
+# because db imports this module rather than the other way round. db re-exports
+# it, so there is still only one definition of what "the same name" means.
+_DASH_CHARACTERS = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
+
+
+# Kept deliberately conservative: case, dashes and spacing only. Stripping
+# punctuation more aggressively risks collapsing two genuinely different models
+# into one key and silently putting the wrong carton count on a gate pass.
+def normalize_item_name(name):
+    """The key an item name is matched on. Same item, same key."""
+    text = (name or "").upper().replace("\u00a0", " ")
+    for dash in _DASH_CHARACTERS:
+        text = text.replace(dash, "-")
+    text = re.sub(r"\s*-\s*", " - ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def is_charge_or_service_item(name):
+    """True for money and labour — never for goods, however small."""
+    return bool(_CHARGE_OR_SERVICE_RE.search(normalize_item_name(name)))
+
+
+def drop_charge_and_service_items(items):
+    """Remove charge and service lines, renumbering what is left.
+
+    Returns (kept, dropped_names).
+
+    Applied AFTER the item list is complete, never while it is being built.
+    Both parsers attach a wrapped model name to items[-1] — a name too long
+    for its column continues on the line below — so skipping a row mid-loop
+    would graft the dropped line's continuation onto the item above it and
+    silently corrupt a real one. Building the list first cannot do that.
+    """
+    kept, dropped = [], []
+    for item in items or []:
+        if is_charge_or_service_item(item.get("item_name", "")):
+            dropped.append(str(item.get("item_name", "")).strip())
+        else:
+            kept.append(item)
+    for position, item in enumerate(kept, start=1):
+        item["sl_no"] = position
+    return kept, dropped
+
+
 def parse_invoice(pdf_path):
     """Returns a dict: supplier_name, customer_name, invoice_no, invoice_date,
     items (list of {sl_no, item_name, quantity}), notes (list of str)."""
@@ -177,7 +270,13 @@ def parse_invoice(pdf_path):
     # than a customer. Routed to its own module so that tightening one document
     # type cannot quietly shift the other.
     if stock_transfer_parser.looks_like_stock_transfer(text):
-        return stock_transfer_parser.parse_stock_transfer(pages)
+        # Filtered here too. This path RETURNS, so it never reaches the
+        # exclusion at the end of parse_invoice — a transfer memo would have
+        # kept its charge lines while an invoice lost them, which is the kind
+        # of difference nobody notices until the two are compared side by side.
+        transfer = stock_transfer_parser.parse_stock_transfer(pages)
+        _drop_charges(transfer)
+        return transfer
 
     _parse_supplier(text, result)
     _parse_field(INVOICE_NO_RE, text, result, "invoice_no", "invoice number")
@@ -197,11 +296,33 @@ def parse_invoice(pdf_path):
     for i, item in enumerate(items, start=1):
         item["sl_no"] = i
     result["items"] = items
+    _drop_charges(result)
 
-    if not result["items"]:
+    # Empty because every line was excluded is not the same as empty because
+    # the table could not be read, and _drop_charges has already said which.
+    if not result["items"] and ONLY_CHARGES_NOTE not in result["notes"]:
         result["notes"].append("could not find an item table, add items manually")
 
     return result
+
+
+def _drop_charges(result):
+    """Take the charge and service lines out, and SAY so.
+
+    Saying so is the point. Silently shortening the list would leave the
+    operator unable to tell an excluded line from one the parser failed to
+    read — and those need opposite responses: ignore the first, type the second
+    back in by hand. The note names what went.
+    """
+    kept, dropped = drop_charge_and_service_items(result.get("items"))
+    if not dropped:
+        return
+    result["items"] = kept
+    named = ", ".join(dropped[:3]) + ("..." if len(dropped) > 3 else "")
+    result["notes"].append(
+        f"{len(dropped)} charge/service line(s) left off the gate pass: {named}")
+    if not kept:
+        result["notes"].append(ONLY_CHARGES_NOTE)
 
 
 def _looks_like_a_gate_pass(text):
@@ -285,7 +406,7 @@ def _name_column_index(header_words, bounds, name_word):
 
     so the name is not reliably "the column after S.no". Assuming it was is
     what made a BI invoice come through with items called `0003 B` and `0006`
-    -- the model numbers -- instead of `HAWK BLACK` and `BUDDY`.
+    — the model numbers — instead of `HAWK BLACK` and `BUDDY`.
 
     Reading it from the heading text means a new column appearing to the left
     of the name shifts nothing, and a column headed with a number is never

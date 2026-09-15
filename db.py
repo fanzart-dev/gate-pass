@@ -853,40 +853,32 @@ def authenticate(conn, username, password):
 # "AARI - APRICOT GOLD", "AARI  –  APRICOT  GOLD". All three are one item, so
 # the match key folds the differences away rather than the master list needing a
 # row per spelling.
-_DASH_CHARACTERS = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
-
-# Kept deliberately conservative: case, dashes and spacing only. Stripping
-# punctuation more aggressively risks collapsing two genuinely different models
-# into one key and silently putting the wrong carton count on a gate pass.
-def normalize_item_name(name):
-    """The key an item name is matched on. Same item, same key."""
-    text = (name or "").upper().replace("\u00a0", " ")
-    for dash in _DASH_CHARACTERS:
-        text = text.replace(dash, "-")
-    text = re.sub(r"\s*-\s*", " - ", text)
-    return re.sub(r"\s+", " ", text).strip()
+normalize_item_name = invoice_parser.normalize_item_name
 
 
 # Lines that are not physical goods, or are goods that do not ship in a carton
 # of their own. A spare part travels inside somebody else's box, and freight is
 # not a thing at all — neither has a carton count, and writing 0 or 1 would be
 # stating something untrue on a document that is signed at the gate.
+# This is a CARTON question, not a "is it goods" question, and the two must not
+# be merged. A spare fan rod is goods — it leaves the building and is signed
+# for — it simply has no carton of its own, so the count is left blank. The
+# separate, narrower test for lines that are not goods at all (money and
+# labour) is invoice_parser.is_charge_or_service_item, applied at parse time.
 NON_STOCK_KEYWORDS = ("SPARE", "SPARES", "SERVICE", "FREIGHT",
                       "CHARGES", "HARDWARE", "ACCESSORY")
 # Plurals matter: a real invoice line reads "ERECTION COMMISSIONING AND
-# INSTALLATION SERVICES", which \bSERVICE\b does not match. That one came out
-# blank anyway because it is not in the master list, so the gate pass was right
-# by luck — and luck stops working the day somebody adds a row for it.
+# INSTALLATION SERVICES", which \bSERVICE\b does not match.
 _NON_STOCK_RE = re.compile(
     r"\b(?:SPARES?|SERVICES?|FREIGHTS?|CHARGES?|HARDWARES?|ACCESSORY|ACCESSORIES)\b")
 
 
 def is_non_stock_item(name):
-    """True for spares, freight and service lines.
+    """True for a line with no carton of its own: spares, freight, services.
 
-    Whole words only: a model legitimately called something containing these
-    letters inside a longer word must not be caught. Checked BEFORE the master
-    list, so a spare stays blank even if some future row happens to match it.
+    Whole words only: a model legitimately containing these letters inside a
+    longer word must not be caught. Checked BEFORE the master list, so a spare
+    stays blank even if some future row happens to match it.
     """
     return bool(_NON_STOCK_RE.search(normalize_item_name(name)))
 
@@ -1656,6 +1648,12 @@ def draft_problem(draft):
     # name that was never going to be on the page. Say what actually happened.
     if invoice_parser.GATE_PASS_UPLOADED_NOTE in (draft.get("parse_notes") or ""):
         return invoice_parser.GATE_PASS_UPLOADED_NOTE
+
+    # Checked before the field tests below for the same reason: an invoice of
+    # nothing but charges parses perfectly, and the generic "no items" answer
+    # would send the operator to type the excluded charge lines back in.
+    if invoice_parser.ONLY_CHARGES_NOTE in (draft.get("parse_notes") or ""):
+        return invoice_parser.ONLY_CHARGES_NOTE
 
     if not draft["supplier_name"].strip():
         return "no supplier — could not be read from the PDF"
