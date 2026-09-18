@@ -1609,6 +1609,67 @@ button.secondary { background: var(--card); }
 }
 .perm-item { margin: 4px 0; font-size: 13.5px; }
 
+/* Register pages. Wraps on a narrow screen rather than pushing the table into
+   a horizontal scroll: the count goes on its own line and the buttons stay
+   side by side, because they are only useful next to each other. */
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  margin: 16px 0 4px;
+}
+
+.pager-count { color: var(--ink-2); font-size: 13.5px; margin: 0; }
+.pager-count strong { color: var(--ink); font-weight: 600; }
+
+/* These wrap too, not just the bar around them. Five nowrap buttons come to
+   385px, which is wider than a 375px phone — without this the whole page
+   scrolls sideways to reach Last. */
+.pager-links, .pager-size {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* Pushes the page buttons right on a wide screen and lets them fall under the
+   count on a narrow one, without a media query. */
+.pager-links { margin-left: auto; }
+
+.pager-page {
+  font-size: 13.5px;
+  color: var(--ink-2);
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+/* --label, not --muted: --muted is placeholder grey, which measured 3.96:1 on
+   the dark card and fails AA for text this size. This is a real label. */
+.pager-size-label { font-size: 13px; color: var(--label); margin-right: 2px; }
+/* nowrap so "« First" and "Next ›" keep their arrow on the same line as the
+   word — on a phone they otherwise break in two and the row doubles in height
+   for no gain. The ROW wraps instead; the labels do not. */
+.pager .button { padding: 7px 12px; font-size: 13.5px; white-space: nowrap; }
+
+/* Rendered as spans, so these never take hover, focus or a click — the style
+   only has to say so. */
+.pager .button.is-disabled {
+  color: var(--muted);
+  border-color: var(--line-soft);
+  cursor: default;
+  pointer-events: none;
+}
+
+/* --brand/--card rather than --ink: --ink is primary text, which in dark mode
+   is near-white, and a near-white background under white text is invisible. */
+.pager .button.is-current {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--card);
+  font-weight: 600;
+  cursor: default;
+}
+
 /* Bulk selection bar — floats above the register once something is ticked. */
 .bulk-bar {
   position: sticky;

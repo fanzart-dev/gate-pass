@@ -31,6 +31,14 @@ DEMO_ITEMS = [
     ("PHOENIX 52 WALNUT", "4"),
 ]
 
+# Varied names, so a register page does not read as one repeated row — column
+# widths and text wrapping only misbehave once the content differs.
+DEMO_CUSTOMERS = [
+    "LA ESPADA", "Material Studio", "AIRAVATA", "HOME SQUARE",
+    "SATYAM AUTO COMPONENTS PRIVATE LIMITED", "NEW INDIA ELECTRIC-CITY",
+    "MACJ SURAT PVT LTD", "FANZART LLP",
+]
+
 
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8091
@@ -106,13 +114,35 @@ def main():
         prepared_by="Dinesh D")
     db.close(conn)
 
-    # One pass marked printed, so the register shows BOTH print states and the
+    # Enough passes to fill several register pages. Four would fit on one, and
+    # the pager would never appear — the thing most likely to be wrong is how
+    # it behaves on the FIRST page, the LAST page and the short page at the
+    # end, and none of those exist until the book is bigger than a page.
+    conn = db.connect(app.config["DB_PATH"])
+    for i in range(db.REGISTER_PAGE_SIZE * 2 + 13):
+        db.create_gate_pass(
+            conn, None, "Golden Touch Exports", DEMO_CUSTOMERS[i % len(DEMO_CUSTOMERS)],
+            f"FR 2627{i:05d}", "31-07-2026", "",
+            [{"item_name": DEMO_ITEMS[i % len(DEMO_ITEMS)][0],
+              "quantity": str(i % 7 + 1), "cartons": ""}],
+            prepared_by="Vinay")
+    db.close(conn)
+
+    # Passes marked printed, so the register shows BOTH print states and the
     # header checkbox's "select what still needs printing" stage has something
     # to distinguish. With every pass in one state that stage is dropped, which
     # is correct behaviour but leaves it untested.
+    #
+    # Spread through the book rather than one pass at a known position. The
+    # register now shows a page at a time, and the browser tests issue passes
+    # of their own as they run — which pushes the top of the book along and
+    # slid the single printed pass off page 1. The checkbox tests then skipped
+    # themselves, quietly, and the suite still said everything passed. Every
+    # seventh pass means page 1 has a mix however far the window has moved.
     conn = db.connect(app.config["DB_PATH"])
-    first = sorted(db.list_gate_passes(conn), key=lambda p: p["serial_seq"])[0]
-    db.mark_printed(conn, first["id"])
+    for pass_ in sorted(db.list_gate_passes(conn, limit=None),
+                        key=lambda p: p["serial_seq"])[::7]:
+        db.mark_printed(conn, pass_["id"])
     db.close(conn)
 
     # Two drafts sharing a document number, and one matching an issued pass, so

@@ -137,6 +137,25 @@ def create_app(db_path=None, storage_dir=None):
             stamp = 0
         return url_for("static", filename=filename, v=stamp)
 
+    @app.template_global()
+    def page_url(**changes):
+        """This page's URL with some query parameters changed.
+
+        Every page link has to carry the search box and the filters with it,
+        or clicking Next silently resets what you were looking at. Building
+        them by hand means listing the parameters in the template, and the
+        list would go stale the next time a filter is added — so this copies
+        whatever is actually in the address bar and changes only what it is
+        asked to.
+        """
+        args = request.args.to_dict(flat=True)
+        args.update({k: v for k, v in changes.items() if v is not None})
+        # page=1 is what a bare URL already means; leaving it off keeps the
+        # address bar clean and makes First and a fresh visit the same link.
+        if str(args.get("page", "")) == "1":
+            args.pop("page", None)
+        return url_for(request.endpoint, **args)
+
     @app.template_filter("line_breaks")
     def line_breaks(text):
         """Render typed newlines as line breaks on the printed pass.
@@ -954,13 +973,19 @@ def register_routes(app):
             "date_from": requested["date_from"] if may_filter else None,
             "date_to": requested["date_to"] if may_filter else None,
         }
-        gate_passes = db.list_gate_passes(g.db, **filters)
+        # Counted before the page is fetched: the count decides how many pages
+        # there are, which decides which page a request for page 99 settles on.
         total = db.count_gate_passes(g.db, **filters)
+        paging = db.paginate(total, **_paging_args())
+        gate_passes = db.list_gate_passes(g.db, limit=paging["per_page"],
+                                          offset=paging["offset"], **filters)
         # Anything other than the search box counts as a filter, so the button
         # can show that something is narrowing the list.
         active_filters = sum(1 for key in ("status", "date_from", "date_to")
                              if filters.get(key))
         return render_template("register.html", gate_passes=gate_passes,
+                                paging=paging,
+                                per_page_choices=db.PER_PAGE_CHOICES,
                                 status=filters["status"] or "",
                                 search=filters["search"] or "",
                                 date_from=filters["date_from"] or "",
@@ -970,7 +995,7 @@ def register_routes(app):
                                 may_batch_print=db.user_can(g.user, "can_batch_print"),
                                 max_batch=db.MAX_BATCH_PRINT,
                                 active_filters=active_filters,
-                                total=total, page_size=db.REGISTER_PAGE_SIZE,
+                                total=total,
                                 today=date.today().isoformat(),
                                 active="register")
 
@@ -1376,6 +1401,22 @@ def _register_args():
         "date_from": _valid_date(date_from),
         "date_to": _valid_date(date_to),
     }
+
+
+def _paging_args():
+    """Which page to show, from the query string.
+
+    Kept OUT of _register_args on purpose. That returns filters, and its
+    caller splats them straight into list_gate_passes and the exports; a page
+    number in there would be passed along as though it were a filter. Both
+    values go to db.paginate, which is where they are checked — nothing is
+    trusted here beyond "it looked like a number".
+    """
+    try:
+        per_page = int(request.args.get("per_page", ""))
+    except ValueError:
+        per_page = db.REGISTER_PAGE_SIZE
+    return {"page": request.args.get("page", 1), "per_page": per_page}
 
 
 def _report_args():
