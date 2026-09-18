@@ -64,29 +64,70 @@ every page behind it needs a password — but the door is now in public, so:
 When there is time, the stronger version is Cloudflare Access in front of it,
 so only a company email address reaches the sign-in page at all.
 
-## In the office: `https://192.168.1.45`
+## In the office: `https://fanzart-server.local` or `https://192.168.1.45`
 
-**Use the IP address, not the name.** `fanzart-server.local` works on Macs and
-Linux but fails on many Windows machines with DNS_PROBE_FINISHED_NXDOMAIN,
-because `.local` is mDNS — a different mechanism from ordinary DNS, which
-Windows supports patchily and which office Wi-Fi frequently blocks outright.
-The server advertises the name correctly; the machine simply cannot hear it,
-and there is nothing to fix on the server end.
+The IP always works, on every machine, because nothing has to resolve it. The
+certificate covers `192.168.1.45` as well as the name, so the padlock is just
+as clean either way. If you only ever type the IP, none of this section
+applies to you.
 
-The IP always resolves, because nothing has to resolve it. The certificate
-covers `192.168.1.45` as well as the name, so the padlock is just as clean.
+### When the name fails on a Windows machine
+
+`fanzart-server.local` works on Macs and Linux but fails on some Windows
+machines with **DNS_PROBE_FINISHED_NXDOMAIN**. The server is advertising the
+name correctly — checked, it answers with both `192.168.1.45` and an IPv6
+address — and the machine simply cannot hear it.
+
+`.local` is not an ordinary name. It means mDNS: instead of asking a DNS
+server, the machine shouts the question at the whole network and waits for the
+server to shout back. Macs and Linux do this natively. Windows supports it
+patchily, and three ordinary things switch it off:
+
+* the network being marked **Public** rather than Private, which blocks the
+  inbound multicast the answer arrives on
+* **Kaspersky** filtering UDP 5353, which is the port the answer arrives on
+* **Wi-Fi client isolation**, band steering, or a guest SSID on the router
+
+#### The fix — run once per machine
+
+From an Administrator PowerShell on the machine that cannot open the name:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+irm http://192.168.1.45/fix-name-windows.ps1 -OutFile fix-name.ps1
+.\fix-name.ps1
+```
+
+The IP, not the name — a machine that cannot resolve `fanzart-server.local`
+cannot download the script that fixes it from `fanzart-server.local`.
+
+The script checks the server really is at that address before it changes
+anything, reports which of the three causes above is the one biting this
+machine, then writes the answer into the hosts file so the machine already
+knows the address and never has to ask. That works regardless of Kaspersky,
+the Wi-Fi band, or the network profile. `.\fix-name.ps1 -Undo` reverses it.
+
+If it reports that the network is set to **Public**, prefer that fix instead —
+Settings → Network & Internet → the connection → Private. It restores mDNS
+properly, and file sharing and network printers with it.
+
+#### Or do it by hand
+
+Add this line to `C:\Windows\System32\drivers\etc\hosts` (Notepad, run as
+Administrator), then run `ipconfig /flushdns`:
+
+    192.168.1.45    fanzart-server.local
+
+That is all the script does, plus the checks.
+
+**The address is now written down on that machine.** If the server is ever
+given a different IP, the line becomes wrong and has to be updated — which is
+why the server has a fixed address. See "If the server's IP changes" below.
 
 Each machine still needs the certificate installed once. **If that is a
 nuisance, just use the public link above** — it works on the LAN too, needs no
 certificate, and is the right answer for a visitor or a machine nobody wants to
 set up.
-
-If you would rather type a name than an address, add this line to
-`C:\Windows\System32\drivers\etc\hosts` (Notepad, run as Administrator):
-
-    192.168.1.45    fanzart-server.local
-
-That bypasses mDNS entirely and the name then works like any other.
 
 Each machine needs the server's certificate installed **once**. Until it is,
 the browser says "Not secure" and staff have to click through a security
@@ -117,8 +158,13 @@ anything, or give the server any access to the machine.
    **Trusted Root Certification Authorities**
 5. Close every browser window and reopen.
 
-Or run `deploy/trust-ca-windows.ps1` as Administrator, which does all of that
-and checks the result.
+Or let the script do all of that and check the result:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+irm http://192.168.1.45/trust-ca-windows.ps1 -OutFile trust-ca.ps1
+.\trust-ca.ps1
+```
 
 **Firefox keeps its own store** and ignores the one above:
 Settings → Privacy & Security → Certificates → View Certificates →
@@ -219,6 +265,14 @@ sudo /opt/gate-pass/deploy/enable-https.sh
 The authority does not change, so machines that already trust it keep working —
 only the server certificate is replaced. Better still, give the server a fixed
 address on the router and the problem does not arise.
+
+**Any Windows machine that ran `fix-name-windows.ps1` also has the old address
+written into its hosts file, and that line will now be wrong.** It does not
+fail the way a missing name fails — it resolves confidently to a machine that
+is not there, which looks like the server being down. Re-run the script on
+each of those machines; it replaces the stale line rather than adding a second
+one. This is the cost of bypassing mDNS, and the reason the server has a fixed
+address in the first place.
 
 **The certificate expires** after 825 days; the authority lasts ten years.
 Reissuing is the same two commands, and again no machine needs redoing.

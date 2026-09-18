@@ -5984,6 +5984,113 @@ def test_the_office_instructions_do_not_name_a_dead_host(tmpdir):
           default and default.group(1)[0].isdigit())
 
 
+def test_the_windows_name_repair_cannot_depend_on_the_name():
+    """The circle this whole repair exists to break.
+
+    A Windows machine's symptom is that fanzart-server.local does not resolve.
+    Any instruction that tells such a machine to fetch something FROM
+    fanzart-server.local is asking it to use the thing that is broken in order
+    to fix the thing that is broken. It already happened once with the
+    certificate; the repair script is the same trap with a new file in it.
+    """
+    doc = (ROOT / "deploy" / "OFFICE-MACHINES.md").read_text()
+
+    # Every download the document instructs, whatever the file. The earlier
+    # check covered fanzart-ca.pem by name, which is exactly how the .ps1
+    # downloads would have slipped past it.
+    downloads = re.findall(r"https?://([^/\s`]+)/[\w.-]+\.(?:pem|ps1|sh)", doc)
+    check("the document tells people to download something", downloads)
+    by_name = [d for d in downloads if not d[0].isdigit()]
+    check("and never from the name that is broken", not by_name)
+    if by_name:
+        print(f"    downloads pointing at a name: {sorted(set(by_name))}")
+
+    script = (ROOT / "deploy" / "fix-name-windows.ps1").read_text()
+    default = re.search(r'\$ServerIp\s*=\s*"([^"]+)"', script)
+    check("the repair script defaults to an address, not the name",
+          default and default.group(1)[0].isdigit())
+    check("and the address it defaults to is the one the rest of the docs give",
+          default and default.group(1) == "192.168.1.45")
+
+    # It must prove the address is really the gate pass before writing it into
+    # a hosts file. A wrong -ServerIp would otherwise resolve confidently to
+    # the wrong machine, which is worse than not resolving at all: mDNS can
+    # never correct it, and it looks like the server being down.
+    check("it checks what is at that address first",
+          "fanzart-ca.pem" in script and "BEGIN CERTIFICATE" in script)
+    # Against the repair path specifically, not the first Set-Content in the
+    # file — that one is in the -Undo branch, which removes an entry and has
+    # no address to be wrong about.
+    check("before it writes the address down",
+          script.index("BEGIN CERTIFICATE") < script.index('Updating $hostsPath'))
+
+    # Windows caches the failure too. Without a flush the machine keeps
+    # answering itself NXDOMAIN and the repair looks like it did nothing.
+    check("it flushes the DNS cache", "ipconfig /flushdns" in script)
+    check("and can be undone", "-Undo" in script and "$Undo" in script)
+
+    # PowerShell 5.1 writes a byte-order mark with -Encoding UTF8, and a BOM on
+    # the first line of hosts stops Windows parsing that line. Writing the
+    # repair could therefore break name resolution altogether.
+    check("it writes the hosts file as ASCII, never UTF8",
+          "-Encoding ASCII" in script and "-Encoding UTF8" not in script)
+
+    # The entry hardcodes an address, so the document has to say what happens
+    # when the server moves — this fails as a confident wrong answer rather
+    # than as a missing name, which looks like an outage instead of a stale
+    # line in a file nobody remembers editing.
+    check("the document warns the entry goes stale if the IP changes",
+          "hosts file" in doc and "wrong" in doc.lower())
+
+
+def test_nginx_hands_out_the_repair_scripts_but_not_the_rest_of_deploy():
+    """Same reasoning as the CA file, and the same limit on it.
+
+    A machine that cannot resolve the name cannot fetch the script that fixes
+    it from the name, so the scripts are served by IP over plain HTTP. That is
+    deliberate. Serving the whole deploy directory to get there would not be —
+    it holds the server's own shell scripts and env.example.
+    """
+    confs = {name: (ROOT / "deploy" / name).read_text()
+             for name in ("nginx-gate-pass.conf", "nginx-gate-pass-ssl.conf")}
+
+    for name, conf in confs.items():
+        # Served wherever the CA is served, and there is more than one server
+        # block in the HTTPS file. One of them having it is not enough: the
+        # block people actually hit is the plain-HTTP one, by IP.
+        ca_blocks = conf.count("location = /fanzart-ca.pem")
+        check(f"{name} serves the CA", ca_blocks >= 1)
+        check(f"{name} serves the name repair everywhere it serves the CA",
+              conf.count("location = /fix-name-windows.ps1") == ca_blocks)
+        check(f"{name} serves the certificate helper too",
+              conf.count("location = /trust-ca-windows.ps1") == ca_blocks)
+
+        # Exact matches only. A prefix location, or an alias over the folder,
+        # would hand out install.sh, backup.sh and env.example to anyone on
+        # the LAN.
+        check(f"{name} does not alias the whole deploy folder",
+              "alias __APP_DIR__/deploy/;" not in conf
+              and "location /deploy/" not in conf)
+
+    # The plain-HTTP block must not redirect them to HTTPS: the machine being
+    # repaired has neither a working name nor a trusted certificate yet.
+    http_conf = confs["nginx-gate-pass.conf"]
+    ssl_conf = confs["nginx-gate-pass-ssl.conf"]
+    first_block = ssl_conf[:ssl_conf.index("__HTTPS_LISTEN__")]
+    check("the port 80 block serves the repair before any redirect",
+          "location = /fix-name-windows.ps1" in first_block)
+    check("and so does the HTTP-only config",
+          "location = /fix-name-windows.ps1" in http_conf)
+
+    # The files have to exist to be served, and be readable by nginx rather
+    # than only by the owner.
+    for name in ("fix-name-windows.ps1", "trust-ca-windows.ps1"):
+        path = ROOT / "deploy" / name
+        check(f"deploy/{name} exists", path.is_file())
+        check(f"deploy/{name} is world-readable, as nginx reads it",
+              path.stat().st_mode & 0o004)
+
+
 def test_the_same_manual_form_cannot_issue_twice(tmpdir):
     """A double click, a refresh, an impatient second press: one number.
 
@@ -6724,6 +6831,8 @@ def main():
         test_dropping_charges_renumbers_and_reports()
         test_an_invoice_of_nothing_but_charges_says_so(tmpdir)
         test_the_office_instructions_do_not_name_a_dead_host(tmpdir)
+        test_the_windows_name_repair_cannot_depend_on_the_name()
+        test_nginx_hands_out_the_repair_scripts_but_not_the_rest_of_deploy()
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)
         test_the_printed_totals_are_bolder_than_the_rows(tmpdir)
