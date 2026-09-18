@@ -1861,7 +1861,17 @@ def _sum_numeric(values):
     return int(total) if total == int(total) else total
 
 
-REGISTER_PAGE_SIZE = 200
+# One page of the register. 50 rather than 200 because it is now a page and not
+# a cap: the rest of the book is a click away instead of unreachable, so the
+# first screen can be the size people actually read.
+REGISTER_PAGE_SIZE = 50
+
+# What the page-size control offers. A closed list on purpose — this is the one
+# query that reads the whole table for a "contains" search, and ?per_page=500000
+# in the address bar would build the entire book in memory and send it to a
+# browser that cannot draw it. Anything not on this list falls back to the
+# default rather than being honoured or refused.
+PER_PAGE_CHOICES = (50, 100, 200)
 
 # How many rows the reports page shows as a preview. It is there to confirm the
 # filters caught the right passes before exporting, not to be read end to end —
@@ -1916,11 +1926,12 @@ def distinct_values(conn, column, limit=200):
 
 
 def list_gate_passes(conn, status=None, search=None, limit=REGISTER_PAGE_SIZE,
-                      date_from=None, date_to=None, supplier=None, customer=None):
-    """The register, newest first.
+                      date_from=None, date_to=None, supplier=None, customer=None,
+                      offset=0):
+    """One page of the register, newest first.
 
-    Capped by default. The register is a browsing screen, and nobody reads past
-    the first screenful — without a limit this builds every row in the book into
+    Limited by default, but the limit is a page rather than a ceiling: `offset`
+    reaches the rest of the book. Without any limit this builds every row into
     memory on every page view, which is the one query that genuinely falls over
     as the book grows. Pass limit=None to walk the whole book (exports, totals).
 
@@ -1928,6 +1939,13 @@ def list_gate_passes(conn, status=None, search=None, limit=REGISTER_PAGE_SIZE,
     to read the table. That is fine at this size (tens of milliseconds over
     100k rows) and keeps the box behaving the way people expect. If it ever
     stops feeling instant, the answer is an FTS5 table, not more indexes.
+
+    Ordered by id, which is unique, so a row can never straddle two pages the
+    way it could under a column with ties. Passes issued WHILE someone is
+    paging do shift the window — offset counts from the top, and the top moves.
+    The cost is one repeated row, not a lost one, which is the right way round
+    for a register; avoiding it entirely means keyset pagination, and that is
+    not worth its complexity over a few hundred rows.
     """
     where, params = _register_filters(status, search, date_from, date_to,
                                        supplier, customer)
@@ -1935,15 +1953,66 @@ def list_gate_passes(conn, status=None, search=None, limit=REGISTER_PAGE_SIZE,
     if limit is not None:
         query += " LIMIT ?"
         params = params + [limit]
+        if offset:
+            # SQLite has no OFFSET without LIMIT, so this only ever appears
+            # alongside one. An offset asked for without a limit is a caller
+            # bug, and silently dropping it would hand back page 1 wearing
+            # page 4's number.
+            query += " OFFSET ?"
+            params = params + [offset]
+    elif offset:
+        raise ValueError("offset needs a limit")
     return [dict(r) for r in conn.execute(query, params)]
 
 
 def count_gate_passes(conn, status=None, search=None, date_from=None, date_to=None,
                        supplier=None, customer=None):
-    """How many match, so the register can say when it is showing only the top."""
+    """How many match, so the register can say where in the book it is."""
     where, params = _register_filters(status, search, date_from, date_to,
                                        supplier, customer)
     return conn.execute(f"SELECT COUNT(*) AS n FROM gate_passes{where}", params).fetchone()["n"]
+
+
+def paginate(total, page=1, per_page=REGISTER_PAGE_SIZE):
+    """Where page `page` of `total` records starts and ends.
+
+    All the arithmetic in one place, because the view, the template and the
+    query each need a different piece of it and an off-by-one between them
+    shows up as a row nobody can reach.
+
+    Both arguments arrive from the address bar, so both are treated as hostile:
+    a page beyond the end is pulled back to the last real page rather than
+    showing an empty table, and a per_page that is not on offer falls back to
+    the default. Returns 1-based `first` and `last` record numbers for the
+    "Showing 1 to 50 of 228" line — and 0 for both when nothing matched, so it
+    reads "0 of 0" rather than "1 to 0".
+    """
+    if per_page not in PER_PAGE_CHOICES:
+        per_page = REGISTER_PAGE_SIZE
+
+    total = max(0, int(total))
+    # An empty register still has a page 1. total_pages of 0 would make "Page 1
+    # of 0" and leave the clamp below with nothing to clamp to.
+    total_pages = max(1, -(-total // per_page))   # ceiling division
+
+    try:
+        page = int(page)
+    except (TypeError, ValueError):
+        page = 1
+    page = max(1, min(page, total_pages))
+
+    offset = (page - 1) * per_page
+    return {
+        "page": page,
+        "per_page": per_page,
+        "offset": offset,
+        "total": total,
+        "total_pages": total_pages,
+        "has_prev": page > 1,
+        "has_next": page < total_pages,
+        "first": offset + 1 if total else 0,
+        "last": min(offset + per_page, total),
+    }
 
 
 EXPORT_SUMMARY_COLUMNS = [

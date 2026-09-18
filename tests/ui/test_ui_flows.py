@@ -849,7 +849,12 @@ class TestRegisterMasterCheckbox:
         master = self._open(page, base_url)
         before = self._state(page)
         if before["unprinted"] == 0 or before["unprinted"] == before["total"]:
-            pytest.skip("need a mix of printed and unprinted to see all three stages")
+            # The numbers, not just the reason: a skip that says only "need a
+            # mix" is indistinguishable from a pass in the summary line, and
+            # this test silently stopped running once before anybody noticed.
+            pytest.skip("need a mix of printed and unprinted to see all three "
+                        f"stages — page has {before['total']} passes, "
+                        f"{before['unprinted']} of them unprinted")
 
         master.click()
         first = self._state(page)
@@ -915,7 +920,9 @@ class TestRegisterMasterCheckbox:
         master = self._open(page, base_url)
         state = self._state(page)
         if state["unprinted"] == 0 or state["unprinted"] == state["total"]:
-            pytest.skip("need a mix to tell the first stage from the second")
+            pytest.skip("need a mix to tell the first stage from the second "
+                        f"— page has {state['total']} passes, "
+                        f"{state['unprinted']} of them unprinted")
 
         master.click()                       # stage 1: unprinted
         page.locator(".pass-tick").first.click()   # operator intervenes

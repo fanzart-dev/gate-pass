@@ -71,12 +71,6 @@
       {% endif %}
     </div>
   {% else %}
-    {% if total > gate_passes|length %}
-      <p class="hint" style="margin-bottom:10px">
-        Showing the {{ gate_passes|length }} most recent of {{ total }} matching passes.
-        Search by serial, invoice number or customer to narrow it down.
-      </p>
-    {% endif %}
     <div class="table-wrap">
       <table class="list register-table">
         <thead>
@@ -170,6 +164,64 @@
         </tbody>
       </table>
     </div>
+
+    {# Always shown, even on a single page: "Showing 1 to 12 of 12" answers
+       "is this all of them?", which is the question the old 200-row cap left
+       people unable to answer. The buttons appear only when there is somewhere
+       to go. #}
+    <nav class="pager" aria-label="Register pages">
+      <p class="pager-count">
+        Showing <strong>{{ paging.first }}</strong> to <strong>{{ paging.last }}</strong>
+        of <strong>{{ paging.total }}</strong> matching pass{{ '' if paging.total == 1 else 'es' }}
+      </p>
+
+      {% if paging.total_pages > 1 %}
+        <div class="pager-links">
+          {# A disabled <a> is still focusable and still followed on Enter, so
+             the ends render as spans instead — there is nothing to click, and
+             nothing pretending to be clickable. #}
+          {% if paging.has_prev %}
+            <a class="button" href="{{ page_url(page=1) }}" aria-label="First page">« First</a>
+            <a class="button" href="{{ page_url(page=paging.page - 1) }}"
+               rel="prev" aria-label="Previous page">‹ Previous</a>
+          {% else %}
+            <span class="button is-disabled" aria-hidden="true">« First</span>
+            <span class="button is-disabled" aria-hidden="true">‹ Previous</span>
+          {% endif %}
+
+          <span class="pager-page" aria-current="page">
+            Page {{ paging.page }} of {{ paging.total_pages }}
+          </span>
+
+          {% if paging.has_next %}
+            <a class="button" href="{{ page_url(page=paging.page + 1) }}"
+               rel="next" aria-label="Next page">Next ›</a>
+            <a class="button" href="{{ page_url(page=paging.total_pages) }}"
+               aria-label="Last page">Last »</a>
+          {% else %}
+            <span class="button is-disabled" aria-hidden="true">Next ›</span>
+            <span class="button is-disabled" aria-hidden="true">Last »</span>
+          {% endif %}
+        </div>
+      {% endif %}
+
+      {# Changing the size returns to page 1: page 4 of 50-row pages is not
+         page 4 of 200-row pages, and landing somewhere unrelated to where you
+         were reading is worse than starting over. #}
+      {% if paging.total > per_page_choices[0] %}
+        <div class="pager-size">
+          <span class="pager-size-label">Rows</span>
+          {% for size in per_page_choices %}
+            {% if size == paging.per_page %}
+              <span class="button is-current" aria-current="true">{{ size }}</span>
+            {% else %}
+              <a class="button" href="{{ page_url(page=1, per_page=size) }}"
+                 aria-label="Show {{ size }} rows per page">{{ size }}</a>
+            {% endif %}
+          {% endfor %}
+        </div>
+      {% endif %}
+    </nav>
   {% endif %}
 
   {% if may_batch_print %}

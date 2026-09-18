@@ -3076,6 +3076,207 @@ def test_register_is_capped(tmpdir):
     db.close(conn)
 
 
+def test_the_register_pages_through_the_whole_book():
+    """Every pass must be reachable. That is the entire point of the change.
+
+    Before this, the register showed the newest 200 and the 201st was simply
+    not there — no link, no message, nothing. A gate pass register whose older
+    entries cannot be looked at is not a register.
+    """
+    conn = db.connect(":memory:")
+    count = 228                      # what the real book held when this was found
+    for i in range(count):
+        db.create_gate_pass(conn, None, "S", "C", f"INV-{i:04d}", "04-08-2026",
+                             "", sample_items(), prepared_by="Ravi Kumar")
+
+    seen = []
+    page_number = 1
+    while True:
+        paging = db.paginate(db.count_gate_passes(conn), page=page_number, per_page=50)
+        rows = db.list_gate_passes(conn, limit=paging["per_page"],
+                                   offset=paging["offset"])
+        seen.extend(r["serial_seq"] for r in rows)
+        if not paging["has_next"]:
+            break
+        page_number += 1
+        check_guard = page_number < 50   # a broken has_next must not loop forever
+        if not check_guard:
+            break
+
+    check("every pass is reachable", len(seen) == count)
+    check("none is shown twice", len(set(seen)) == count)
+    check("and none is skipped", sorted(seen) == list(range(1, count + 1)))
+    check("it took the expected number of pages", page_number == 5)
+
+    # 228 over 50 is four full pages and a short one; the short page is last.
+    last = db.paginate(count, page=5, per_page=50)
+    check("the last page holds the remainder",
+          len(db.list_gate_passes(conn, limit=last["per_page"],
+                                  offset=last["offset"])) == 28)
+    check("and knows it is the last", not last["has_next"])
+    check("the oldest pass is on it",
+          db.list_gate_passes(conn, limit=last["per_page"],
+                              offset=last["offset"])[-1]["serial_seq"] == 1)
+
+    # Newest first, unbroken, across a page boundary — a pass must not fall
+    # through the join between two pages.
+    page1 = db.list_gate_passes(conn, limit=50, offset=0)
+    page2 = db.list_gate_passes(conn, limit=50, offset=50)
+    check("the pages join up",
+          page1[-1]["serial_seq"] - 1 == page2[0]["serial_seq"])
+    db.close(conn)
+
+
+def test_paging_survives_whatever_the_address_bar_sends():
+    """page and per_page arrive from a URL, so neither can be trusted."""
+    # Out of range in both directions: settle on a real page rather than
+    # showing an empty table with "Page 99 of 5" above it.
+    check("page 0 becomes page 1", db.paginate(228, page=0)["page"] == 1)
+    check("a negative page becomes page 1", db.paginate(228, page=-7)["page"] == 1)
+    check("a page past the end becomes the last",
+          db.paginate(228, page=999, per_page=50)["page"] == 5)
+    check("nonsense becomes page 1", db.paginate(228, page="'; DROP TABLE")["page"] == 1)
+    check("so does an empty string", db.paginate(228, page="")["page"] == 1)
+    check("and None", db.paginate(228, page=None)["page"] == 1)
+
+    # The size is a closed list. An unbounded per_page would rebuild the cap
+    # this change removed, only worse — set by whoever types the URL.
+    check("a huge per_page is refused",
+          db.paginate(228, per_page=10 ** 9)["per_page"] == db.REGISTER_PAGE_SIZE)
+    check("zero is refused", db.paginate(228, per_page=0)["per_page"] == db.REGISTER_PAGE_SIZE)
+    check("a negative is refused",
+          db.paginate(228, per_page=-50)["per_page"] == db.REGISTER_PAGE_SIZE)
+    check("an off-list size is refused",
+          db.paginate(228, per_page=51)["per_page"] == db.REGISTER_PAGE_SIZE)
+    for size in db.PER_PAGE_CHOICES:
+        check(f"{size} rows is allowed", db.paginate(228, per_page=size)["per_page"] == size)
+
+    # An empty register still has a page 1 to be on.
+    empty = db.paginate(0)
+    check("an empty register has one page", empty["total_pages"] == 1)
+    check("and is on it", empty["page"] == 1)
+    check("with nowhere to go", not empty["has_next"] and not empty["has_prev"])
+    check("and counts from zero, not one", (empty["first"], empty["last"]) == (0, 0))
+
+    # The counting line: "Showing FIRST to LAST of TOTAL".
+    first = db.paginate(228, page=1, per_page=50)
+    check("page 1 starts at 1", (first["first"], first["last"]) == (1, 50))
+    third = db.paginate(228, page=3, per_page=50)
+    check("page 3 counts from 101", (third["first"], third["last"]) == (101, 150))
+    fifth = db.paginate(228, page=5, per_page=50)
+    check("the last page stops at the total", (fifth["first"], fifth["last"]) == (201, 228))
+    exact = db.paginate(200, page=4, per_page=50)
+    check("an exact fit has no trailing empty page", exact["total_pages"] == 4)
+    check("and its last page is full", (exact["first"], exact["last"]) == (151, 200))
+    one = db.paginate(1, per_page=50)
+    check("a single pass reads 1 to 1", (one["first"], one["last"]) == (1, 1))
+
+    # offset is what reaches the database, so it has to line up with the page.
+    check("page 1 starts at offset 0", db.paginate(228, page=1, per_page=50)["offset"] == 0)
+    check("page 2 starts at offset 50", db.paginate(228, page=2, per_page=50)["offset"] == 50)
+    check("page 2 of 100s starts at 100",
+          db.paginate(228, page=2, per_page=100)["offset"] == 100)
+
+
+def test_an_offset_without_a_limit_is_refused():
+    """SQLite has no OFFSET without LIMIT, so it would silently be ignored.
+
+    Dropping it would hand back page 1 while the buttons above said page 4:
+    the reader would see the newest passes under a heading claiming they were
+    the oldest, and nothing would look broken.
+    """
+    conn = db.connect(":memory:")
+    raised = False
+    try:
+        db.list_gate_passes(conn, limit=None, offset=50)
+    except ValueError:
+        raised = True
+    check("an offset with no limit raises", raised)
+    check("but limit=None on its own still walks the book",
+          db.list_gate_passes(conn, limit=None) == [])
+    db.close(conn)
+
+
+def test_page_links_carry_the_search_and_filters(tmpdir):
+    """Clicking Next must not quietly drop what you were looking at.
+
+    The links are built from whatever is in the address bar rather than from a
+    list of parameters written out in the template, so a filter added later
+    cannot be forgotten here.
+    """
+    flask_app, client = logged_in_app(tmpdir, "paging")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    for i in range(120):
+        db.create_gate_pass(conn, None, "Golden Touch", f"CUST {i % 3}",
+                             f"FR {i:04d}", "04-08-2026", "", sample_items(),
+                             prepared_by="Ravi Kumar")
+    conn.close()
+
+    # The count line wraps across source lines, so compare it with the runs of
+    # whitespace collapsed — otherwise the assertion is really about indenting.
+    def counting_line(url):
+        html = markup_only(client.get(url).get_data(as_text=True))
+        found = re.search(r"Showing.*?matching pass(?:es)?", html, re.S)
+        return re.sub(r"\s+", " ", found.group(0)) if found else ""
+
+    page = markup_only(client.get("/register").get_data(as_text=True))
+    check("the first page says exactly where it is",
+          counting_line("/register")
+          == "Showing <strong>1</strong> to <strong>50</strong> "
+             "of <strong>120</strong> matching passes")
+    check("with a page count", "Page 1 of 3" in page)
+    check("no Previous to follow", 'rel="prev"' not in page)
+    check("but a Next", 'rel="next"' in page)
+
+    # Page 2 counts from 51, not from 1 — the arithmetic the reader checks.
+    check("page 2 counts from where page 1 stopped",
+          counting_line("/register?page=2")
+          == "Showing <strong>51</strong> to <strong>100</strong> "
+             "of <strong>120</strong> matching passes")
+    check("and the last page stops at the total",
+          counting_line("/register?page=3")
+          == "Showing <strong>101</strong> to <strong>120</strong> "
+             "of <strong>120</strong> matching passes")
+
+    # A search that matches more than one page, so the links matter.
+    page = markup_only(client.get("/register?q=FR+00").get_data(as_text=True))
+    check("a search keeps its own count", "Page 1 of 2" in page)
+    check("and its Next link carries the search",
+          "q=FR+00" in page or "q=FR%2000" in page)
+
+    # Page 2 of that search must still be filtered, not the whole book.
+    page = markup_only(client.get("/register?q=FR+00&page=2").get_data(as_text=True))
+    check("page 2 of a search stays on that search", "Page 2 of 2" in page)
+    check("and offers a way back", 'rel="prev"' in page)
+    check("its links still carry the search",
+          "q=FR+00" in page or "q=FR%2000" in page)
+
+    # The row the old cap hid: with 120 passes and 50 to a page, FZ-00001 is
+    # only reachable on page 3.
+    page = markup_only(client.get("/register?page=3").get_data(as_text=True))
+    check("the oldest pass is reachable at all", "FZ-00001" in page)
+    check("and is not on page 1",
+          "FZ-00001" not in markup_only(client.get("/register").get_data(as_text=True)))
+
+    # A page past the end lands on the last page rather than an empty table.
+    page = markup_only(client.get("/register?page=999").get_data(as_text=True))
+    check("an impossible page settles on the last", "Page 3 of 3" in page)
+    check("and shows rows", "FZ-00001" in page)
+
+    # Changing the size goes back to page 1: page 3 of 50s is not page 3 of 200s.
+    page = markup_only(client.get("/register?per_page=200").get_data(as_text=True))
+    check("200 to a page fits the book on one", "Page 1 of" not in page)
+    check("so there are no page buttons at all", 'class="pager-links"' not in page)
+    check("and the count says as much",
+          counting_line("/register?per_page=200")
+          == "Showing <strong>1</strong> to <strong>120</strong> "
+             "of <strong>120</strong> matching passes")
+    check("the whole book really is there", "FZ-00001" in page and "FZ-00120" in page)
+
+    page = markup_only(client.get("/register?per_page=999999").get_data(as_text=True))
+    check("an unbounded size falls back to the default", "Page 1 of 3" in page)
+
+
 def test_failed_write_rolls_back(tmpdir):
     """A write that blows up half way must leave nothing behind, and must not
     leave the connection holding the write lock."""
@@ -6556,6 +6757,10 @@ def main():
         test_connection_settings(tmpdir)
         test_indexes_are_used(tmpdir)
         test_register_is_capped(tmpdir)
+        test_the_register_pages_through_the_whole_book()
+        test_paging_survives_whatever_the_address_bar_sends()
+        test_an_offset_without_a_limit_is_refused()
+        test_page_links_carry_the_search_and_filters(tmpdir)
         test_failed_write_rolls_back(tmpdir)
         test_setting_the_numbering(tmpdir)
         test_users_and_login(tmpdir)
