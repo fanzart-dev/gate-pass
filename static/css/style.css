@@ -2104,6 +2104,13 @@ table.people-table th { padding: 10px 12px !important; }
   --sticker-left: 36mm;
   --sticker-top: 23mm;
   --sticker-gap: 16.4mm;
+  /* Top of one label to the top of the next. Measured at 82mm on the sheet,
+     and adjustable for the same reason everything else here is: if a printer
+     enlarges the page, the labels come out further apart than they were sent
+     and the drift compounds — the second label is out by one gap, the third
+     by two. Shrinking the pitch cancels that without disturbing the first
+     label, which by then is usually already lined up. */
+  --sticker-pitch: 82mm;
   /* Cancels whatever the printer does to the page. 1 means it was left
      alone. See .sticker-ruler below for how the number is arrived at. */
   --sheet-scale: 1;
@@ -2119,7 +2126,7 @@ table.people-table th { padding: 10px 12px !important; }
   margin: 0 auto;
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: repeat(3, 82mm);
+  grid-template-rows: repeat(3, var(--sticker-pitch));
   align-content: start;
 }
 
@@ -2128,8 +2135,11 @@ table.people-table th { padding: 10px 12px !important; }
 .sticker-card {
   position: relative;
   width: 164mm;
-  height: 82mm;
+  height: var(--sticker-pitch);
   box-sizing: border-box;
+  /* NOT overflow:hidden. A shortened pitch leaves the destination line close
+     to the bottom of its own box, and clipping it there would hide the very
+     thing the pitch is being adjusted to fix. */
   color: #000;
 }
 
