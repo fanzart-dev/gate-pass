@@ -134,7 +134,13 @@
       // 247mm page. It has to agree with the CSS, and the tests prove the
       // count by printing a real PDF, so this cannot drift unnoticed.
       const PER_PAGE = 3;
-      const ALIGN_STORE = "sticker_sheet_alignment";
+      // Versioned, and the version matters. An offset saved against the old
+      // A4 layout means nothing on a 164 x 247mm sheet — the page it was
+      // measured against no longer exists — but a saved value beats a default,
+      // so browsers that had tried the page were pinning every line a row too
+      // high and it looked like the new measurements were wrong. Bumping the
+      // key retires those quietly. Bump it again if the geometry moves again.
+      const ALIGN_STORE = "sticker_sheet_alignment_v2";
       const ALIGN_DEFAULTS = { left: 44, top: 26, gap: 16.4 };
 
       // --- remembered destinations --------------------------------------

@@ -6100,8 +6100,7 @@ def test_the_sticker_sheet_is_built_for_paper():
     check("no border is printed round a label",
           "border: 0;" in print_block)
     check("and the on-screen ghost labels are not printed",
-          ".sticker-card::before, .sticker-card::after, .sticker-to::before"
-          in print_block and "content: none;" in print_block)
+          ".sticker-card::before { content: none; }" in print_block)
     # The screen preview draws the label's own rules so the calibration can be
     # judged without printing. On paper the stationery already has them.
     check("nor the preview's copy of the label's rules",
@@ -6142,9 +6141,20 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
 
     # Remembered per browser, like the destinations: the offset is a property
     # of the machine in front of the person, not of the company.
-    check("the alignment is remembered", 'ALIGN_STORE = "sticker_sheet_alignment"' in template)
+    check("the alignment is remembered",
+          'ALIGN_STORE = "sticker_sheet_alignment_v2"' in template)
     check("in the browser, not the database",
           "localStorage.setItem(ALIGN_STORE" in template)
+
+    # VERSIONED, and the version is the point. A saved value beats a default,
+    # so when the sheet moved from A4 to 164 x 247mm every browser that had
+    # opened the page carried on applying offsets measured against a layout
+    # that no longer existed — putting each line a row too high and making the
+    # new measurements look wrong. The suffix retires those quietly.
+    check("the key is versioned, so a geometry change retires old offsets",
+          "_v2" in template and 'localStorage.getItem(ALIGN_STORE)' in template)
+    check("and nothing still reads the unversioned key",
+          '"sticker_sheet_alignment"' not in template)
 
     # A blank or nonsense box must not write NaN into the stylesheet, which
     # would drop every value into the top corner of the sheet.
@@ -6155,6 +6165,21 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     align_block = template[template.index('class="sticker-align"'):]
     check("the nudge controls are inside the form, which is not printed",
           "</form>" in align_block)
+
+    # The ghost labels stand for ink already on the paper, so they must NOT
+    # move with the calibration. Two of them used to be pinned while the third
+    # rode on its own value's line, so nudging the offsets slid DESTINATION:
+    # up until it printed on top of ORIGIN:. One element cannot disagree with
+    # itself, so all three are now one.
+    screen = css[css.index("@media screen {", css.index("Box stickers")):]
+    screen = screen[:screen.index("@media print")]
+    check("all three pre-printed labels are drawn as one element",
+          screen.count("content:") == 1
+          and "AWB No:" in screen and "ORIGIN:" in screen and "DESTINATION:" in screen)
+    check("fixed to the sheet, not to a value that moves",
+          "top: 20.6mm;" in screen)
+    check("and nothing rides on the destination line any more",
+          ".sticker-to::before" not in css)
     no_print = template[template.index('<div class="no-print">'):
                         template.index('id="sticker-sheet"')]
     check("and the whole control panel is marked not-for-print",

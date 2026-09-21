@@ -2137,35 +2137,30 @@ table.people-table th { padding: 10px 12px !important; }
       linear-gradient(#eef2f7, #eef2f7) 0 70.6mm / 100% 6.3mm no-repeat;
   }
 
-  /* The two labels that can be drawn with the card's own pseudo-elements. */
+  /* The pre-printed labels, all three in ONE pseudo-element.
+     They are fixed to the SHEET and must not move: they stand for ink that
+     is already on the paper. Only the values move, which is the whole point
+     of the preview — it shows where the calibration is putting them relative
+     to blanks that are staying put.
+
+     Previously two were pinned here and the third rode on its own value's
+     line, so it drifted with the calibration and ended up printed on top of
+     ORIGIN:. One element cannot disagree with itself.
+
+     The rows are evenly pitched — 20.6, 36.3, 52.0mm, so 15.7mm apart — so
+     a line-height of 15.7mm starting at the first row's top lands all three
+     in their own rows without positioning each by hand. */
   .sticker-card::before {
     position: absolute;
     left: 4mm;
-    top: 26mm;
-    content: "AWB No:";
+    top: 20.6mm;
+    content: "AWB No:\A ORIGIN:\A DESTINATION:";
+    white-space: pre;
+    line-height: 15.7mm;
     font-size: 14px;
     font-weight: 700;
     color: #b6c0cd;
-  }
-
-  .sticker-card::after {
-    position: absolute;
-    left: 4mm;
-    top: 42mm;
-    content: "ORIGIN:";
-    font-size: 14px;
-    font-weight: 700;
-    color: #b6c0cd;
-  }
-
-  /* The third rides on its own value's line, drawn back to the card's edge. */
-  .sticker-to::before {
-    content: "DESTINATION:";
-    position: absolute;
-    left: calc(4mm - var(--sticker-left));
-    font-size: 14px;
-    font-weight: 700;
-    color: #b6c0cd;
+    pointer-events: none;
   }
 }
 
@@ -2224,7 +2219,5 @@ table.people-table th { padding: 10px 12px !important; }
      each line, which is where they belong. */
   .sticker-card div { overflow: hidden; }
 
-  .sticker-card::before, .sticker-card::after, .sticker-to::before {
-    content: none;
-  }
+  .sticker-card::before { content: none; }
 }
