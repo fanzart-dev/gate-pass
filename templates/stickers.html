@@ -24,9 +24,10 @@
     </div>
 
     <p class="hint" style="margin-bottom:14px">
-      One sticker per box, numbered 1 to N so a missing box is obvious at the
-      other end. Nothing is saved and no gate pass number is used — this is a
-      label for the outside of a carton, not a record.
+      One sticker per box, all identical. Prints onto the yellow SM Express
+      sheets — only the three values go on the page, into the blanks beside
+      the courier's own AWB No, ORIGIN and DESTINATION. Three to a sheet.
+      Nothing is saved and no gate pass number is used.
     </p>
 
     <form class="card sticker-form" id="sticker-form" autocomplete="off">
@@ -68,6 +69,31 @@
         <button type="button" id="print-stickers" disabled>Print</button>
         <span class="hint" id="sticker-count"></span>
       </div>
+
+      {# Set once, when this printer is first lined up against a real sheet,
+         and then left alone. Overlay printing always needs a nudge — no two
+         printers agree on where the paper starts — and it cannot be worked
+         out anywhere but in front of the printer. Remembered per browser. #}
+      <div class="sticker-align">
+        <div>
+          <label for="align-left">Left (mm)</label>
+          <input type="number" id="align-left" value="36" step="0.5" min="0" max="120">
+        </div>
+        <div>
+          <label for="align-top">First line down (mm)</label>
+          <input type="number" id="align-top" value="15" step="0.5" min="0" max="90">
+        </div>
+        <div>
+          <label for="align-gap">Line spacing (mm)</label>
+          <input type="number" id="align-gap" value="16.7" step="0.5" min="4" max="45">
+        </div>
+        <button type="button" id="align-reset" class="quiet">Reset</button>
+        <span class="hint">
+          Nudge these until the three values sit in the blank rows of the
+          yellow sheet. Print one page on plain paper and hold it against a
+          real sticker to check.
+        </span>
+      </div>
     </form>
   </div>
 
@@ -97,13 +123,14 @@
       const MAX = {{ max_stickers }};
       const STORE = "custom_sticker_receivers";
 
-      // Six to a sheet, two across and three down, because that is the shape
-      // of the physical yellow sheet these are printed onto — not a number
-      // chosen to use the paper efficiently. It has to agree with the CSS: two
-      // 95mm columns and three 88mm rows, inside an 8mm border, come to 194mm
-      // across and 280mm down of A4's 210 x 297. The tests prove the count by
-      // printing a real PDF, so this cannot drift from the layout unnoticed.
-      const PER_PAGE = 6;
+      // Three to a sheet, stacked, because that is the shape of the physical
+      // yellow sheet — one column of three labels down a portrait page. It
+      // has to agree with the CSS, which lays out three 99mm rows in a 297mm
+      // page. The tests prove the count by printing a real PDF, so this
+      // cannot drift from the layout unnoticed.
+      const PER_PAGE = 3;
+      const ALIGN_STORE = "sticker_sheet_alignment";
+      const ALIGN_DEFAULTS = { left: 36, top: 15, gap: 16.7 };
 
       // --- remembered destinations --------------------------------------
       // In the browser, not the database. A destination is a habit of whoever
@@ -225,26 +252,92 @@
         }
 
         remember(to);
-        fitLongNames();
+        // Applied after the cards exist, because the offsets are set on each
+        // page element and there were none to set them on until now.
+        applyAlignment(false);
       }
 
-      // A long destination has to stay on the sticker. The sizes come from the
-      // original document, which was typed against names that happened to fit;
-      // "CHENNAI (SUMANGALI)" is near the limit already and the next one added
-      // will not be. Rather than shrink every sticker to suit the worst case,
-      // only the lines that actually overflow are stepped down.
+      // A long destination has to stay inside its blank row. The lines are
+      // absolutely positioned, so an overflowing one does not push the next
+      // one down — it runs off the right of the label instead, over the
+      // pre-printed rule. Only the lines that actually overflow are stepped
+      // down; shrinking all of them to suit the worst case would make every
+      // sticker harder to read for the sake of one.
       function fitLongNames() {
         sheet.querySelectorAll(".sticker-lr, .sticker-from, .sticker-to")
           .forEach(function (line) {
+            line.style.fontSize = "";
             let size = parseFloat(getComputedStyle(line).fontSize);
             let guard = 0;
             while (line.scrollWidth > line.clientWidth && size > 8 && guard < 40) {
-              size -= 1;
+              size -= 0.5;
               line.style.fontSize = size + "px";
               guard++;
             }
           });
       }
+
+      // --- lining the sheet up with the printer -------------------------
+      // Kept in the browser with the destinations, and for the same reason:
+      // it is a property of the machine sitting in front of the person, not
+      // of the company. Two offices with two printers need two answers, and
+      // neither should need a deploy.
+      const alignInputs = {
+        left: document.getElementById("align-left"),
+        top: document.getElementById("align-top"),
+        gap: document.getElementById("align-gap"),
+      };
+
+      function savedAlignment() {
+        try {
+          const raw = window.localStorage.getItem(ALIGN_STORE);
+          const saved = raw ? JSON.parse(raw) : {};
+          return Object.assign({}, ALIGN_DEFAULTS, saved);
+        } catch (e) {
+          return Object.assign({}, ALIGN_DEFAULTS);
+        }
+      }
+
+      function applyAlignment(save) {
+        const values = {};
+        Object.keys(alignInputs).forEach(function (key) {
+          const n = parseFloat(alignInputs[key].value);
+          // A blank or nonsense box falls back rather than writing NaN into
+          // the stylesheet, which would drop every value to the top corner.
+          values[key] = Number.isFinite(n) ? n : ALIGN_DEFAULTS[key];
+        });
+        sheet.querySelectorAll(".sticker-page").forEach(function (pg) {
+          pg.style.setProperty("--sticker-left", values.left + "mm");
+          pg.style.setProperty("--sticker-top", values.top + "mm");
+          pg.style.setProperty("--sticker-gap", values.gap + "mm");
+        });
+        if (save) {
+          try {
+            window.localStorage.setItem(ALIGN_STORE, JSON.stringify(values));
+          } catch (e) { /* private window; the sheet still prints */ }
+        }
+        if (!sheet.hidden) fitLongNames();
+      }
+
+      (function restoreAlignment() {
+        const saved = savedAlignment();
+        Object.keys(alignInputs).forEach(function (key) {
+          alignInputs[key].value = saved[key];
+        });
+      })();
+
+      Object.keys(alignInputs).forEach(function (key) {
+        alignInputs[key].addEventListener("input", function () {
+          applyAlignment(true);
+        });
+      });
+
+      document.getElementById("align-reset").addEventListener("click", function () {
+        Object.keys(alignInputs).forEach(function (key) {
+          alignInputs[key].value = ALIGN_DEFAULTS[key];
+        });
+        applyAlignment(true);
+      });
 
       form.addEventListener("submit", function (event) {
         event.preventDefault();
