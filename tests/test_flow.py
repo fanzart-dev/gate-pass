@@ -6052,11 +6052,7 @@ def test_the_sticker_sheet_is_built_for_paper():
     # the page leaves. Leaving none is what keeps them off the top sticker.
     check("the page itself has no margin for browser chrome to sit in",
           "@page { size: A4 portrait; margin: 0; }" in template)
-    check("so the white border is padding on each sheet instead",
-          ".sticker-page {" in print_block and "padding: 8mm;" in print_block)
 
-    # Padding on one long container is laid down once. Each printed page needs
-    # its own, or every sheet after the first starts hard against the paper.
     check("each printed page is its own element",
           'className = "sticker-page"' in template)
     check("which ends the page after it",
@@ -6064,24 +6060,88 @@ def test_the_sticker_sheet_is_built_for_paper():
     check("except the last, which must not eject a blank sheet",
           ".sticker-page:last-child" in print_block)
 
-    # Sizes carried over from the original document rather than invented: its
-    # text boxes are 29pt for the LR and sender and 25pt for the destination,
-    # bold and centred. That is what makes it readable across a warehouse.
-    check("the LR line is the document's 29pt", ".sticker-lr   { font-size: 29pt; }" in css)
-    check("the sender matches it", ".sticker-from { font-size: 29pt; }" in css)
-    check("the destination is the document's 25pt",
-          ".sticker-to   { font-size: 25pt; }" in css)
-    check("everything is bold and centred, as in the document",
-          "font-weight: 700;" in css[css.index(".sticker div"):]
-          and "text-align: center;" in css[css.index(".sticker div"):])
+    # One column of three 99mm slots filling a whole A4 sheet: the shape of
+    # the physical yellow sheet, which is three labels stacked down a page.
+    sticker_css = css[css.index("Box stickers  (/print-stickers)"):]
+    check("the page is a whole sheet of A4",
+          "width: 210mm;" in sticker_css and "height: 297mm;" in sticker_css)
+    check("one column", "grid-template-columns: 1fr;" in sticker_css)
+    check("of three 99mm slots", "grid-template-rows: repeat(3, 99mm);" in sticker_css)
+    check("three to a page, and the script agrees with the grid",
+          "const PER_PAGE = 3;" in template)
 
-    # Six to a sheet, two across and three down. This is the shape of the
-    # physical yellow sheet, not a number picked to use the paper well: a
-    # seventh sticker on the page would land on no label at all.
-    check("two columns", "grid-template-columns: repeat(2, 95mm);" in css)
-    check("and three rows", "grid-template-rows: repeat(3, 88mm);" in css)
-    check("six to a page, and the script agrees with the grid",
-          "const PER_PAGE = 6;" in template)
+    # This is an overlay, so the text is small and left-aligned into blanks
+    # that already exist on the paper. Large centred text looks better on a
+    # white screen and lands across the courier's pre-printed rules.
+    values = sticker_css[sticker_css.index(".sticker div {"):]
+    check("the values are left-aligned", "text-align: left;" in values)
+    check("and not centred", "text-align: center;" not in values[:400])
+    check("at a size that fits a form blank, not a poster",
+          "font-size: 17px;" in values)
+    check("bold, so it reads against yellow", "font-weight: 700;" in values)
+
+    # Absolutely positioned: a long destination must not push the line below
+    # it out of its blank and onto a printed rule.
+    check("each line is pinned to its own row", "position: absolute;" in values)
+    check("the rows are spaced by one setting, not three",
+          ".sticker-from { top: calc(var(--sticker-top) + var(--sticker-gap)); }" in css
+          and ".sticker-to   { top: calc(var(--sticker-top) + (2 * var(--sticker-gap))); }" in css)
+
+    # Nothing of ours may be drawn on paper: the yellow sheet already carries
+    # the artwork, and a border or a ghost label would print on top of it.
+    check("no border is printed round a label",
+          "border: 0;" in print_block)
+    check("and the on-screen ghost labels are not printed",
+          ".sticker::before, .sticker::after, .sticker-to::before { content: none; }"
+          in print_block)
+
+
+def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
+    """Overlay printing always needs a nudge, and it cannot be guessed.
+
+    The offsets start from the original Word file, which was itself an overlay
+    for this sheet. They are a starting point and not an answer: no two
+    printers agree on where the paper begins, so the number that works here is
+    not the number that works on the machine in the office.
+    """
+    template = (ROOT / "templates" / "stickers.html").read_text()
+    css = (ROOT / "static" / "css" / "style.css").read_text()
+
+    for control in ("align-left", "align-top", "align-gap"):
+        check(f"{control} can be nudged", f'id="{control}"' in template)
+    check("and put back", 'id="align-reset"' in template)
+
+    # Defaults lifted from the document: 36mm in, 15mm down, 16.7mm apart.
+    check("the defaults come from the document",
+          "ALIGN_DEFAULTS = { left: 36, top: 15, gap: 16.7 };" in template)
+    check("and the stylesheet starts from the same numbers",
+          "--sticker-left: 36mm;" in css and "--sticker-top: 15mm;" in css
+          and "--sticker-gap: 16.7mm;" in css)
+
+    # Remembered per browser, like the destinations: the offset is a property
+    # of the machine in front of the person, not of the company.
+    check("the alignment is remembered", 'ALIGN_STORE = "sticker_sheet_alignment"' in template)
+    check("in the browser, not the database",
+          "localStorage.setItem(ALIGN_STORE" in template)
+
+    # A blank or nonsense box must not write NaN into the stylesheet, which
+    # would drop every value into the top corner of the sheet.
+    check("a nonsense offset falls back rather than breaking the layout",
+          "Number.isFinite(n) ? n : ALIGN_DEFAULTS[key]" in template)
+
+    # The controls are part of the setup, not the printout.
+    align_block = template[template.index('class="sticker-align"'):]
+    check("the nudge controls are inside the form, which is not printed",
+          "</form>" in align_block)
+    no_print = template[template.index('<div class="no-print">'):
+                        template.index('id="sticker-sheet"')]
+    check("and the whole control panel is marked not-for-print",
+          'class="sticker-align"' in no_print)
+
+    # The route itself still knows nothing about any of this.
+    flask_app, client = logged_in_app(tmpdir, "stickeralign")
+    source = inspect.getsource(flask_app.view_functions["print_stickers"])
+    check("the server is not involved in alignment", "align" not in source.lower())
 
 
 def test_every_sticker_in_a_batch_is_the_same(tmpdir):
@@ -7031,6 +7091,7 @@ def main():
         test_box_stickers_start_empty_except_the_sender(tmpdir)
         test_box_stickers_can_be_opened_pre_filled(tmpdir)
         test_the_sticker_sheet_is_built_for_paper()
+        test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir)
         test_every_sticker_in_a_batch_is_the_same(tmpdir)
         test_sticker_values_cannot_carry_markup(tmpdir)
         test_the_office_instructions_do_not_name_a_dead_host(tmpdir)
