@@ -6069,12 +6069,14 @@ def test_the_sticker_sheet_is_built_for_paper():
     check("the page is one sheet of stationery",
           "width: 164mm;" in sticker_css and "height: 247mm;" in sticker_css)
     check("one column", "grid-template-columns: 1fr;" in sticker_css)
-    check("of three 82mm labels", "grid-template-rows: repeat(3, 82mm);" in sticker_css)
+    check("of three labels", "grid-template-rows: repeat(3, var(--sticker-pitch));"
+          in sticker_css)
     check("three to a page, and the script agrees with the grid",
           "const PER_PAGE = 3;" in template)
+    card = sticker_css[sticker_css.index(".sticker-card {"):
+                       sticker_css.index("}", sticker_css.index(".sticker-card {"))]
     check("the card is the label's own size",
-          "width: 164mm;" in sticker_css[sticker_css.index(".sticker-card {"):]
-          and "height: 82mm;" in sticker_css[sticker_css.index(".sticker-card {"):])
+          "width: 164mm;" in card and "height: var(--sticker-pitch);" in card)
     check("and measured from its border, not its content",
           "box-sizing: border-box;" in sticker_css[sticker_css.index(".sticker-card {"):])
 
@@ -6135,7 +6137,7 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     template = (ROOT / "templates" / "stickers.html").read_text()
     css = (ROOT / "static" / "css" / "style.css").read_text()
 
-    for control in ("align-left", "align-top", "align-gap"):
+    for control in ("align-left", "align-top", "align-gap", "align-pitch"):
         check(f"{control} can be nudged", f'id="{control}"' in template)
     check("and put back", 'id="align-reset"' in template)
 
@@ -6145,8 +6147,28 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     # line is set from the scan rather than the document's 19.4mm, because
     # 29pt type is 11mm tall and wants centring in a 15.7mm row.
     check("the defaults are the document's",
-          "left: 36, top: 23, gap: 16.4, paper: \"sheet\"" in template
+          "left: 36, top: 23, gap: 16.4, pitch: 82" in template
           and "scale: 100" in template)
+
+    # The step from one label to the next, separate from everything inside a
+    # label. A printer that enlarges the page spaces the labels further apart
+    # than they were sent, and the error compounds: the second label is out
+    # by one step, the third by two. That is the shape people actually
+    # report — "the first one is fine, the rest are jumping" — and it is the
+    # only knob that fixes it without disturbing the first label.
+    check("the label pitch is adjustable", "--sticker-pitch" in css)
+    check("it drives the grid", "repeat(3, var(--sticker-pitch))" in css)
+    check("and the height of each card", "height: var(--sticker-pitch);" in css)
+    check("starting from the measured 82mm", "--sticker-pitch: 82mm;" in css
+          and 'id="align-pitch" value="82"' in template)
+    check("and it is written to every page",
+          'setProperty("--sticker-pitch", values.pitch + "mm")' in template)
+
+    # A shortened pitch puts the destination line near the bottom of its own
+    # box. Clipping it there would hide the thing the pitch is being changed
+    # to fix.
+    card_rule = css[css.index(".sticker-card {"):css.index("}", css.index(".sticker-card {"))]
+    check("a card does not clip its own last line", "overflow: hidden" not in card_rule)
     check("and the stylesheet starts from the same numbers",
           "--sticker-left: 36mm;" in css and "--sticker-top: 23mm;" in css
           and "--sticker-gap: 16.4mm;" in css)
@@ -6164,7 +6186,7 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     # Remembered per browser, like the destinations: the offset is a property
     # of the machine in front of the person, not of the company.
     check("the alignment is remembered",
-          'ALIGN_STORE = "sticker_sheet_alignment_v3"' in template)
+          'ALIGN_STORE = "sticker_sheet_alignment_v4"' in template)
     check("in the browser, not the database",
           "localStorage.setItem(ALIGN_STORE" in template)
 
@@ -6174,7 +6196,7 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     # that no longer existed — putting each line a row too high and making the
     # new measurements look wrong. The suffix retires those quietly.
     check("the key is versioned, so a geometry change retires old offsets",
-          "_v3" in template and 'localStorage.getItem(ALIGN_STORE)' in template)
+          "_v4" in template and 'localStorage.getItem(ALIGN_STORE)' in template)
     check("and nothing still reads the unversioned key",
           '"sticker_sheet_alignment"' not in template)
 

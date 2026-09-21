@@ -121,6 +121,13 @@
           <input type="number" id="align-gap" value="16.4" step="0.1" min="4" max="40">
         </div>
         <div>
+          {# The knob for "the first one is fine and the rest are creeping
+             down the page". Nothing inside a label changes; only the step
+             from one label to the next. #}
+          <label for="align-pitch">Label pitch (mm)</label>
+          <input type="number" id="align-pitch" value="82" step="0.5" min="40" max="120">
+        </div>
+        <div>
           {# The answer to a printer that scales anyway. Print the test page,
              put a ruler on the printed line, type what it really measured —
              100 means the printer left the page alone. #}
@@ -131,9 +138,13 @@
         <button type="button" id="align-reset" class="quiet">Reset</button>
         <span class="hint">
           Pick the paper the printer is loaded with, then
-          <strong>Print test page</strong> on plain paper: measure the printed
-          line and type its real length above. Hold the page against a sticker
-          and nudge the offsets until the three values sit in the blank rows.
+          <strong>Print test page</strong> on plain paper and hold it against a
+          sticker. <em>Left</em>, <em>First line down</em> and <em>Line
+          spacing</em> line the first label up. If the first is right but the
+          second and third creep further down the page, shorten
+          <em>Label pitch</em> — about 1mm for every 1mm the second label is
+          out. <em>100 mm line printed as</em> cures the same thing at the
+          root, if the printed line does not measure 100mm.
         </span>
       </div>
     </form>
@@ -175,9 +186,9 @@
       // so browsers that had tried the page were pinning every line a row too
       // high and it looked like the new measurements were wrong. Bumping the
       // key retires those quietly. Bump it again if the geometry moves again.
-      const ALIGN_STORE = "sticker_sheet_alignment_v3";
-      const ALIGN_DEFAULTS = { left: 36, top: 23, gap: 16.4, paper: "sheet",
-                               scale: 100 };
+      const ALIGN_STORE = "sticker_sheet_alignment_v4";
+      const ALIGN_DEFAULTS = { left: 36, top: 23, gap: 16.4, pitch: 82,
+                               paper: "sheet", scale: 100 };
 
       // @page cannot read a custom property, so the rule is rewritten instead.
       // It must match the paper the PRINTER is set to, not the paper the
@@ -371,6 +382,7 @@
         left: document.getElementById("align-left"),
         top: document.getElementById("align-top"),
         gap: document.getElementById("align-gap"),
+        pitch: document.getElementById("align-pitch"),
         scale: document.getElementById("align-scale"),
       };
       const paperSelect = document.getElementById("align-paper");
@@ -405,6 +417,7 @@
           pg.style.setProperty("--sticker-left", values.left + "mm");
           pg.style.setProperty("--sticker-top", values.top + "mm");
           pg.style.setProperty("--sticker-gap", values.gap + "mm");
+          pg.style.setProperty("--sticker-pitch", values.pitch + "mm");
           pg.style.setProperty("--sheet-scale", correction);
         });
         if (save) {
@@ -460,6 +473,7 @@
         });
         paperSelect.value = ALIGN_DEFAULTS.paper;
         alignInputs.scale.value = ALIGN_DEFAULTS.scale;
+        alignInputs.pitch.value = ALIGN_DEFAULTS.pitch;
         applyPaper(true);
         applyAlignment(true);
       });
