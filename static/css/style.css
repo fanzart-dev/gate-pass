@@ -2096,9 +2096,14 @@ table.people-table th { padding: 10px 12px !important; }
 
 /* One physical sheet: 164 x 247mm, three labels of 82mm. */
 .sticker-page {
-  --sticker-left: 44mm;    /* clear of "DESTINATION:", which ends at 38mm */
-  --sticker-top: 26mm;     /* first line, down from the top of its label */
-  --sticker-gap: 16.4mm;   /* AWB to ORIGIN to DESTINATION */
+  /* The document's own numbers: its text blocks sit 36mm in and 110mm wide,
+     with the three lines 16.66mm apart. The first line is placed from the
+     measured row instead — 29pt type is 11mm tall, so it is centred in the
+     15.7mm row rather than hung from the document's 19.4mm, which was a
+     couple of millimetres high. */
+  --sticker-left: 36mm;
+  --sticker-top: 23mm;
+  --sticker-gap: 16.4mm;
   /* Cancels whatever the printer does to the page. 1 means it was left
      alone. See .sticker-ruler below for how the number is arrived at. */
   --sheet-scale: 1;
@@ -2131,20 +2136,33 @@ table.people-table th { padding: 10px 12px !important; }
 /* Absolute, so a long destination cannot push the line below it out of its
    blank and onto a printed rule. Each line stays where the paper expects it
    whatever it contains. */
+/* Centred in a 110mm box, not left-aligned against the printed label — this
+   is what the document that printed correctly does, and the reason is legible
+   on the sheet: the blank is 120mm of empty row, and text pushed hard against
+   "DESTINATION:" reads as a caption to it rather than as the destination.
+   Centred, the value sits in the middle of its own space.
+
+   Absolute, so a long destination cannot push the line below it out of its
+   blank and onto a printed rule. Each line stays where the paper expects it
+   whatever it contains. */
 .sticker-card div {
   position: absolute;
   left: var(--sticker-left);
-  right: 4mm;
-  font-size: 17px;
+  width: 110mm;
   font-weight: 700;
   line-height: 1.1;
-  text-align: left;
+  text-align: center;
   white-space: nowrap;
 }
 
-.sticker-lr   { top: var(--sticker-top); }
-.sticker-from { top: calc(var(--sticker-top) + var(--sticker-gap)); }
-.sticker-to   { top: calc(var(--sticker-top) + (2 * var(--sticker-gap))); }
+/* 29pt and 25pt, from the document. This is a label read off the side of a
+   carton across a warehouse, not a form field — the earlier 17px was legible
+   on screen and far too small on the box. The destination is the smaller of
+   the two for the reason a longer line always is: it has twice as far to go. */
+.sticker-lr   { top: var(--sticker-top); font-size: 29pt; }
+.sticker-from { top: calc(var(--sticker-top) + var(--sticker-gap)); font-size: 29pt; }
+.sticker-to   { top: calc(var(--sticker-top) + (2 * var(--sticker-gap)));
+                font-size: 25pt; }
 
 /* A printed 100mm rule, for measuring what the printer actually did.
    A driver set to fit the page to the paper enlarges everything, and the
