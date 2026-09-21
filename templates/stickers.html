@@ -81,10 +81,6 @@
         <span class="hint" id="sticker-count"></span>
       </div>
 
-      {# Set once, when this printer is first lined up against a real sheet,
-         and then left alone. Overlay printing always needs a nudge — no two
-         printers agree on where the paper starts — and it cannot be worked
-         out anywhere but in front of the printer. Remembered per browser. #}
       {# The single most important thing on this page, and the reason a print
          can come out wrong while the preview and the PDF are both right. A
          browser asked to fit a 164mm page onto A4 enlarges everything by
@@ -124,11 +120,20 @@
           <label for="align-gap">Line spacing (mm)</label>
           <input type="number" id="align-gap" value="16.4" step="0.1" min="4" max="40">
         </div>
+        <div>
+          {# The answer to a printer that scales anyway. Print the test page,
+             put a ruler on the printed line, type what it really measured —
+             100 means the printer left the page alone. #}
+          <label for="align-scale">100 mm line printed as</label>
+          <input type="number" id="align-scale" value="100" step="0.5" min="50" max="200">
+        </div>
+        <button type="button" id="align-test" class="quiet">Print test page</button>
         <button type="button" id="align-reset" class="quiet">Reset</button>
         <span class="hint">
-          Pick the paper the printer is loaded with, then nudge the offsets
-          until the three values sit in the blank rows. Print one page on
-          plain paper and hold it against a real sticker to check.
+          Pick the paper the printer is loaded with, then
+          <strong>Print test page</strong> on plain paper: measure the printed
+          line and type its real length above. Hold the page against a sticker
+          and nudge the offsets until the three values sit in the blank rows.
         </span>
       </div>
     </form>
@@ -171,7 +176,8 @@
       // high and it looked like the new measurements were wrong. Bumping the
       // key retires those quietly. Bump it again if the geometry moves again.
       const ALIGN_STORE = "sticker_sheet_alignment_v2";
-      const ALIGN_DEFAULTS = { left: 44, top: 26, gap: 16.4, paper: "sheet" };
+      const ALIGN_DEFAULTS = { left: 44, top: 26, gap: 16.4, paper: "sheet",
+                               scale: 100 };
 
       // @page cannot read a custom property, so the rule is rewritten instead.
       // It must match the paper the PRINTER is set to, not the paper the
@@ -294,6 +300,14 @@
           if ((n - 1) % PER_PAGE === 0) {
             page = document.createElement("div");
             page.className = "sticker-page";
+            // Hidden unless a test page is being printed. It has to be laid
+            // out inside the scaled sheet, not beside it, or it would measure
+            // the printer's scaling without the correction applied to it and
+            // every reading would send the number further out.
+            const ruler = document.createElement("div");
+            ruler.className = "sticker-ruler";
+            ruler.textContent = "\u2190 this line is 100 mm \u2192";
+            page.appendChild(ruler);
             sheet.appendChild(page);
           }
           const card = document.createElement("div");
@@ -357,6 +371,7 @@
         left: document.getElementById("align-left"),
         top: document.getElementById("align-top"),
         gap: document.getElementById("align-gap"),
+        scale: document.getElementById("align-scale"),
       };
       const paperSelect = document.getElementById("align-paper");
 
@@ -378,10 +393,19 @@
           // the stylesheet, which would drop every value to the top corner.
           values[key] = Number.isFinite(n) ? n : ALIGN_DEFAULTS[key];
         });
+        // What the printer did to a line that left here 100mm long. If it
+        // came out at 114, everything it printed is 1.14 times too big and
+        // too far down, so the page is drawn at 100/114 to cancel it. Clamped
+        // because a typo of 10 or 1000 would otherwise make the sheet
+        // invisible or enormous with no obvious way back.
+        const measured = Math.min(200, Math.max(50, values.scale || 100));
+        const correction = 100 / measured;
+
         sheet.querySelectorAll(".sticker-page").forEach(function (pg) {
           pg.style.setProperty("--sticker-left", values.left + "mm");
           pg.style.setProperty("--sticker-top", values.top + "mm");
           pg.style.setProperty("--sticker-gap", values.gap + "mm");
+          pg.style.setProperty("--sheet-scale", correction);
         });
         if (save) {
           // Carried through, or choosing an offset would forget the paper.
@@ -412,11 +436,30 @@
 
       paperSelect.addEventListener("change", function () { applyPaper(true); });
 
+      // One sheet of plain paper, carrying the ruler and one label's values,
+      // rather than the whole batch. Lining a printer up should not cost
+      // nine sheets of stationery.
+      document.getElementById("align-test").addEventListener("click", function () {
+        if (sheet.hidden) {
+          qtyInput.value = qtyInput.value || "1";
+          build();
+        }
+        const pages = [...sheet.querySelectorAll(".sticker-page")];
+        pages.slice(1).forEach(function (pg) { pg.dataset.hidden = "1"; pg.hidden = true; });
+        document.body.classList.add("is-test-print");
+        window.print();
+        document.body.classList.remove("is-test-print");
+        pages.forEach(function (pg) {
+          if (pg.dataset.hidden) { pg.hidden = false; delete pg.dataset.hidden; }
+        });
+      });
+
       document.getElementById("align-reset").addEventListener("click", function () {
         Object.keys(alignInputs).forEach(function (key) {
           alignInputs[key].value = ALIGN_DEFAULTS[key];
         });
         paperSelect.value = ALIGN_DEFAULTS.paper;
+        alignInputs.scale.value = ALIGN_DEFAULTS.scale;
         applyPaper(true);
         applyAlignment(true);
       });

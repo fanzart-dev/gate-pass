@@ -6126,8 +6126,8 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     # turn pixels into millimetres: rows begin at 20.6, 36.3 and 52.0mm, and
     # the longest printed label ("DESTINATION:") ends at 38mm.
     check("the defaults are the measured ones",
-          "ALIGN_DEFAULTS = { left: 44, top: 26, gap: 16.4, paper: \"sheet\" };"
-          in template)
+          "left: 44, top: 26, gap: 16.4, paper: \"sheet\"" in template
+          and "scale: 100" in template)
     check("and the stylesheet starts from the same numbers",
           "--sticker-left: 44mm;" in css and "--sticker-top: 26mm;" in css
           and "--sticker-gap: 16.4mm;" in css)
@@ -6245,6 +6245,56 @@ def test_the_sticker_sheet_cannot_be_silently_rescaled():
     print_block = css[css.rindex("@media print"):]
     check("the sheet is not centred on a larger page",
           ".sticker-page { margin: 0 !important; }" in print_block)
+
+
+def test_a_printer_that_scales_anyway_can_be_cancelled():
+    """The belt to the print dialog's braces.
+
+    Setting Scale to 100% is the right fix and it is what the page asks for.
+    It is also one checkbox in one dialog, on machines nobody here controls,
+    and it came back wrong twice — the second print was still enlarged 1.14
+    times with a 6.5mm shift. So the page can now cancel a scale it cannot
+    prevent, mechanically, without anybody having to find the setting.
+    """
+    template = (ROOT / "templates" / "stickers.html").read_text()
+    css = (ROOT / "static" / "css" / "style.css").read_text()
+
+    # Measured, not guessed at: the page prints a line of known length, and
+    # whoever holds a ruler against it types back what it really came out as.
+    check("a known length is printed to measure", ".sticker-ruler" in css)
+    check("100mm of it", "width: 100mm;" in css)
+    check("with end stops, so it is measured between marks",
+          ".sticker-ruler::before" in css and ".sticker-ruler::after" in css)
+    check("and the measurement can be typed back", 'id="align-scale"' in template)
+    check("there is a way to print it", 'id="align-test"' in template)
+
+    # Only on a test page. A ruler printed across real stationery would be
+    # worse than the misalignment it is there to cure.
+    check("the ruler is hidden by default", "display: none;" in
+          css[css.index(".sticker-ruler {"):css.index(".sticker-ruler::before")])
+    check("and shown only while testing",
+          "body.is-test-print .sticker-ruler { display: block; }" in css)
+    check("which is turned on and off around the print, not left on",
+          'classList.add("is-test-print")' in template
+          and 'classList.remove("is-test-print")' in template)
+
+    # One sheet, not the whole batch: lining up a printer must not cost nine
+    # sheets of stationery.
+    check("a test print is one page", 'pages.slice(1)' in template)
+    check("and the rest come back afterwards",
+          "delete pg.dataset.hidden" in template)
+
+    # The correction itself.
+    check("the correction is the ratio of wanted to measured",
+          "const correction = 100 / measured;" in template)
+    check("applied as a scale on the sheet",
+          '--sheet-scale' in css and 'setProperty("--sheet-scale", correction)' in template)
+    check("from the corner the paper starts at",
+          "transform-origin: top left;" in css)
+    # A typo of 10 or 1000 would make the sheet invisible or enormous, with
+    # nothing on screen to explain why.
+    check("a wild measurement is clamped rather than obeyed",
+          "Math.min(200, Math.max(50, values.scale || 100))" in template)
 
 
 def test_every_sticker_in_a_batch_is_the_same(tmpdir):
@@ -7196,6 +7246,7 @@ def main():
         test_the_sticker_sheet_is_built_for_paper()
         test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir)
         test_the_sticker_sheet_cannot_be_silently_rescaled()
+        test_a_printer_that_scales_anyway_can_be_cancelled()
         test_every_sticker_in_a_batch_is_the_same(tmpdir)
         test_sticker_values_cannot_carry_markup(tmpdir)
         test_the_office_instructions_do_not_name_a_dead_host(tmpdir)

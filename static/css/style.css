@@ -2099,6 +2099,15 @@ table.people-table th { padding: 10px 12px !important; }
   --sticker-left: 44mm;    /* clear of "DESTINATION:", which ends at 38mm */
   --sticker-top: 26mm;     /* first line, down from the top of its label */
   --sticker-gap: 16.4mm;   /* AWB to ORIGIN to DESTINATION */
+  /* Cancels whatever the printer does to the page. 1 means it was left
+     alone. See .sticker-ruler below for how the number is arrived at. */
+  --sheet-scale: 1;
+
+  transform: scale(var(--sheet-scale));
+  /* From the corner the paper starts at, so the correction moves every value
+     by the same proportion of its distance from that corner — which is
+     exactly how the printer's own scaling went wrong. */
+  transform-origin: top left;
 
   width: 164mm;
   height: 247mm;
@@ -2136,6 +2145,43 @@ table.people-table th { padding: 10px 12px !important; }
 .sticker-lr   { top: var(--sticker-top); }
 .sticker-from { top: calc(var(--sticker-top) + var(--sticker-gap)); }
 .sticker-to   { top: calc(var(--sticker-top) + (2 * var(--sticker-gap))); }
+
+/* A printed 100mm rule, for measuring what the printer actually did.
+   A driver set to fit the page to the paper enlarges everything, and the
+   error grows with distance down the sheet: the first label is a few
+   millimetres out and the third is thirty. No offset can correct that, and
+   nothing on screen can reveal it — it happens after the page is handed over.
+   So the page prints a line of known length, and whoever holds a ruler
+   against it types back what they measured. */
+.sticker-ruler {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 4mm;
+  width: 100mm;
+  border-top: 0.4mm solid #000;
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  padding-top: 1mm;
+}
+
+/* End stops, so it is measured between two marks rather than by eye. */
+.sticker-ruler::before,
+.sticker-ruler::after {
+  content: "";
+  position: absolute;
+  top: -2.5mm;
+  width: 0.4mm;
+  height: 5mm;
+  background: #000;
+}
+.sticker-ruler::before { left: 0; }
+.sticker-ruler::after  { right: 0; }
+
+/* Shown only while a test page is being printed, so it never lands on real
+   stationery. */
+body.is-test-print .sticker-ruler { display: block; }
 
 /* On screen only: the stationery drawn from the same measurements, so the
    preview shows which blank each value is aimed at and the calibration can
