@@ -185,8 +185,15 @@
       // measured against no longer exists — but a saved value beats a default,
       // so browsers that had tried the page were pinning every line a row too
       // high and it looked like the new measurements were wrong. Bumping the
-      // key retires those quietly. Bump it again if the geometry moves again.
-      const ALIGN_STORE = "sticker_sheet_alignment_v4";
+      // key retires those quietly.
+      //
+      // Bump it when the GEOMETRY moves, and only then. Adding a setting is
+      // not a reason: a saved object without it simply takes the default,
+      // because the defaults are merged underneath whatever was stored. This
+      // was bumped once for adding the pitch and put back — somebody had a
+      // printer lined up by hand, and that would have thrown their numbers
+      // away to no purpose.
+      const ALIGN_STORE = "sticker_sheet_alignment_v3";
       const ALIGN_DEFAULTS = { left: 36, top: 23, gap: 16.4, pitch: 82,
                                paper: "sheet", scale: 100 };
 

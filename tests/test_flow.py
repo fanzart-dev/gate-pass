@@ -6186,7 +6186,7 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     # Remembered per browser, like the destinations: the offset is a property
     # of the machine in front of the person, not of the company.
     check("the alignment is remembered",
-          'ALIGN_STORE = "sticker_sheet_alignment_v4"' in template)
+          'ALIGN_STORE = "sticker_sheet_alignment_v3"' in template)
     check("in the browser, not the database",
           "localStorage.setItem(ALIGN_STORE" in template)
 
@@ -6196,7 +6196,7 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     # that no longer existed — putting each line a row too high and making the
     # new measurements look wrong. The suffix retires those quietly.
     check("the key is versioned, so a geometry change retires old offsets",
-          "_v4" in template and 'localStorage.getItem(ALIGN_STORE)' in template)
+          "_v3" in template and 'localStorage.getItem(ALIGN_STORE)' in template)
     check("and nothing still reads the unversioned key",
           '"sticker_sheet_alignment"' not in template)
 
@@ -6279,6 +6279,13 @@ def test_the_sticker_sheet_cannot_be_silently_rescaled():
           "document.head.appendChild(pageRule)" in template)
     check("and the choice is remembered with the offsets",
           "values.paper = paperSelect.value;" in template)
+
+    # Adding a setting must not retire everyone's calibration: the defaults
+    # are merged underneath whatever was stored, so an older saved object
+    # simply takes the default for anything it does not carry. Bumping the
+    # key for that would throw away a printer somebody lined up by hand.
+    check("a saved setting survives a new one being added",
+          "Object.assign({}, ALIGN_DEFAULTS, saved)" in template)
     check("a paper it does not recognise falls back to the stationery",
           'PAPER_SIZES[paperSelect.value] ? paperSelect.value : "sheet"' in template)
 
