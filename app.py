@@ -23,6 +23,26 @@ BASE_DIR = Path(__file__).parent
 # Pages reachable without signing in.
 PUBLIC_ENDPOINTS = {"login", "static"}
 
+# --- courier box stickers ---------------------------------------------------
+# The starting list only. Anything else typed on the page is remembered by the
+# browser that typed it, not here: a destination one person uses is not worth a
+# table, a migration and a screen to manage it, and adding one must not need a
+# deploy. See templates/stickers.html.
+STICKER_RECEIVERS = (
+    "CHENNAI (SUMANGALI)",
+    "MUMBAI",
+    "DELHI",
+    "HYDERABAD",
+    "BENGALURU",
+)
+
+# Everything ships out of Bengaluru, so this is the one field worth defaulting.
+DEFAULT_STICKER_SENDER = "BENGALURU"
+
+# The browser builds every card, so this ceiling protects the person who opens
+# the link rather than the server.
+MAX_STICKERS = 500
+
 
 def client_ip():
     """The caller's address as best it can be known.
@@ -998,6 +1018,61 @@ def register_routes(app):
                                 total=total,
                                 today=date.today().isoformat(),
                                 active="register")
+
+    @app.route("/print-stickers")
+    @app.route("/stickers")
+    @login_required
+    def print_stickers():
+        """Courier box stickers — a printing tool, and nothing else.
+
+        These print onto the pre-printed yellow SM Express label sheets, which
+        already carry "AWB No:", "ORIGIN:" and "DESTINATION:" and the
+        courier's own header and footer. Only the three values go on the page,
+        into the blanks beside those words.
+
+        Deliberately touches no table. A sticker is not a record: it is a label
+        that goes on a box and is thrown away when the box is opened. Nothing
+        is numbered, nothing is issued, and there is nothing anyone could want
+        to look up afterwards — so writing one down would create an audit
+        trail with no audit in it, and a migration to maintain for ever.
+
+        That is also why it carries no permission of its own. There is nothing
+        here to protect: every value on the page came from the person typing
+        it. It still needs a sign-in, because the app answers on the public
+        link and an open page is a page anyone can find.
+
+        Everything arrives in the query string, so the page can be opened
+        pre-filled from somewhere else:
+
+            /print-stickers?lr=71703457&receiver=CHENNAI+(SUMANGALI)&qty=27
+
+        Opened plainly, LR and quantity stay EMPTY. A sticker carrying last
+        week's LR number because a default was left in the box is worse than
+        an empty field: the box still gets a label, it just goes to the wrong
+        place, and nothing about it looks wrong.
+        """
+        try:
+            quantity = int(request.args.get("qty", ""))
+        except ValueError:
+            quantity = None
+        if quantity is not None:
+            # Capped because the browser, not the server, pays for this: a
+            # ?qty=900000 in the address bar would build nine hundred thousand
+            # cards in the page and hang the machine of whoever opened the
+            # link. Nobody ships more boxes than this on one LR.
+            quantity = max(1, min(quantity, MAX_STICKERS))
+
+        return render_template(
+            "stickers.html", active="stickers",
+            lr=request.args.get("lr", ""),
+            # The only field with a default. Everything leaves from Bengaluru,
+            # so typing it every time is a tax on the common case — and unlike
+            # the LR number, a wrong sender is visible at a glance.
+            sender=request.args.get("sender", DEFAULT_STICKER_SENDER),
+            receiver=request.args.get("receiver", ""),
+            quantity=quantity,
+            receiver_presets=STICKER_RECEIVERS,
+            max_stickers=MAX_STICKERS)
 
     @app.route("/reports")
     @requires("can_export_reports")

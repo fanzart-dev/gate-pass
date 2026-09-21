@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+{% block title %}Box Stickers{% endblock %}
+{# The sheet is wider than the reading width the form pages use. #}
+{% block container_class %}container-wide{% endblock %}
+
+{% block head %}
+  <style>
+    /* margin: 0 for the same reason as the gate pass itself — the browser
+       prints its own header and footer (document title, URL, page number,
+       timestamp) into whatever margin the page leaves, so a margin here would
+       stamp four lines of chrome across the top sticker of every sheet. With
+       none, there is nowhere for them to go. The white border is padding on
+       .sticker-sheet instead, so the printed geometry is unchanged. */
+    @page { size: A4 portrait; margin: 0; }
+  </style>
+{% endblock %}
+
+{% block content %}
+  {# Everything above the sheet. .no-print is doing real work here: this is a
+     screen for setting up a print, so most of the page must not be in it. #}
+  <div class="no-print">
+    <div class="page-head">
+      <h1>Box Stickers</h1>
+    </div>
+
+    <p class="hint" style="margin-bottom:14px">
+      One sticker per box, numbered 1 to N so a missing box is obvious at the
+      other end. Nothing is saved and no gate pass number is used — this is a
+      label for the outside of a carton, not a record.
+    </p>
+
+    <form class="card sticker-form" id="sticker-form" autocomplete="off">
+      <div class="sticker-fields">
+        <div>
+          <label for="lr">LR Number</label>
+          {# inputmode numeric rather than type=number: an LR can carry a
+             leading zero, and a number input would drop it. #}
+          <input type="text" id="lr" name="lr" value="{{ lr }}"
+                 inputmode="numeric" placeholder="71703457">
+        </div>
+        <div>
+          <label for="sender">Sender</label>
+          <input type="text" id="sender" name="sender" value="{{ sender }}">
+        </div>
+        <div>
+          <label for="receiver">Receiver</label>
+          {# An input with a datalist, not a select: the list is a starting
+             point, and a destination nobody has sent to before must be
+             typeable without anybody editing a list first. #}
+          <input type="text" id="receiver" name="receiver" value="{{ receiver }}"
+                 list="receiver-options" placeholder="CHENNAI (SUMANGALI)">
+          <datalist id="receiver-options">
+            {% for option in receiver_presets %}
+              <option value="{{ option }}"></option>
+            {% endfor %}
+          </datalist>
+        </div>
+        <div>
+          <label for="qty">Number of boxes</label>
+          <input type="number" id="qty" name="qty" min="1" max="{{ max_stickers }}"
+                 value="{{ quantity if quantity is not none else '' }}"
+                 placeholder="27">
+        </div>
+      </div>
+
+      <div class="sticker-actions">
+        <button type="submit" class="primary" id="generate">Generate Stickers</button>
+        <button type="button" id="print-stickers" disabled>Print</button>
+        <span class="hint" id="sticker-count"></span>
+      </div>
+    </form>
+  </div>
+
+  {# Filled by the script below. Left empty on load on purpose: an empty sheet
+     is honestly empty, where a sheet of blank cards looks like a bug. #}
+  <div id="sticker-sheet" class="sticker-sheet" hidden></div>
+
+  <div class="no-print empty" id="sticker-empty">
+    <div class="empty-icon">🏷️</div>
+    <div class="empty-title">No stickers yet</div>
+    <div class="empty-sub">Fill in the LR number and how many boxes, then press Generate.</div>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      const form     = document.getElementById("sticker-form");
+      const sheet    = document.getElementById("sticker-sheet");
+      const empty    = document.getElementById("sticker-empty");
+      const printBtn = document.getElementById("print-stickers");
+      const countHint= document.getElementById("sticker-count");
+      const options  = document.getElementById("receiver-options");
+      const receiver = document.getElementById("receiver");
+      const qtyInput = document.getElementById("qty");
+
+      const MAX = {{ max_stickers }};
+      const STORE = "custom_sticker_receivers";
+
+      // Six to a sheet, two across and three down, because that is the shape
+      // of the physical yellow sheet these are printed onto — not a number
+      // chosen to use the paper efficiently. It has to agree with the CSS: two
+      // 95mm columns and three 88mm rows, inside an 8mm border, come to 194mm
+      // across and 280mm down of A4's 210 x 297. The tests prove the count by
+      // printing a real PDF, so this cannot drift from the layout unnoticed.
+      const PER_PAGE = 6;
+
+      // --- remembered destinations --------------------------------------
+      // In the browser, not the database. A destination is a habit of whoever
+      // does the dispatching, not a fact about the company: it needs no
+      // migration, no admin screen and no deploy to add one, and it cannot
+      // break anything if it is wrong. The cost is that it does not follow
+      // anyone to another machine, which for a list of six place names is a
+      // fair trade.
+      //
+      // Every read and write is wrapped: storage throws outright in a private
+      // window and in browsers set to block site data, and a sticker page
+      // that will not load because it could not remember CHENNAI would be a
+      // ridiculous way to fail.
+      function savedReceivers() {
+        try {
+          const raw = window.localStorage.getItem(STORE);
+          const list = raw ? JSON.parse(raw) : [];
+          return Array.isArray(list) ? list.filter((s) => typeof s === "string") : [];
+        } catch (e) {
+          return [];
+        }
+      }
+
+      function knownReceivers() {
+        return [...options.options].map((o) => o.value);
+      }
+
+      function remember(name) {
+        const clean = name.trim();
+        if (!clean) return;
+        // Case-insensitively: "Chennai (Sumangali)" and "CHENNAI (SUMANGALI)"
+        // are the same destination, and a list that accumulates both spellings
+        // stops being a shortcut.
+        const already = knownReceivers()
+          .some((v) => v.toLowerCase() === clean.toLowerCase());
+        if (already) return;
+
+        const saved = savedReceivers();
+        saved.push(clean);
+        try {
+          window.localStorage.setItem(STORE, JSON.stringify(saved));
+        } catch (e) {
+          /* Out of quota, or storage blocked. The sticker still prints. */
+        }
+        addOption(clean);
+      }
+
+      function addOption(value) {
+        const option = document.createElement("option");
+        option.value = value;
+        options.appendChild(option);
+      }
+
+      savedReceivers().forEach(function (name) {
+        const already = knownReceivers()
+          .some((v) => v.toLowerCase() === name.toLowerCase());
+        if (!already) addOption(name);
+      });
+
+      // --- building the sheet -------------------------------------------
+      function textLine(className, text) {
+        const line = document.createElement("div");
+        line.className = className;
+        line.textContent = text;   // never innerHTML: these are typed values
+        return line;
+      }
+
+      function build() {
+        const lr       = document.getElementById("lr").value.trim();
+        const sender   = document.getElementById("sender").value.trim();
+        const to       = receiver.value.trim();
+        let quantity   = parseInt(qtyInput.value, 10);
+
+        if (!Number.isFinite(quantity) || quantity < 1) {
+          qtyInput.focus();
+          return;
+        }
+        if (quantity > MAX) quantity = MAX;
+
+        sheet.textContent = "";
+        let page = null;
+        for (let n = 1; n <= quantity; n++) {
+          // Pages are built explicitly rather than letting the cards reflow
+          // and break where they may. Padding on one long container is applied
+          // once, at the top of the first sheet — so every page after it began
+          // hard against the edge of the paper, with the top row's cut guide
+          // inside the strip the printer cannot reach. A container per page
+          // puts the same margin on every page. Same reason, and the same
+          // shape, as .sheet on the printed gate pass.
+          if ((n - 1) % PER_PAGE === 0) {
+            page = document.createElement("div");
+            page.className = "sticker-page";
+            sheet.appendChild(page);
+          }
+          const card = document.createElement("div");
+          card.className = "sticker";
+          // Three lines, and they are not labels — they are the VALUES that
+          // drop into the blanks already printed on the yellow SM Express
+          // sheet, beside its own "AWB No:", "ORIGIN:" and "DESTINATION:".
+          // Printing those words again would double them up on the label.
+          //
+          // No box number. Every sticker in a batch is identical: the count in
+          // brackets says how many boxes the consignment is, and which
+          // particular box this one is was never on the courier's sheet.
+          card.appendChild(textLine("sticker-lr", `${lr} (${quantity})`));
+          card.appendChild(textLine("sticker-from", sender));
+          card.appendChild(textLine("sticker-to", to));
+          page.appendChild(card);
+        }
+
+        sheet.hidden = false;
+        empty.hidden = true;
+        printBtn.disabled = false;
+        countHint.textContent = quantity === 1
+          ? "1 sticker ready"
+          : `${quantity} stickers ready`;
+        if (quantity >= MAX) {
+          countHint.textContent += ` — ${MAX} is the most that can be printed at once`;
+        }
+
+        remember(to);
+        fitLongNames();
+      }
+
+      // A long destination has to stay on the sticker. The sizes come from the
+      // original document, which was typed against names that happened to fit;
+      // "CHENNAI (SUMANGALI)" is near the limit already and the next one added
+      // will not be. Rather than shrink every sticker to suit the worst case,
+      // only the lines that actually overflow are stepped down.
+      function fitLongNames() {
+        sheet.querySelectorAll(".sticker-lr, .sticker-from, .sticker-to")
+          .forEach(function (line) {
+            let size = parseFloat(getComputedStyle(line).fontSize);
+            let guard = 0;
+            while (line.scrollWidth > line.clientWidth && size > 8 && guard < 40) {
+              size -= 1;
+              line.style.fontSize = size + "px";
+              guard++;
+            }
+          });
+      }
+
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        build();
+      });
+
+      printBtn.addEventListener("click", function () { window.print(); });
+
+      // Opened from a link that already carries everything — the whole point
+      // of accepting the values in the URL — so there is nothing to press.
+      if (document.getElementById("lr").value.trim() && qtyInput.value.trim()) {
+        build();
+      }
+
+      // The cards are sized in millimetres, so a window resize cannot change
+      // whether they fit. Re-running after the web fonts land can: a line that
+      // fitted in the fallback face may not fit in the real one.
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function () {
+          if (!sheet.hidden) fitLongNames();
+        });
+      }
+    })();
+  </script>
+{% endblock %}

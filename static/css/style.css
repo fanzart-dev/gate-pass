@@ -1998,3 +1998,166 @@ table.people-table th { padding: 10px 12px !important; }
 @media print {
   .fan-blade { animation: none !important; }
 }
+
+/* ===================================================================
+   Box stickers  (/print-stickers)
+
+   These print onto PRE-PRINTED yellow SM Express label sheets, which already
+   carry the words "AWB No:", "ORIGIN:" and "DESTINATION:" and the courier's
+   own header and footer. Only the three values are printed, into the blanks
+   beside those words — printing the labels again would double them up on the
+   sticker.
+
+   Sizes taken from the original "SM - LOGI-STICKER" document rather than
+   guessed: its text boxes are 72.8mm wide with three lines at 29pt, 29pt and
+   25pt, all bold and centred. Those point sizes are the part that matters —
+   the sticker is read at arm's length off the side of a carton, across a
+   warehouse.
+
+   The grid is two columns by three rows, six to an A4 sheet, because that is
+   the shape of the physical sheet. It is not a number chosen to use the paper
+   well: a seventh sticker on the page would land on no label at all.
+   =================================================================== */
+
+.sticker-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px 18px;
+}
+
+.sticker-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.sticker-sheet { margin-top: 18px; }
+
+/* One of these per printed page. The grid lives here rather than on the sheet
+   so that the page padding below repeats on every sheet instead of once. */
+.sticker-page {
+  display: grid;
+  grid-template-columns: repeat(2, 95mm);
+  grid-template-rows: repeat(3, 88mm);
+  gap: 4mm;
+  justify-content: center;
+  align-content: start;
+}
+
+.sticker {
+  width: 95mm;
+  height: 88mm;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* Three lines in an 88mm card. The gap is generous on purpose: each line
+     has to fall in its own blank row on the pre-printed sheet, and lines
+     bunched in the middle would all land in one of them. */
+  gap: 9mm;
+  /* Clear of the cut line. Without it the longest line — the destination —
+     runs to the very edge of the card, so a cut a millimetre inside the guide
+     takes the first and last letters of the town off. */
+  padding: 0 3mm;
+  /* A cut guide, not a border on the sticker. The original has no outline at
+     all, but the original was three per page with wide gaps — a tiled sheet
+     has to be cut apart, and cutting straight by eye between two identical
+     blocks of text is guesswork. Light grey so it disappears under scissors. */
+  border: 1px dashed #b9c2cf;
+  background: #fff;
+  color: #000;
+  overflow: hidden;
+}
+
+/* Centred and bold throughout, as in the document. Line height is deliberately
+   tight: four lines have to sit in the height the document gave three, and the
+   words are all upper case, which has no descenders to collide. */
+.sticker div {
+  width: 100%;
+  text-align: center;
+  font-weight: 700;
+  line-height: 1.12;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.sticker-lr   { font-size: 29pt; }
+.sticker-from { font-size: 29pt; }
+/* Smaller in the document too, and for the reason a longer line always is:
+   "CHENNAI (SUMANGALI)" is more than twice the length of "BENGALURU". */
+.sticker-to   { font-size: 25pt; }
+
+/* On screen the sheet is a preview of paper, so it is drawn as paper — white,
+   on the page's own grey, rather than floating loose on the background. */
+@media screen {
+  .sticker-page {
+    background: #fff;
+    padding: 8mm;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    width: max-content;
+    margin: 0 auto 14px;
+  }
+}
+
+@media print {
+  /* Everything that is not a sticker. The form, the heading and the hints are
+     inside .no-print already; the site's own chrome is not, and a nav bar
+     across the top sticker is exactly the failure this rule exists for. */
+  .no-print { display: none !important; }
+  .topbar, .flashes { display: none !important; }
+
+  /* main.container centres the page and caps its width for reading. On paper
+     that would shrink the sheet and push the grid off centre, so it is undone
+     rather than worked around. */
+  body, main.container, .container-wide {
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+    width: auto !important;
+    background: #fff !important;
+  }
+
+  /* The white border round each sheet. It lives here, not in @page, because
+     @page has to stay at margin 0 — see the note in the template. 8mm clears
+     the unprintable edge on every office printer seen so far.
+     On .sticker-page, not .sticker-sheet: padding on the one long container
+     is laid down once, so every page after the first started hard against the
+     paper edge. */
+  /* margin too, not just padding: the 18px that separates the sheet from the
+     form on screen would otherwise push the first page's top row 5mm lower
+     than every other page's. */
+  .sticker-sheet { margin: 0; padding: 0; border: 0; background: #fff; }
+
+  .sticker-page {
+    padding: 8mm;
+    border: 0;
+    background: #fff;
+    justify-content: start;
+    /* Each sheet is its own page. Without this the last row of one page and
+       the first of the next are only separated by the grid gap, and the 8mm
+       above has nothing to do with where the paper actually ends. */
+    page-break-after: always;
+    break-after: page;
+  }
+
+  /* ...except the last, which would otherwise eject a blank sheet. */
+  .sticker-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  /* A sticker split down the middle by a page break is waste paper: it cannot
+     be stuck on anything, and the box it belonged to has no label. Both
+     spellings, because the older one is what some print engines still read. */
+  .sticker {
+    page-break-inside: avoid;
+    break-inside: avoid;
+    /* Printers drop light greys; the cut guide has to survive being printed
+       or there is nothing to cut along. */
+    border-color: #94a3b8;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

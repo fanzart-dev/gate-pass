@@ -32,6 +32,10 @@
         <a href="{{ url_for('drafts') }}" {% if active == 'drafts' %}class="active"{% endif %}>Drafts</a>
       {% endif %}
       <a href="{{ url_for('register') }}" {% if active == 'register' %}class="active"{% endif %}>Register</a>
+      {# No permission on this one. It reads nothing and writes nothing — every
+         value on the page is typed by the person printing — so there is
+         nothing to withhold from anyone who can already sign in. #}
+      <a href="{{ url_for('print_stickers') }}" {% if active == 'stickers' %}class="active"{% endif %}>Stickers</a>
       {# Each link follows its own permission; the routes enforce the same thing,
          so hiding a link is a courtesy rather than the control. #}
       {% if can('can_export_reports') %}
