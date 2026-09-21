@@ -22,7 +22,7 @@
        timestamp) into whatever margin the page leaves, so a margin here would
        stamp four lines of chrome across the top label of every sheet. With
        none, there is nowhere for them to go. */
-    @page { size: 164mm 247mm; margin: 0; }
+    @page { size: 163mm 248mm; margin: 0; }
   </style>
 {% endblock %}
 
@@ -38,7 +38,7 @@
       One sticker per box, all identical. Prints onto SM Express stationery —
       only the three values go on the page, into the blanks beside the
       courier's own AWB No, ORIGIN and DESTINATION. Three labels to a
-      164 &times; 247mm sheet. Nothing is saved, and no gate pass number is used.
+      163 &times; 248mm sheet. Nothing is saved, and no gate pass number is used.
     </p>
 
     <form class="card sticker-form" id="sticker-form" autocomplete="off">
@@ -104,7 +104,7 @@
              scales one to the other and the alignment goes with it. #}
           <label for="align-paper">Paper</label>
           <select id="align-paper">
-            <option value="sheet">SM sheet (164 × 247 mm)</option>
+            <option value="sheet">SM sheet (163 × 248 mm)</option>
             <option value="a4">A4 (210 × 297 mm)</option>
           </select>
         </div>
@@ -114,18 +114,18 @@
         </div>
         <div>
           <label for="align-top">First line down (mm)</label>
-          <input type="number" id="align-top" value="23" step="0.5" min="0" max="80">
+          <input type="number" id="align-top" value="19.4" step="0.1" min="0" max="80">
         </div>
         <div>
           <label for="align-gap">Line spacing (mm)</label>
-          <input type="number" id="align-gap" value="16.4" step="0.1" min="4" max="40">
+          <input type="number" id="align-gap" value="16.66" step="0.01" min="4" max="40">
         </div>
         <div>
           {# The knob for "the first one is fine and the rest are creeping
              down the page". Nothing inside a label changes; only the step
              from one label to the next. #}
           <label for="align-pitch">Label pitch (mm)</label>
-          <input type="number" id="align-pitch" value="82" step="0.5" min="40" max="120">
+          <input type="number" id="align-pitch" value="82.7" step="0.1" min="40" max="120">
         </div>
         <div>
           {# The answer to a printer that scales anyway. Print the test page,
@@ -193,8 +193,8 @@
       // was bumped once for adding the pitch and put back — somebody had a
       // printer lined up by hand, and that would have thrown their numbers
       // away to no purpose.
-      const ALIGN_STORE = "sticker_sheet_alignment_v3";
-      const ALIGN_DEFAULTS = { left: 36, top: 23, gap: 16.4, pitch: 82,
+      const ALIGN_STORE = "sticker_sheet_alignment_v5";
+      const ALIGN_DEFAULTS = { left: 36, top: 19.4, gap: 16.66, pitch: 82.7,
                                paper: "sheet", scale: 100 };
 
       // @page cannot read a custom property, so the rule is rewritten instead.
@@ -208,7 +208,7 @@
       // top left with white around it, and the Left/Top offsets move it to
       // wherever the stationery actually sits in the tray.
       const PAPER_SIZES = {
-        sheet: "164mm 247mm",
+        sheet: "163mm 248mm",
         a4: "A4 portrait",
       };
       const pageRule = document.createElement("style");
@@ -326,6 +326,15 @@
             ruler.className = "sticker-ruler";
             ruler.textContent = "\u2190 this line is 100 mm \u2192";
             page.appendChild(ruler);
+
+            // The settings this sheet was drawn with, printed on the test
+            // page itself. Without it a photograph of a wrong print says
+            // only that it is wrong — not which numbers produced it, or
+            // whether the page that produced it was even the current one.
+            // Several rounds went by on exactly that ambiguity.
+            const stamp = document.createElement("div");
+            stamp.className = "sticker-stamp";
+            page.appendChild(stamp);
             sheet.appendChild(page);
           }
           const card = document.createElement("div");
@@ -434,6 +443,13 @@
             window.localStorage.setItem(ALIGN_STORE, JSON.stringify(values));
           } catch (e) { /* private window; the sheet still prints */ }
         }
+        sheet.querySelectorAll(".sticker-stamp").forEach(function (el) {
+          el.textContent =
+            `paper ${paperSelect.value} \u00b7 left ${values.left} \u00b7 ` +
+            `first line ${values.top} \u00b7 spacing ${values.gap} \u00b7 ` +
+            `pitch ${values.pitch} \u00b7 100mm printed as ${values.scale} ` +
+            `\u00b7 drawn at ${(correction * 100).toFixed(1)}%`;
+        });
         if (!sheet.hidden) fitLongNames();
       }
 
