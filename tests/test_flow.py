@@ -6078,22 +6078,39 @@ def test_the_sticker_sheet_is_built_for_paper():
     check("and measured from its border, not its content",
           "box-sizing: border-box;" in sticker_css[sticker_css.index(".sticker-card {"):])
 
-    # This is an overlay, so the text is small and left-aligned into blanks
-    # that already exist on the paper. Large centred text looks better on a
-    # white screen and lands across the courier's pre-printed rules.
+    # Type taken from the document that printed correctly: 29pt for the AWB
+    # number and the origin, 25pt for the longer destination, bold, and
+    # CENTRED in a 110mm block rather than pushed against the printed label.
+    # An earlier pass had this at 17px left-aligned, which reads on a screen
+    # and is far too small on the side of a carton across a warehouse.
     values = sticker_css[sticker_css.index(".sticker-card div {"):]
-    check("the values are left-aligned", "text-align: left;" in values)
-    check("and not centred", "text-align: center;" not in values[:400])
-    check("at a size that fits a form blank, not a poster",
-          "font-size: 17px;" in values)
+    check("the values are centred, as in the document",
+          "text-align: center;" in values)
+    check("in a block the document's width", "width: 110mm;" in values)
     check("bold, so it reads against yellow", "font-weight: 700;" in values)
+    # Each rule read on its own. Slicing from one selector to the end of the
+    # file sees the NEXT rule's size too, so changing just one of these went
+    # undetected — the check passed on its neighbour's declaration.
+    def rule_for(selector):
+        start = sticker_css.index(selector)
+        return sticker_css[start:sticker_css.index("}", start)]
+
+    check("the AWB line is the document's 29pt",
+          "font-size: 29pt;" in rule_for(".sticker-lr"))
+    check("the origin matches it",
+          "font-size: 29pt;" in rule_for(".sticker-from"))
+    check("and the longer destination is the document's 25pt",
+          "font-size: 25pt;" in rule_for(".sticker-to"))
 
     # Absolutely positioned: a long destination must not push the line below
     # it out of its blank and onto a printed rule.
     check("each line is pinned to its own row", "position: absolute;" in values)
+    # One spacing drives all three rows: line two is one gap below line one
+    # and line three is two. Three separate offsets would drift apart the
+    # moment anyone nudged one of them.
     check("the rows are spaced by one setting, not three",
-          ".sticker-from { top: calc(var(--sticker-top) + var(--sticker-gap)); }" in css
-          and ".sticker-to   { top: calc(var(--sticker-top) + (2 * var(--sticker-gap))); }" in css)
+          "top: calc(var(--sticker-top) + var(--sticker-gap));" in css
+          and "top: calc(var(--sticker-top) + (2 * var(--sticker-gap)));" in css)
 
     # Nothing of ours may be drawn on paper: the yellow sheet already carries
     # the artwork, and a border or a ghost label would print on top of it.
@@ -6122,28 +6139,32 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
         check(f"{control} can be nudged", f'id="{control}"' in template)
     check("and put back", 'id="align-reset"' in template)
 
-    # Measured off a scan of the real sheet, using its known 164mm width to
-    # turn pixels into millimetres: rows begin at 20.6, 36.3 and 52.0mm, and
-    # the longest printed label ("DESTINATION:") ends at 38mm.
-    check("the defaults are the measured ones",
-          "left: 44, top: 26, gap: 16.4, paper: \"sheet\"" in template
+    # From two sources that agree. The document that printed correctly puts
+    # its text blocks 36mm in and 110mm wide with the lines 16.66mm apart; a
+    # scan of the sheet puts the rows at 20.6, 36.3 and 52.0mm. The first
+    # line is set from the scan rather than the document's 19.4mm, because
+    # 29pt type is 11mm tall and wants centring in a 15.7mm row.
+    check("the defaults are the document's",
+          "left: 36, top: 23, gap: 16.4, paper: \"sheet\"" in template
           and "scale: 100" in template)
     check("and the stylesheet starts from the same numbers",
-          "--sticker-left: 44mm;" in css and "--sticker-top: 26mm;" in css
+          "--sticker-left: 36mm;" in css and "--sticker-top: 23mm;" in css
           and "--sticker-gap: 16.4mm;" in css)
     check("the form boxes start there too",
-          'id="align-left" value="44"' in template
-          and 'id="align-top" value="26"' in template
+          'id="align-left" value="36"' in template
+          and 'id="align-top" value="23"' in template
           and 'id="align-gap" value="16.4"' in template)
-    # 44mm clears "DESTINATION:" by 6mm. Any less and the destination line
-    # would print on top of the courier's own label.
-    check("the left offset clears the longest printed label",
-          "--sticker-left: 44mm;" in css)
+
+    # A 110mm block from 36mm centres on 91mm, which is the middle of the
+    # blank on every row and well clear of "DESTINATION:", the longest
+    # printed label, which ends at 38mm.
+    check("the text block is centred in the blank, not jammed against the label",
+          "--sticker-left: 36mm;" in css and "width: 110mm;" in css)
 
     # Remembered per browser, like the destinations: the offset is a property
     # of the machine in front of the person, not of the company.
     check("the alignment is remembered",
-          'ALIGN_STORE = "sticker_sheet_alignment_v2"' in template)
+          'ALIGN_STORE = "sticker_sheet_alignment_v3"' in template)
     check("in the browser, not the database",
           "localStorage.setItem(ALIGN_STORE" in template)
 
@@ -6153,7 +6174,7 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     # that no longer existed — putting each line a row too high and making the
     # new measurements look wrong. The suffix retires those quietly.
     check("the key is versioned, so a geometry change retires old offsets",
-          "_v2" in template and 'localStorage.getItem(ALIGN_STORE)' in template)
+          "_v3" in template and 'localStorage.getItem(ALIGN_STORE)' in template)
     check("and nothing still reads the unversioned key",
           '"sticker_sheet_alignment"' not in template)
 
