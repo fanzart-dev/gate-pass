@@ -2096,21 +2096,32 @@ table.people-table th { padding: 10px 12px !important; }
 
 /* One physical sheet: 164 x 247mm, three labels of 82mm. */
 .sticker-page {
-  /* The document's own numbers: its text blocks sit 36mm in and 110mm wide,
-     with the three lines 16.66mm apart. The first line is placed from the
-     measured row instead — 29pt type is 11mm tall, so it is centred in the
-     15.7mm row rather than hung from the document's 19.4mm, which was a
-     couple of millimetres high. */
+  /* Every number here is the document's, measured out of the file that
+     prints correctly, and NOT adjusted towards what looked better against a
+     scan. Comparing the two line by line, the earlier values were short at
+     every step — 3.06mm on the first line, 0.26mm on each line gap, 0.68mm
+     on each label — and short errors in the same direction accumulate, so by
+     the last line of the third label the page was 6.5mm high.
+
+         first line   19.40mm from the top of the page (4.09mm page margin
+                      plus the block's own 15.31mm)
+         line gap     16.66mm, the mean of the document's six
+         label pitch  82.68mm, the mean of its two
+         left         36mm, its blocks at 35.95, 35.95 and 36.18mm
+
+     The document places its three labels by hand, so its own spacings vary
+     by a couple of millimetres either way. Means are used rather than
+     copying that variation, which is not a measurement of anything. */
   --sticker-left: 36mm;
-  --sticker-top: 23mm;
-  --sticker-gap: 16.4mm;
+  --sticker-top: 19.4mm;
+  --sticker-gap: 16.66mm;
   /* Top of one label to the top of the next. Measured at 82mm on the sheet,
      and adjustable for the same reason everything else here is: if a printer
      enlarges the page, the labels come out further apart than they were sent
      and the drift compounds — the second label is out by one gap, the third
      by two. Shrinking the pitch cancels that without disturbing the first
      label, which by then is usually already lined up. */
-  --sticker-pitch: 82mm;
+  --sticker-pitch: 82.7mm;
   /* Cancels whatever the printer does to the page. 1 means it was left
      alone. See .sticker-ruler below for how the number is arrived at. */
   --sheet-scale: 1;
@@ -2121,8 +2132,8 @@ table.people-table th { padding: 10px 12px !important; }
      exactly how the printer's own scaling went wrong. */
   transform-origin: top left;
 
-  width: 164mm;
-  height: 247mm;
+  width: 163mm;
+  height: 248mm;
   margin: 0 auto;
   display: grid;
   grid-template-columns: 1fr;
@@ -2134,7 +2145,7 @@ table.people-table th { padding: 10px 12px !important; }
    already has the artwork — it only gives the three values somewhere to be. */
 .sticker-card {
   position: relative;
-  width: 164mm;
+  width: 163mm;
   height: var(--sticker-pitch);
   box-sizing: border-box;
   /* NOT overflow:hidden. A shortened pitch leaves the destination line close
@@ -2207,9 +2218,22 @@ table.people-table th { padding: 10px 12px !important; }
 .sticker-ruler::before { left: 0; }
 .sticker-ruler::after  { right: 0; }
 
-/* Shown only while a test page is being printed, so it never lands on real
+/* What the sheet was drawn with, printed beside the rule. A photograph of a
+   test page then says which numbers produced it, which is the one thing a
+   photograph of a bad print could not previously tell anybody. */
+.sticker-stamp {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 12mm;
+  font-size: 8px;
+  color: #000;
+}
+
+/* Shown only while a test page is being printed, so neither lands on real
    stationery. */
-body.is-test-print .sticker-ruler { display: block; }
+body.is-test-print .sticker-ruler,
+body.is-test-print .sticker-stamp { display: block; }
 
 /* On screen only: the stationery drawn from the same measurements, so the
    preview shows which blank each value is aimed at and the calibration can

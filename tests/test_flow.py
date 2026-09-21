@@ -6055,7 +6055,7 @@ def test_the_sticker_sheet_is_built_for_paper():
     # scale to whatever the printer has loaded, which for an overlay is the
     # difference between landing in a blank and landing on a printed rule.
     check("the printed page is the sheet, not A4",
-          "@page { size: 164mm 247mm; margin: 0; }" in template)
+          "@page { size: 163mm 248mm; margin: 0; }" in template)
 
     check("each printed page is its own element",
           'className = "sticker-page"' in template)
@@ -6067,7 +6067,7 @@ def test_the_sticker_sheet_is_built_for_paper():
     # The measured sheet: 164 x 247mm, three labels of 82mm.
     sticker_css = css[css.index("Box stickers  (/print-stickers)"):]
     check("the page is one sheet of stationery",
-          "width: 164mm;" in sticker_css and "height: 247mm;" in sticker_css)
+          "width: 163mm;" in sticker_css and "height: 248mm;" in sticker_css)
     check("one column", "grid-template-columns: 1fr;" in sticker_css)
     check("of three labels", "grid-template-rows: repeat(3, var(--sticker-pitch));"
           in sticker_css)
@@ -6076,7 +6076,7 @@ def test_the_sticker_sheet_is_built_for_paper():
     card = sticker_css[sticker_css.index(".sticker-card {"):
                        sticker_css.index("}", sticker_css.index(".sticker-card {"))]
     check("the card is the label's own size",
-          "width: 164mm;" in card and "height: var(--sticker-pitch);" in card)
+          "width: 163mm;" in card and "height: var(--sticker-pitch);" in card)
     check("and measured from its border, not its content",
           "box-sizing: border-box;" in sticker_css[sticker_css.index(".sticker-card {"):])
 
@@ -6141,13 +6141,16 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
         check(f"{control} can be nudged", f'id="{control}"' in template)
     check("and put back", 'id="align-reset"' in template)
 
-    # From two sources that agree. The document that printed correctly puts
-    # its text blocks 36mm in and 110mm wide with the lines 16.66mm apart; a
-    # scan of the sheet puts the rows at 20.6, 36.3 and 52.0mm. The first
-    # line is set from the scan rather than the document's 19.4mm, because
-    # 29pt type is 11mm tall and wants centring in a 15.7mm row.
+    # Every number is the document's, taken from the file that prints
+    # correctly and NOT adjusted towards what looked better against a scan.
+    # Compared line by line the earlier values were short at every step —
+    # 3.06mm on the first line, 0.26mm per line gap, 0.68mm per label — and
+    # short errors in one direction accumulate, which is why the third
+    # label's last line came out 6.5mm high. Matching the document takes the
+    # largest difference across all nine lines from 6.47mm to 1.42mm, and
+    # what is left oscillates about zero instead of growing.
     check("the defaults are the document's",
-          "left: 36, top: 23, gap: 16.4, pitch: 82" in template
+          "left: 36, top: 19.4, gap: 16.66, pitch: 82.7" in template
           and "scale: 100" in template)
 
     # The step from one label to the next, separate from everything inside a
@@ -6159,8 +6162,8 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     check("the label pitch is adjustable", "--sticker-pitch" in css)
     check("it drives the grid", "repeat(3, var(--sticker-pitch))" in css)
     check("and the height of each card", "height: var(--sticker-pitch);" in css)
-    check("starting from the measured 82mm", "--sticker-pitch: 82mm;" in css
-          and 'id="align-pitch" value="82"' in template)
+    check("starting from the document's 82.7mm", "--sticker-pitch: 82.7mm;" in css
+          and 'id="align-pitch" value="82.7"' in template)
     check("and it is written to every page",
           'setProperty("--sticker-pitch", values.pitch + "mm")' in template)
 
@@ -6170,12 +6173,12 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     card_rule = css[css.index(".sticker-card {"):css.index("}", css.index(".sticker-card {"))]
     check("a card does not clip its own last line", "overflow: hidden" not in card_rule)
     check("and the stylesheet starts from the same numbers",
-          "--sticker-left: 36mm;" in css and "--sticker-top: 23mm;" in css
-          and "--sticker-gap: 16.4mm;" in css)
+          "--sticker-left: 36mm;" in css and "--sticker-top: 19.4mm;" in css
+          and "--sticker-gap: 16.66mm;" in css)
     check("the form boxes start there too",
           'id="align-left" value="36"' in template
-          and 'id="align-top" value="23"' in template
-          and 'id="align-gap" value="16.4"' in template)
+          and 'id="align-top" value="19.4"' in template
+          and 'id="align-gap" value="16.66"' in template)
 
     # A 110mm block from 36mm centres on 91mm, which is the middle of the
     # blank on every row and well clear of "DESTINATION:", the longest
@@ -6186,7 +6189,7 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     # Remembered per browser, like the destinations: the offset is a property
     # of the machine in front of the person, not of the company.
     check("the alignment is remembered",
-          'ALIGN_STORE = "sticker_sheet_alignment_v3"' in template)
+          'ALIGN_STORE = "sticker_sheet_alignment_v5"' in template)
     check("in the browser, not the database",
           "localStorage.setItem(ALIGN_STORE" in template)
 
@@ -6196,7 +6199,7 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     # that no longer existed — putting each line a row too high and making the
     # new measurements look wrong. The suffix retires those quietly.
     check("the key is versioned, so a geometry change retires old offsets",
-          "_v3" in template and 'localStorage.getItem(ALIGN_STORE)' in template)
+          "_v5" in template and 'localStorage.getItem(ALIGN_STORE)' in template)
     check("and nothing still reads the unversioned key",
           '"sticker_sheet_alignment"' not in template)
 
@@ -6270,7 +6273,7 @@ def test_the_sticker_sheet_cannot_be_silently_rescaled():
     check("the stationery is one option", 'value="sheet"' in template)
     check("and ordinary A4 the other", 'value="a4"' in template)
     check("both map to a real page size",
-          'sheet: "164mm 247mm"' in template and 'a4: "A4 portrait"' in template)
+          'sheet: "163mm 248mm"' in template and 'a4: "A4 portrait"' in template)
 
     # @page cannot read a custom property, so the rule is rewritten instead.
     check("the page rule follows the choice",
@@ -6323,7 +6326,25 @@ def test_a_printer_that_scales_anyway_can_be_cancelled():
     check("the ruler is hidden by default", "display: none;" in
           css[css.index(".sticker-ruler {"):css.index(".sticker-ruler::before")])
     check("and shown only while testing",
-          "body.is-test-print .sticker-ruler { display: block; }" in css)
+          "body.is-test-print .sticker-ruler," in css
+          and "body.is-test-print .sticker-stamp { display: block; }" in css)
+
+    # The test page also carries the numbers it was drawn with. A photograph
+    # of a bad print otherwise says only that it is bad — not which settings
+    # produced it, nor whether the page that produced it was even the current
+    # one. Several rounds of this went by on that ambiguity.
+    check("the test page says what produced it", ".sticker-stamp" in template)
+    check("naming every setting",
+          all(word in template for word in
+              ("left ${values.left}", "first line ${values.top}",
+               "spacing ${values.gap}", "pitch ${values.pitch}",
+               "100mm printed as ${values.scale}")))
+    check("and the scale it actually drew at",
+          "drawn at ${(correction * 100).toFixed(1)}%" in template)
+    check("but it is not printed on real stationery",
+          ".sticker-stamp {" in css
+          and "display: none;" in css[css.index(".sticker-stamp {"):
+                                      css.index("}", css.index(".sticker-stamp {"))])
     check("which is turned on and off around the print, not left on",
           'classList.add("is-test-print")' in template
           and 'classList.remove("is-test-print")' in template)
