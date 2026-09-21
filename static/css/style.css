@@ -2002,30 +2002,39 @@ table.people-table th { padding: 10px 12px !important; }
 /* ===================================================================
    Box stickers  (/print-stickers)
 
-   An OVERLAY, not a design. These print onto pre-printed yellow SM Express
-   sheets that already carry "AWB No:", "ORIGIN:" and "DESTINATION:", the
-   courier's header band and its footer. The page contributes three short
-   strings and nothing else: every line here exists to drop a value into a
-   blank that is already on the paper.
+   An OVERLAY for pre-printed SM Express stationery, not a design. The paper
+   already carries "AWB No:", "ORIGIN:", "DESTINATION:", the SURFACE header
+   band and the courier's footer. This contributes three short strings and
+   nothing else.
 
-   That is why the text is small, left-aligned and absolutely positioned
-   rather than large and centred. A centred block looks better on a white
-   screen and lands across the pre-printed rules on the real sheet.
-
-   One column, three rows, 99mm each: the shape of the physical sheet, which
-   is three labels stacked down a portrait page.
-
-   WHERE THE NUMBERS COME FROM, AND WHY THEY MOVE
+   EVERY NUMBER BELOW IS MEASURED, NOT CHOSEN
    -------------------------------------------------------------------
-   The starting offsets are lifted from the original Word file, which was
-   itself an overlay for this sheet: its text boxes sit 36mm from the left,
-   the first 15mm down its slot, and the three lines 16.7mm apart.
+   From a scan of the real sheet, using its known 164mm width to turn pixels
+   into millimetres. Distances are from the top of the sheet:
 
-   They are custom properties rather than constants because no two printers
-   agree on where the paper starts. Overlay printing always needs a nudge, it
-   is different on every machine, and it cannot be measured from here — so
-   the page carries three controls that move the whole block, and remembers
-   them per browser.
+       4.9mm   top border of the first label
+      20.6mm   header band ends, AWB No row begins
+      36.3mm   AWB row ends, ORIGIN begins
+      52.0mm   ORIGIN ends, DESTINATION begins
+      70.6mm   DESTINATION ends, footer band begins
+      76.9mm   footer ends
+
+   The three labels repeat every 82.4mm by measurement; 82mm is used here
+   because that is the stated size, and the 0.4mm difference comes to 0.8mm
+   by the third label — a fifth of the slack in a 15.7mm row.
+
+   Row centres are therefore 28.5, 44.2 and 61.3mm. A single spacing cannot
+   hit all three because the DESTINATION row is taller than the other two
+   (18.6mm against 15.7mm), so 16.4mm is used: it lands line two 0.7mm above
+   its row centre and line three exactly on it.
+
+   The pre-printed labels end at 17mm (AWB No:), 24mm (ORIGIN:) and 38mm
+   (DESTINATION:), so values start at 44mm and clear the longest by 6mm.
+
+   None of this is the last word. No two printers agree on where the paper
+   starts, so these are only the STARTING values for the three calibration
+   boxes on the page, which move the whole block and are remembered per
+   browser.
    =================================================================== */
 
 .sticker-fields {
@@ -2042,8 +2051,8 @@ table.people-table th { padding: 10px 12px !important; }
   margin-top: 18px;
 }
 
-/* The nudge controls. Grouped and quieter than the fields above, because they
-   are set once when the printer is first lined up and then left alone. */
+/* The calibration boxes. Quieter than the fields above, because they are set
+   once when the printer is first lined up and then left alone. */
 .sticker-align {
   display: flex;
   flex-wrap: wrap;
@@ -2060,37 +2069,38 @@ table.people-table th { padding: 10px 12px !important; }
 
 .sticker-sheet { margin-top: 18px; }
 
-/* One of these per printed page: a whole sheet of A4, exactly. */
+/* One physical sheet: 164 x 247mm, three labels of 82mm. */
 .sticker-page {
-  --sticker-left: 36mm;    /* how far in the values start */
-  --sticker-top: 15mm;     /* the AWB line, down from the top of its slot */
-  --sticker-gap: 16.7mm;   /* AWB to ORIGIN to DESTINATION */
+  --sticker-left: 44mm;    /* clear of "DESTINATION:", which ends at 38mm */
+  --sticker-top: 26mm;     /* first line, down from the top of its label */
+  --sticker-gap: 16.4mm;   /* AWB to ORIGIN to DESTINATION */
 
-  width: 210mm;
-  height: 297mm;
+  width: 164mm;
+  height: 247mm;
+  margin: 0 auto;
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: repeat(3, 99mm);
-  margin: 0 auto;
+  grid-template-rows: repeat(3, 82mm);
+  align-content: start;
 }
 
-/* One label's worth of the sheet. It draws nothing — the yellow paper already
-   has the artwork — it only gives the three values somewhere to be. */
-.sticker {
+/* One label's worth of the sheet. It draws nothing on paper — the stationery
+   already has the artwork — it only gives the three values somewhere to be. */
+.sticker-card {
   position: relative;
-  width: 100%;
-  height: 99mm;
-  overflow: hidden;
+  width: 164mm;
+  height: 82mm;
+  box-sizing: border-box;
   color: #000;
 }
 
 /* Absolute, so a long destination cannot push the line below it out of its
    blank and onto a printed rule. Each line stays where the paper expects it
    whatever it contains. */
-.sticker div {
+.sticker-card div {
   position: absolute;
   left: var(--sticker-left);
-  right: 6mm;
+  right: 4mm;
   font-size: 17px;
   font-weight: 700;
   line-height: 1.1;
@@ -2102,9 +2112,9 @@ table.people-table th { padding: 10px 12px !important; }
 .sticker-from { top: calc(var(--sticker-top) + var(--sticker-gap)); }
 .sticker-to   { top: calc(var(--sticker-top) + (2 * var(--sticker-gap))); }
 
-/* On screen only: the sheet drawn as paper, and faint rules showing where the
-   three slots divide, so the preview can be lined up against a real sheet
-   without printing one. None of this is on the printed page. */
+/* On screen only: the stationery drawn from the same measurements, so the
+   preview shows which blank each value is aimed at and the calibration can
+   be judged without printing a sheet. None of it reaches paper. */
 @media screen {
   .sticker-page {
     background: #fff;
@@ -2114,39 +2124,47 @@ table.people-table th { padding: 10px 12px !important; }
     box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
   }
 
-  .sticker + .sticker { border-top: 1px dashed #cbd5e1; }
+  /* The label's own rules, at the measured offsets: the header band, the
+     three row dividers and the footer band. */
+  .sticker-card {
+    background:
+      linear-gradient(#e2e8f0, #e2e8f0) 0 4.9mm / 100% 0.3mm no-repeat,
+      linear-gradient(#eef2f7, #eef2f7) 0 4.9mm / 100% 15.7mm no-repeat,
+      linear-gradient(#e2e8f0, #e2e8f0) 0 20.6mm / 100% 0.3mm no-repeat,
+      linear-gradient(#e2e8f0, #e2e8f0) 0 36.3mm / 100% 0.3mm no-repeat,
+      linear-gradient(#e2e8f0, #e2e8f0) 0 52.0mm / 100% 0.3mm no-repeat,
+      linear-gradient(#e2e8f0, #e2e8f0) 0 70.6mm / 100% 0.3mm no-repeat,
+      linear-gradient(#eef2f7, #eef2f7) 0 70.6mm / 100% 6.3mm no-repeat;
+  }
 
-  /* A ghost of the pre-printed label, so the preview shows which blank each
-     value is aimed at. Paper has the real thing. */
-  .sticker::before {
+  /* The two labels that can be drawn with the card's own pseudo-elements. */
+  .sticker-card::before {
     position: absolute;
-    left: 8mm;
-    top: var(--sticker-top);
+    left: 4mm;
+    top: 26mm;
     content: "AWB No:";
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
     color: #b6c0cd;
   }
 
-  .sticker::after {
+  .sticker-card::after {
     position: absolute;
-    left: 8mm;
-    top: calc(var(--sticker-top) + var(--sticker-gap));
+    left: 4mm;
+    top: 42mm;
     content: "ORIGIN:";
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
     color: #b6c0cd;
-    white-space: pre;
   }
 
-  /* DESTINATION: has no third pseudo-element to live in, so it rides on the
-     value's own line as a label drawn to its left. */
+  /* The third rides on its own value's line, drawn back to the card's edge. */
   .sticker-to::before {
     content: "DESTINATION:";
     position: absolute;
-    left: calc(0mm - var(--sticker-left) + 8mm);
+    left: calc(4mm - var(--sticker-left));
+    font-size: 14px;
     font-weight: 700;
-    font-size: 15px;
     color: #b6c0cd;
   }
 }
@@ -2171,9 +2189,9 @@ table.people-table th { padding: 10px 12px !important; }
 
   .sticker-sheet { margin: 0; padding: 0; border: 0; background: #fff; }
 
-  /* No border, no shadow, no guide rules, and no ghost labels. The sheet in
-     the printer already has all of that printed on it in black on yellow;
-     anything drawn here lands on top of it. */
+  /* No border, no shadow, no row rules, no ghost labels. The sheet in the
+     printer already has every one of those on it; anything drawn here lands
+     on top of the courier's own artwork. */
   .sticker-page {
     margin: 0;
     border: 0;
@@ -2190,8 +2208,9 @@ table.people-table th { padding: 10px 12px !important; }
     break-after: auto;
   }
 
-  .sticker {
+  .sticker-card {
     border: 0;
+    background: none;
     /* A label split down the middle by a page break puts half a destination
        on one sheet and half on the next. Both spellings, because the older
        one is what some print engines still read. */
@@ -2199,11 +2218,13 @@ table.people-table th { padding: 10px 12px !important; }
     break-inside: avoid;
   }
 
-  /* Clipped on paper only. A value too long to fit must stop at the edge of
-     its blank rather than run across the courier's pre-printed rule — but on
+  /* Clipped on paper only. A value too long for its blank must stop at the
+     edge rather than run across the courier's pre-printed rule — but on
      screen the same rule also clipped the ghost labels drawn to the left of
      each line, which is where they belong. */
-  .sticker div { overflow: hidden; }
+  .sticker-card div { overflow: hidden; }
 
-  .sticker::before, .sticker::after, .sticker-to::before { content: none; }
+  .sticker-card::before, .sticker-card::after, .sticker-to::before {
+    content: none;
+  }
 }

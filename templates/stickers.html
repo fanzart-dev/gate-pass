@@ -5,13 +5,20 @@
 
 {% block head %}
   <style>
-    /* margin: 0 for the same reason as the gate pass itself — the browser
+    /* The page IS the sheet: 164 x 247mm of SM Express stationery, not A4
+       with the stationery somewhere on it. Stated as lengths rather than
+       `portrait` so that one millimetre in this stylesheet is one millimetre
+       on the paper — which is the whole game when printing into blanks that
+       are already there. (`size: 164mm 247mm portrait` is not valid CSS:
+       explicit lengths and an orientation keyword cannot be combined, and
+       portrait is implied by the width being the smaller of the two.)
+
+       margin: 0 for the same reason as the gate pass itself — the browser
        prints its own header and footer (document title, URL, page number,
        timestamp) into whatever margin the page leaves, so a margin here would
-       stamp four lines of chrome across the top sticker of every sheet. With
-       none, there is nowhere for them to go. The white border is padding on
-       .sticker-sheet instead, so the printed geometry is unchanged. */
-    @page { size: A4 portrait; margin: 0; }
+       stamp four lines of chrome across the top label of every sheet. With
+       none, there is nowhere for them to go. */
+    @page { size: 164mm 247mm; margin: 0; }
   </style>
 {% endblock %}
 
@@ -24,10 +31,10 @@
     </div>
 
     <p class="hint" style="margin-bottom:14px">
-      One sticker per box, all identical. Prints onto the yellow SM Express
-      sheets — only the three values go on the page, into the blanks beside
-      the courier's own AWB No, ORIGIN and DESTINATION. Three to a sheet.
-      Nothing is saved and no gate pass number is used.
+      One sticker per box, all identical. Prints onto SM Express stationery —
+      only the three values go on the page, into the blanks beside the
+      courier's own AWB No, ORIGIN and DESTINATION. Three labels to a
+      164 &times; 247mm sheet. Nothing is saved, and no gate pass number is used.
     </p>
 
     <form class="card sticker-form" id="sticker-form" autocomplete="off">
@@ -77,15 +84,15 @@
       <div class="sticker-align">
         <div>
           <label for="align-left">Left (mm)</label>
-          <input type="number" id="align-left" value="36" step="0.5" min="0" max="120">
+          <input type="number" id="align-left" value="44" step="0.5" min="0" max="140">
         </div>
         <div>
           <label for="align-top">First line down (mm)</label>
-          <input type="number" id="align-top" value="15" step="0.5" min="0" max="90">
+          <input type="number" id="align-top" value="26" step="0.5" min="0" max="80">
         </div>
         <div>
           <label for="align-gap">Line spacing (mm)</label>
-          <input type="number" id="align-gap" value="16.7" step="0.5" min="4" max="45">
+          <input type="number" id="align-gap" value="16.4" step="0.1" min="4" max="40">
         </div>
         <button type="button" id="align-reset" class="quiet">Reset</button>
         <span class="hint">
@@ -123,14 +130,12 @@
       const MAX = {{ max_stickers }};
       const STORE = "custom_sticker_receivers";
 
-      // Three to a sheet, stacked, because that is the shape of the physical
-      // yellow sheet — one column of three labels down a portrait page. It
-      // has to agree with the CSS, which lays out three 99mm rows in a 297mm
-      // page. The tests prove the count by printing a real PDF, so this
-      // cannot drift from the layout unnoticed.
+      // Three to a sheet: the stationery is three 82mm labels on a 164 x
+      // 247mm page. It has to agree with the CSS, and the tests prove the
+      // count by printing a real PDF, so this cannot drift unnoticed.
       const PER_PAGE = 3;
       const ALIGN_STORE = "sticker_sheet_alignment";
-      const ALIGN_DEFAULTS = { left: 36, top: 15, gap: 16.7 };
+      const ALIGN_DEFAULTS = { left: 44, top: 26, gap: 16.4 };
 
       // --- remembered destinations --------------------------------------
       // In the browser, not the database. A destination is a habit of whoever
@@ -226,7 +231,7 @@
             sheet.appendChild(page);
           }
           const card = document.createElement("div");
-          card.className = "sticker";
+          card.className = "sticker-card";
           // Three lines, and they are not labels — they are the VALUES that
           // drop into the blanks already printed on the yellow SM Express
           // sheet, beside its own "AWB No:", "ORIGIN:" and "DESTINATION:".
