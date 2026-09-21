@@ -7,6 +7,7 @@ group, so it never touches storage/ (the real book).
 
 import functools
 import hashlib
+import inspect
 import io
 import json
 import os
@@ -5940,6 +5941,202 @@ def test_the_carton_lookup_answers_what_the_item_box_needs(tmpdir):
     conn.close()
 
 
+def test_box_stickers_need_no_database(tmpdir):
+    """The page exists to print labels, and must never grow a table.
+
+    A sticker is not a record. It goes on a carton, travels once, and is torn
+    off when the box is opened — there is nothing anybody could want to look
+    up afterwards, so storing one would create an audit trail with no audit in
+    it and a migration to carry for ever.
+    """
+    flask_app, client = logged_in_app(tmpdir, "stickers")
+
+    source = inspect.getsource(flask_app.view_functions["print_stickers"])
+    check("the view runs no query", "db." not in source)
+    check("and saves nothing", "commit" not in source and "INSERT" not in source.upper())
+
+    # The schema must be untouched by the feature existing at all.
+    conn = db.connect(flask_app.config["DB_PATH"])
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table'")}
+    check("no sticker table was created",
+          not any("sticker" in t.lower() for t in tables))
+    conn.close()
+
+    # Reachable under both names the request asked for.
+    for path in ("/print-stickers", "/stickers"):
+        check(f"{path} answers", client.get(path).status_code == 200)
+
+
+def test_box_stickers_start_empty_except_the_sender(tmpdir):
+    """Blank is the only safe default for the two fields that identify a load.
+
+    A sticker carrying last week's LR because a default was left in the box is
+    worse than a blank one: the carton still gets a label, it still goes out,
+    and nothing about it looks wrong until it arrives somewhere else.
+    """
+    flask_app, client = logged_in_app(tmpdir, "stickerdefaults")
+    page = markup_only(client.get("/print-stickers").get_data(as_text=True))
+
+    check("the LR box is empty", 'id="lr" name="lr" value=""' in page)
+    check("and so is the quantity",
+          re.search(r'id="qty"[^>]*value=""', page) is not None)
+    check("the sender is filled in, being the same every time",
+          'id="sender" name="sender" value="BENGALURU"' in page)
+    check("the receiver is left for the operator",
+          'id="receiver" name="receiver" value=""' in page)
+
+    # Every preset offered, so the common destinations are one keystroke away.
+    for preset in app_module.STICKER_RECEIVERS:
+        check(f"{preset} is offered", f'<option value="{preset}"></option>' in page)
+    check("as a datalist, so anything else can still be typed",
+          '<datalist id="receiver-options">' in page
+          and 'list="receiver-options"' in page)
+
+
+def test_box_stickers_can_be_opened_pre_filled(tmpdir):
+    """The whole reason the values are in the query string."""
+    flask_app, client = logged_in_app(tmpdir, "stickerargs")
+    page = markup_only(client.get(
+        "/print-stickers?lr=71703457&receiver=CHENNAI+(SUMANGALI)"
+        "&qty=27&sender=BENGALURU").get_data(as_text=True))
+
+    check("the LR arrives", 'value="71703457"' in page)
+    check("the quantity arrives", 'id="qty"' in page and 'value="27"' in page)
+    check("the receiver arrives, brackets and all",
+          'value="CHENNAI (SUMANGALI)"' in page)
+
+    # A quantity from a URL is a number the browser will turn into that many
+    # elements, so it is the browser being protected here, not the server.
+    capped = markup_only(client.get("/print-stickers?qty=900000").get_data(as_text=True))
+    check("an absurd quantity is capped rather than obeyed",
+          f'value="{app_module.MAX_STICKERS}"' in capped)
+    check("and the cap is a number a person could actually ship",
+          50 <= app_module.MAX_STICKERS <= 2000)
+
+    for junk in ("qty=abc", "qty=-5", "qty=0", "qty=", "qty=3.7"):
+        page = markup_only(client.get(f"/print-stickers?{junk}").get_data(as_text=True))
+        check(f"{junk} does not produce a broken page",
+              '<datalist id="receiver-options">' in page)
+    check("a negative quantity does not become a negative field",
+          'value="-5"' not in markup_only(
+              client.get("/print-stickers?qty=-5").get_data(as_text=True)))
+
+    # Signed out, it is not a page anyone on the internet should find. There is
+    # nothing secret on it, but the app answers on a public link and an open
+    # page is a page that gets indexed and poked at.
+    anon = flask_app.test_client()
+    check("signing in is required", anon.get("/print-stickers").status_code == 302)
+
+
+def test_the_sticker_sheet_is_built_for_paper():
+    """The print rules are the feature. Everything else is a preview of them."""
+    css = (ROOT / "static" / "css" / "style.css").read_text()
+    template = (ROOT / "templates" / "stickers.html").read_text()
+
+    print_block = css[css.rindex("@media print"):]
+    check("the control panel is hidden on paper",
+          ".no-print { display: none !important; }" in print_block)
+    check("and so is the site's own navigation",
+          ".topbar" in print_block and "display: none !important" in print_block)
+
+    # A sticker cut in half by a page break is waste paper: it cannot be stuck
+    # to anything, and the box it belonged to goes out unlabelled.
+    check("a sticker never splits across a page",
+          "page-break-inside: avoid;" in print_block
+          and "break-inside: avoid;" in print_block)
+    check("both spellings, because older print engines only read the first",
+          print_block.index("page-break-inside") < print_block.index("break-inside: avoid"))
+
+    # Browsers print their own title, URL and timestamp into whatever margin
+    # the page leaves. Leaving none is what keeps them off the top sticker.
+    check("the page itself has no margin for browser chrome to sit in",
+          "@page { size: A4 portrait; margin: 0; }" in template)
+    check("so the white border is padding on each sheet instead",
+          ".sticker-page {" in print_block and "padding: 8mm;" in print_block)
+
+    # Padding on one long container is laid down once. Each printed page needs
+    # its own, or every sheet after the first starts hard against the paper.
+    check("each printed page is its own element",
+          'className = "sticker-page"' in template)
+    check("which ends the page after it",
+          "page-break-after: always;" in print_block)
+    check("except the last, which must not eject a blank sheet",
+          ".sticker-page:last-child" in print_block)
+
+    # Sizes carried over from the original document rather than invented: its
+    # text boxes are 29pt for the LR and sender and 25pt for the destination,
+    # bold and centred. That is what makes it readable across a warehouse.
+    check("the LR line is the document's 29pt", ".sticker-lr   { font-size: 29pt; }" in css)
+    check("the sender matches it", ".sticker-from { font-size: 29pt; }" in css)
+    check("the destination is the document's 25pt",
+          ".sticker-to   { font-size: 25pt; }" in css)
+    check("everything is bold and centred, as in the document",
+          "font-weight: 700;" in css[css.index(".sticker div"):]
+          and "text-align: center;" in css[css.index(".sticker div"):])
+
+    # Six to a sheet, two across and three down. This is the shape of the
+    # physical yellow sheet, not a number picked to use the paper well: a
+    # seventh sticker on the page would land on no label at all.
+    check("two columns", "grid-template-columns: repeat(2, 95mm);" in css)
+    check("and three rows", "grid-template-rows: repeat(3, 88mm);" in css)
+    check("six to a page, and the script agrees with the grid",
+          "const PER_PAGE = 6;" in template)
+
+
+def test_every_sticker_in_a_batch_is_the_same(tmpdir):
+    """No box numbers. Twenty-seven boxes get twenty-seven identical labels.
+
+    They carried (1), (2), (3) at first, which reads sensibly and is wrong for
+    this sheet: the courier's own label has one blank for the AWB number and
+    nowhere to put "which box of how many". The count in brackets already says
+    the consignment is twenty-seven boxes, which is what the far end checks.
+    """
+    template = (ROOT / "templates" / "stickers.html").read_text()
+    builder = template[template.index("function build()"):]
+
+    check("no per-box counter is rendered", "sticker-seq" not in template)
+    check("and none is built", "(${n})" not in builder)
+
+    # Three lines, in the order the courier's sheet prints its own labels.
+    for cls in ("sticker-lr", "sticker-from", "sticker-to"):
+        check(f"{cls} is one of them", cls in builder)
+    check("and there are only three",
+          builder.count("card.appendChild(") == 3)
+
+    # The values only. The yellow sheet already says AWB No, ORIGIN and
+    # DESTINATION; printing those words again would double them on the label.
+    #
+    # Comments stripped first: the code explains which blanks these three lines
+    # drop into, and naming them there is not the same as printing them.
+    code = "\n".join(line.split("//")[0] for line in builder.splitlines())
+    for printed in ("AWB No", "ORIGIN:", "DESTINATION:"):
+        check(f"the sheet's own {printed!r} is not printed over",
+              printed not in code)
+
+    # The count in brackets is the total, and it must be the SAME total on
+    # every card — the number of boxes, not a running position.
+    check("the bracketed number is the batch total",
+          "${lr} (${quantity})" in builder)
+
+
+def test_sticker_values_cannot_carry_markup(tmpdir):
+    """Every field is free text that goes straight onto the page."""
+    flask_app, client = logged_in_app(tmpdir, "stickerxss")
+    nasty = "<script>alert(1)</script>"
+    page = client.get(f"/print-stickers?lr={nasty}&receiver={nasty}"
+                      f"&sender={nasty}").get_data(as_text=True)
+    check("a script tag is escaped, not rendered", nasty not in page)
+    check("and arrives as text", "&lt;script&gt;" in page)
+
+    # The cards are built in the browser from those same values, so the script
+    # that builds them must not use innerHTML either.
+    template = (ROOT / "templates" / "stickers.html").read_text()
+    builder = template[template.index("function build()"):]
+    check("the card builder sets text, never markup",
+          "innerHTML" not in builder)
+
+
 def test_the_office_instructions_do_not_name_a_dead_host(tmpdir):
     """The document handed to staff points at an address that still exists.
 
@@ -6830,6 +7027,12 @@ def main():
         test_charge_and_service_lines_never_reach_a_gate_pass()
         test_dropping_charges_renumbers_and_reports()
         test_an_invoice_of_nothing_but_charges_says_so(tmpdir)
+        test_box_stickers_need_no_database(tmpdir)
+        test_box_stickers_start_empty_except_the_sender(tmpdir)
+        test_box_stickers_can_be_opened_pre_filled(tmpdir)
+        test_the_sticker_sheet_is_built_for_paper()
+        test_every_sticker_in_a_batch_is_the_same(tmpdir)
+        test_sticker_values_cannot_carry_markup(tmpdir)
         test_the_office_instructions_do_not_name_a_dead_host(tmpdir)
         test_the_windows_name_repair_cannot_depend_on_the_name()
         test_nginx_hands_out_the_repair_scripts_but_not_the_rest_of_deploy()
