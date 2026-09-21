@@ -6126,7 +6126,8 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     # turn pixels into millimetres: rows begin at 20.6, 36.3 and 52.0mm, and
     # the longest printed label ("DESTINATION:") ends at 38mm.
     check("the defaults are the measured ones",
-          "ALIGN_DEFAULTS = { left: 44, top: 26, gap: 16.4 };" in template)
+          "ALIGN_DEFAULTS = { left: 44, top: 26, gap: 16.4, paper: \"sheet\" };"
+          in template)
     check("and the stylesheet starts from the same numbers",
           "--sticker-left: 44mm;" in css and "--sticker-top: 26mm;" in css
           and "--sticker-gap: 16.4mm;" in css)
@@ -6189,6 +6190,61 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     flask_app, client = logged_in_app(tmpdir, "stickeralign")
     source = inspect.getsource(flask_app.view_functions["print_stickers"])
     check("the server is not involved in alignment", "align" not in source.lower())
+
+
+def test_the_sticker_sheet_cannot_be_silently_rescaled():
+    """The failure that no offset can correct.
+
+    A print came back with the first label 9mm out, the second worse and the
+    third 35mm out — values sliding further down the sheet the further they
+    went. The page was right and so was the PDF: 164 x 247mm, values at 26.4,
+    43.1 and 59.2mm on every label. The printer had been asked to fit that
+    page onto A4 and enlarged everything by about 1.16 to do it.
+
+    A scale error looks like a drifting offset and is not one. Nudging Left
+    or Top only moves where the drift starts.
+    """
+    template = (ROOT / "templates" / "stickers.html").read_text()
+    css = (ROOT / "static" / "css" / "style.css").read_text()
+
+    # Said plainly, and set apart from the offsets, because someone reaching
+    # for the offsets to fix this will never succeed.
+    check("the page warns about scaling at all", "sticker-warning" in template)
+    check("and says what to set", "Scale to 100%" in template)
+    check("naming the settings that cause it",
+          all(phrase in template
+              for phrase in ("Fit to page", "Shrink to fit", "Scale to fit")))
+    check("the warning is styled as a warning, not another hint",
+          ".sticker-warning {" in css)
+    # The class, not the CSS selector: this is the markup being searched.
+    check("and is not printed", 'class="sticker-warning"' in
+          template[template.index('<div class="no-print">'):
+                   template.index('id="sticker-sheet"')])
+
+    # The real cure: the page size has to match the paper the printer is set
+    # to. When they agree there is nothing to fit, so nothing is scaled.
+    check("the paper can be chosen", 'id="align-paper"' in template)
+    check("the stationery is one option", 'value="sheet"' in template)
+    check("and ordinary A4 the other", 'value="a4"' in template)
+    check("both map to a real page size",
+          'sheet: "164mm 247mm"' in template and 'a4: "A4 portrait"' in template)
+
+    # @page cannot read a custom property, so the rule is rewritten instead.
+    check("the page rule follows the choice",
+          "@page { size: ${PAPER_SIZES[choice]}; margin: 0; }" in template)
+    check("written into the document, not at print time",
+          "document.head.appendChild(pageRule)" in template)
+    check("and the choice is remembered with the offsets",
+          "values.paper = paperSelect.value;" in template)
+    check("a paper it does not recognise falls back to the stationery",
+          'PAPER_SIZES[paperSelect.value] ? paperSelect.value : "sheet"' in template)
+
+    # On A4 the sheet is smaller than the page. It must sit at the top left at
+    # true size, because where the stationery really sits is what Left and Top
+    # are for — a centred sheet would add a margin they then have to subtract.
+    print_block = css[css.rindex("@media print"):]
+    check("the sheet is not centred on a larger page",
+          ".sticker-page { margin: 0 !important; }" in print_block)
 
 
 def test_every_sticker_in_a_batch_is_the_same(tmpdir):
@@ -7139,6 +7195,7 @@ def main():
         test_box_stickers_can_be_opened_pre_filled(tmpdir)
         test_the_sticker_sheet_is_built_for_paper()
         test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir)
+        test_the_sticker_sheet_cannot_be_silently_rescaled()
         test_every_sticker_in_a_batch_is_the_same(tmpdir)
         test_sticker_values_cannot_carry_markup(tmpdir)
         test_the_office_instructions_do_not_name_a_dead_host(tmpdir)

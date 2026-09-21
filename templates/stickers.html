@@ -5,7 +5,11 @@
 
 {% block head %}
   <style>
-    /* The page IS the sheet: 164 x 247mm of SM Express stationery, not A4
+    /* The starting value only — the Paper control rewrites this rule, and a
+       later <style> wins, so whatever is chosen there is what prints. This
+       stays as the sensible answer if the script never runs.
+
+       The page IS the sheet: 164 x 247mm of SM Express stationery, not A4
        with the stationery somewhere on it. Stated as lengths rather than
        `portrait` so that one millimetre in this stylesheet is one millimetre
        on the paper — which is the whole game when printing into blanks that
@@ -81,7 +85,33 @@
          and then left alone. Overlay printing always needs a nudge — no two
          printers agree on where the paper starts — and it cannot be worked
          out anywhere but in front of the printer. Remembered per browser. #}
+      {# The single most important thing on this page, and the reason a print
+         can come out wrong while the preview and the PDF are both right. A
+         browser asked to fit a 164mm page onto A4 enlarges everything by
+         about 1.16, which slides each label's values further down than the
+         last: the first is 9mm out, the third is 35mm out. No offset below
+         can correct a scale error. #}
+      <p class="sticker-warning">
+        <strong>In the print dialog, set Scale to 100%.</strong>
+        Anything called “Fit to page”, “Shrink to fit” or “Scale to fit”
+        stretches the sheet and nothing will line up — the further down the
+        page, the further out it goes.
+      </p>
+
+      {# Set once, when this printer is first lined up against a real sheet,
+         and then left alone. Overlay printing always needs a nudge — no two
+         printers agree on where the paper starts — and it cannot be worked
+         out anywhere but in front of the printer. Remembered per browser. #}
       <div class="sticker-align">
+        <div>
+          {# Has to match the paper size the printer is set to, or the browser
+             scales one to the other and the alignment goes with it. #}
+          <label for="align-paper">Paper</label>
+          <select id="align-paper">
+            <option value="sheet">SM sheet (164 × 247 mm)</option>
+            <option value="a4">A4 (210 × 297 mm)</option>
+          </select>
+        </div>
         <div>
           <label for="align-left">Left (mm)</label>
           <input type="number" id="align-left" value="44" step="0.5" min="0" max="140">
@@ -96,9 +126,9 @@
         </div>
         <button type="button" id="align-reset" class="quiet">Reset</button>
         <span class="hint">
-          Nudge these until the three values sit in the blank rows of the
-          yellow sheet. Print one page on plain paper and hold it against a
-          real sticker to check.
+          Pick the paper the printer is loaded with, then nudge the offsets
+          until the three values sit in the blank rows. Print one page on
+          plain paper and hold it against a real sticker to check.
         </span>
       </div>
     </form>
@@ -141,7 +171,37 @@
       // high and it looked like the new measurements were wrong. Bumping the
       // key retires those quietly. Bump it again if the geometry moves again.
       const ALIGN_STORE = "sticker_sheet_alignment_v2";
-      const ALIGN_DEFAULTS = { left: 44, top: 26, gap: 16.4 };
+      const ALIGN_DEFAULTS = { left: 44, top: 26, gap: 16.4, paper: "sheet" };
+
+      // @page cannot read a custom property, so the rule is rewritten instead.
+      // It must match the paper the PRINTER is set to, not the paper the
+      // stationery happens to be: a browser asked to put a 164mm page on A4
+      // scales it by about 1.16 to fit, and that scale is what put the third
+      // label's values 35mm out of their rows. When the two agree there is
+      // nothing to fit and nothing to scale.
+      //
+      // The sheet content stays 164 x 247mm either way. On A4 it sits at the
+      // top left with white around it, and the Left/Top offsets move it to
+      // wherever the stationery actually sits in the tray.
+      const PAPER_SIZES = {
+        sheet: "164mm 247mm",
+        a4: "A4 portrait",
+      };
+      const pageRule = document.createElement("style");
+      document.head.appendChild(pageRule);
+
+      function applyPaper(save) {
+        const choice = PAPER_SIZES[paperSelect.value] ? paperSelect.value : "sheet";
+        pageRule.textContent =
+          `@page { size: ${PAPER_SIZES[choice]}; margin: 0; }`;
+        if (save) {
+          const values = savedAlignment();
+          values.paper = choice;
+          try {
+            window.localStorage.setItem(ALIGN_STORE, JSON.stringify(values));
+          } catch (e) { /* private window; the sheet still prints */ }
+        }
+      }
 
       // --- remembered destinations --------------------------------------
       // In the browser, not the database. A destination is a habit of whoever
@@ -298,6 +358,7 @@
         top: document.getElementById("align-top"),
         gap: document.getElementById("align-gap"),
       };
+      const paperSelect = document.getElementById("align-paper");
 
       function savedAlignment() {
         try {
@@ -323,6 +384,8 @@
           pg.style.setProperty("--sticker-gap", values.gap + "mm");
         });
         if (save) {
+          // Carried through, or choosing an offset would forget the paper.
+          values.paper = paperSelect.value;
           try {
             window.localStorage.setItem(ALIGN_STORE, JSON.stringify(values));
           } catch (e) { /* private window; the sheet still prints */ }
@@ -335,6 +398,10 @@
         Object.keys(alignInputs).forEach(function (key) {
           alignInputs[key].value = saved[key];
         });
+        paperSelect.value = PAPER_SIZES[saved.paper] ? saved.paper : "sheet";
+        // Written now rather than at print time: the @page rule has to be in
+        // the document before the print dialog reads it.
+        applyPaper(false);
       })();
 
       Object.keys(alignInputs).forEach(function (key) {
@@ -343,10 +410,14 @@
         });
       });
 
+      paperSelect.addEventListener("change", function () { applyPaper(true); });
+
       document.getElementById("align-reset").addEventListener("click", function () {
         Object.keys(alignInputs).forEach(function (key) {
           alignInputs[key].value = ALIGN_DEFAULTS[key];
         });
+        paperSelect.value = ALIGN_DEFAULTS.paper;
+        applyPaper(true);
         applyAlignment(true);
       });
 
