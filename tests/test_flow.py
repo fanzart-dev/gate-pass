@@ -6050,8 +6050,12 @@ def test_the_sticker_sheet_is_built_for_paper():
 
     # Browsers print their own title, URL and timestamp into whatever margin
     # the page leaves. Leaving none is what keeps them off the top sticker.
-    check("the page itself has no margin for browser chrome to sit in",
-          "@page { size: A4 portrait; margin: 0; }" in template)
+    # The page IS the stationery, stated in millimetres, so one millimetre of
+    # stylesheet is one millimetre of paper. A named size would leave the
+    # scale to whatever the printer has loaded, which for an overlay is the
+    # difference between landing in a blank and landing on a printed rule.
+    check("the printed page is the sheet, not A4",
+          "@page { size: 164mm 247mm; margin: 0; }" in template)
 
     check("each printed page is its own element",
           'className = "sticker-page"' in template)
@@ -6060,20 +6064,24 @@ def test_the_sticker_sheet_is_built_for_paper():
     check("except the last, which must not eject a blank sheet",
           ".sticker-page:last-child" in print_block)
 
-    # One column of three 99mm slots filling a whole A4 sheet: the shape of
-    # the physical yellow sheet, which is three labels stacked down a page.
+    # The measured sheet: 164 x 247mm, three labels of 82mm.
     sticker_css = css[css.index("Box stickers  (/print-stickers)"):]
-    check("the page is a whole sheet of A4",
-          "width: 210mm;" in sticker_css and "height: 297mm;" in sticker_css)
+    check("the page is one sheet of stationery",
+          "width: 164mm;" in sticker_css and "height: 247mm;" in sticker_css)
     check("one column", "grid-template-columns: 1fr;" in sticker_css)
-    check("of three 99mm slots", "grid-template-rows: repeat(3, 99mm);" in sticker_css)
+    check("of three 82mm labels", "grid-template-rows: repeat(3, 82mm);" in sticker_css)
     check("three to a page, and the script agrees with the grid",
           "const PER_PAGE = 3;" in template)
+    check("the card is the label's own size",
+          "width: 164mm;" in sticker_css[sticker_css.index(".sticker-card {"):]
+          and "height: 82mm;" in sticker_css[sticker_css.index(".sticker-card {"):])
+    check("and measured from its border, not its content",
+          "box-sizing: border-box;" in sticker_css[sticker_css.index(".sticker-card {"):])
 
     # This is an overlay, so the text is small and left-aligned into blanks
     # that already exist on the paper. Large centred text looks better on a
     # white screen and lands across the courier's pre-printed rules.
-    values = sticker_css[sticker_css.index(".sticker div {"):]
+    values = sticker_css[sticker_css.index(".sticker-card div {"):]
     check("the values are left-aligned", "text-align: left;" in values)
     check("and not centred", "text-align: center;" not in values[:400])
     check("at a size that fits a form blank, not a poster",
@@ -6092,8 +6100,12 @@ def test_the_sticker_sheet_is_built_for_paper():
     check("no border is printed round a label",
           "border: 0;" in print_block)
     check("and the on-screen ghost labels are not printed",
-          ".sticker::before, .sticker::after, .sticker-to::before { content: none; }"
-          in print_block)
+          ".sticker-card::before, .sticker-card::after, .sticker-to::before"
+          in print_block and "content: none;" in print_block)
+    # The screen preview draws the label's own rules so the calibration can be
+    # judged without printing. On paper the stationery already has them.
+    check("nor the preview's copy of the label's rules",
+          "background: none;" in print_block)
 
 
 def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
@@ -6111,12 +6123,22 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
         check(f"{control} can be nudged", f'id="{control}"' in template)
     check("and put back", 'id="align-reset"' in template)
 
-    # Defaults lifted from the document: 36mm in, 15mm down, 16.7mm apart.
-    check("the defaults come from the document",
-          "ALIGN_DEFAULTS = { left: 36, top: 15, gap: 16.7 };" in template)
+    # Measured off a scan of the real sheet, using its known 164mm width to
+    # turn pixels into millimetres: rows begin at 20.6, 36.3 and 52.0mm, and
+    # the longest printed label ("DESTINATION:") ends at 38mm.
+    check("the defaults are the measured ones",
+          "ALIGN_DEFAULTS = { left: 44, top: 26, gap: 16.4 };" in template)
     check("and the stylesheet starts from the same numbers",
-          "--sticker-left: 36mm;" in css and "--sticker-top: 15mm;" in css
-          and "--sticker-gap: 16.7mm;" in css)
+          "--sticker-left: 44mm;" in css and "--sticker-top: 26mm;" in css
+          and "--sticker-gap: 16.4mm;" in css)
+    check("the form boxes start there too",
+          'id="align-left" value="44"' in template
+          and 'id="align-top" value="26"' in template
+          and 'id="align-gap" value="16.4"' in template)
+    # 44mm clears "DESTINATION:" by 6mm. Any less and the destination line
+    # would print on top of the courier's own label.
+    check("the left offset clears the longest printed label",
+          "--sticker-left: 44mm;" in css)
 
     # Remembered per browser, like the destinations: the offset is a property
     # of the machine in front of the person, not of the company.
