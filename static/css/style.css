@@ -2063,7 +2063,32 @@ table.people-table th { padding: 10px 12px !important; }
   border-top: 1px solid var(--line);
 }
 
+/* The one thing on this page that must be read. A scale error cannot be
+   corrected by any of the offsets below it, so it is set apart from them
+   rather than being another line of hint text. */
+.sticker-warning {
+  margin: 18px 0 0;
+  padding: 11px 14px;
+  border: 1px solid #f0c987;
+  border-left: 3px solid #d98c1f;
+  border-radius: var(--radius-sm);
+  background: #fdf7ec;
+  color: #7a4d06;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sticker-warning {
+    border-color: #6b4f1d;
+    border-left-color: #d98c1f;
+    background: #251d0d;
+    color: #f0d9a8;
+  }
+}
+
 .sticker-align label { display: block; }
+.sticker-align select { min-width: 190px; }
 .sticker-align input[type="number"] { width: 92px; }
 .sticker-align .hint { flex: 1 1 220px; }
 
@@ -2183,6 +2208,12 @@ table.people-table th { padding: 10px 12px !important; }
   }
 
   .sticker-sheet { margin: 0; padding: 0; border: 0; background: #fff; }
+
+  /* Top left, not centred. On A4 the sheet is smaller than the page, and
+     where the stationery actually sits in the tray is what the Left and Top
+     offsets are for — centring would add a margin they would then have to
+     subtract. On the sheet size itself there is nothing to centre. */
+  .sticker-page { margin: 0 !important; }
 
   /* No border, no shadow, no row rules, no ghost labels. The sheet in the
      printer already has every one of those on it; anything drawn here lands
