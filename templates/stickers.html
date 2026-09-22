@@ -1,527 +1,694 @@
-{% extends "base.html" %}
-{% block title %}Box Stickers{% endblock %}
-{# The sheet is wider than the reading width the form pages use. #}
-{% block container_class %}container-wide{% endblock %}
+{#
+  sm_express_label_printer.html, as supplied and working, serving at
+  /print-stickers.
 
-{% block head %}
-  <style>
-    /* The starting value only — the Paper control rewrites this rule, and a
-       later <style> wins, so whatever is chosen there is what prints. This
-       stays as the sensible answer if the script never runs.
+  Left alone on purpose. Earlier versions of this page were written here from
+  measurements of the sheet and a Word file, and printed wrong in a way that
+  took several rounds to see: lines placed at an offset plus a multiple of a
+  gap accumulate the error in both, so the first label looked right while the
+  third was half a row out. This file lays a label out as a column of
+  fixed-height blocks instead, which cannot drift, and prints from a document
+  of its own rather than from the app page.
 
-       The page IS the sheet: 164 x 247mm of SM Express stationery, not A4
-       with the stationery somewhere on it. Stated as lengths rather than
-       `portrait` so that one millimetre in this stylesheet is one millimetre
-       on the paper — which is the whole game when printing into blanks that
-       are already there. (`size: 164mm 247mm portrait` is not valid CSS:
-       explicit lengths and an orientation keyword cannot be combined, and
-       portrait is implied by the width being the smaller of the two.)
+  If it needs changing, change it the way it is built — do not reintroduce
+  absolute offsets.
 
-       margin: 0 for the same reason as the gate pass itself — the browser
-       prints its own header and footer (document title, URL, page number,
-       timestamp) into whatever margin the page leaves, so a margin here would
-       stamp four lines of chrome across the top label of every sheet. With
-       none, there is nowhere for them to go. */
-    @page { size: 163mm 248mm; margin: 0; }
-  </style>
-{% endblock %}
+  The only edit is the link back to the app, below.
+#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SM Express — Label Printer</title>
+<style>
+  :root{
+    --navy:#2f3358;
+    --navy-dark:#22253f;
+    --paper:#eef1f2;
+    --ink:#1c1e2e;
+    --accent:#c9421e;
+    --line:#d7dbe0;
+    box-sizing:border-box;
+  }
+  *{box-sizing:inherit;}
+  html,body{
+    margin:0;
+    height:100%;
+    background:#f6f7f8;
+    color:var(--ink);
+    font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Arial,sans-serif;
+    padding-top:env(safe-area-inset-top,0px);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+  }
 
-{% block content %}
-  {# Everything above the sheet. .no-print is doing real work here: this is a
-     screen for setting up a print, so most of the page must not be in it. #}
-  <div class="no-print">
-    <div class="page-head">
-      <h1>Box Stickers</h1>
+  /* ---------- Screen chrome ---------- */
+  .app{
+    max-width:1000px;
+    margin:0 auto;
+    padding:28px 20px 60px;
+  }
+  header.top{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    gap:16px;
+    margin-bottom:22px;
+    flex-wrap:wrap;
+  }
+  header.top h1{
+    font-size:1.5rem;
+    margin:0;
+    letter-spacing:-0.01em;
+  }
+  header.top p{
+    margin:4px 0 0;
+    color:#5b5f6b;
+    font-size:0.92rem;
+  }
+
+  .panel{
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:20px 22px;
+    margin-bottom:22px;
+  }
+  .panel h2{
+    font-size:1rem;
+    margin:0 0 14px;
+    color:var(--navy);
+  }
+
+  .entry-form{
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr 90px auto;
+    gap:12px;
+    align-items:end;
+  }
+  @media (max-width:720px){
+    .entry-form{grid-template-columns:1fr;}
+  }
+  .field label{
+    display:block;
+    font-size:0.78rem;
+    color:#5b5f6b;
+    margin-bottom:5px;
+    font-weight:600;
+  }
+  .field input{
+    width:100%;
+    padding:9px 11px;
+    border:1px solid #c7cbd1;
+    border-radius:6px;
+    font-size:0.95rem;
+    font-family:inherit;
+  }
+  .field input:focus{
+    outline:2px solid var(--navy);
+    outline-offset:1px;
+    border-color:var(--navy);
+  }
+  button{
+    font-family:inherit;
+    cursor:pointer;
+    border:none;
+    border-radius:6px;
+    font-weight:600;
+    font-size:0.92rem;
+  }
+  .btn-add{
+    background:var(--navy);
+    color:#fff;
+    padding:10px 18px;
+    white-space:nowrap;
+  }
+  .btn-add:hover{background:var(--navy-dark);}
+
+  .list-row{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:10px 0;
+    border-bottom:1px solid var(--line);
+  }
+  .list-row:last-child{border-bottom:none;}
+  .list-row .num{
+    color:#9aa;
+    font-size:0.82rem;
+    width:22px;
+    flex-shrink:0;
+  }
+  .list-row .cols{
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr 50px;
+    gap:10px;
+    flex:1;
+    min-width:0;
+  }
+  .list-row .cols div{
+    font-size:0.9rem;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .list-row .cols .lbl{
+    font-size:0.68rem;
+    color:#8b8f99;
+    display:block;
+    text-transform:uppercase;
+    letter-spacing:0.03em;
+  }
+  .list-row .remove{
+    background:none;
+    color:#b23b3b;
+    font-size:0.85rem;
+    padding:6px 8px;
+    flex-shrink:0;
+  }
+  .list-row .remove:hover{text-decoration:underline;}
+  .empty-note{
+    color:#9599a3;
+    font-size:0.9rem;
+    padding:8px 0;
+  }
+
+  .actions{
+    display:flex;
+    gap:10px;
+    align-items:center;
+    margin-top:16px;
+    flex-wrap:wrap;
+  }
+  .btn-print{
+    background:var(--accent);
+    color:#fff;
+    padding:11px 22px;
+    font-size:0.95rem;
+  }
+  .btn-print:hover{background:#a8371a;}
+  .btn-print:disabled{background:#c9c9c9;cursor:not-allowed;}
+  .btn-clear{
+    background:none;
+    color:#6b6f79;
+    padding:11px 14px;
+    border:1px solid var(--line);
+  }
+  .btn-clear:hover{border-color:#b23b3b;color:#b23b3b;}
+  .count-note{
+    color:#5b5f6b;
+    font-size:0.85rem;
+    margin-left:auto;
+  }
+
+  /* ---------- Label design (shared screen + print) ---------- */
+  .sheet{
+    background:#f0f1f3;
+    border-radius:10px;
+    padding:18px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:0;
+  }
+  .page{
+    background:#fff;
+    width:100%;
+    max-width:800px;
+    padding:14px;
+    margin-bottom:24px;
+    box-shadow:0 1px 4px rgba(0,0,0,0.12);
+  }
+  .label{
+    border:3px solid var(--navy);
+    margin-bottom:14px;
+    overflow:hidden;
+    background:#fff;
+  }
+  .label:last-child{margin-bottom:0;}
+
+  .label-head{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    padding:8px 16px;
+    border-bottom:3px solid var(--navy);
+  }
+  .badge{
+    width:56px;
+    height:56px;
+    border-radius:50%;
+    border:2.5px solid var(--navy);
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    flex-shrink:0;
+    font-weight:800;
+    color:var(--navy);
+    line-height:1;
+  }
+  .badge .n{font-size:1.15rem;}
+  .badge .y{font-size:0.5rem;letter-spacing:0.05em;}
+  .badge .est{font-size:0.4rem;color:#6b6f79;font-weight:600;margin-top:1px;}
+
+  .title-block{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    flex:1;
+    justify-content:center;
+  }
+  .truck{color:var(--navy);flex-shrink:0;}
+  .title-block .surface{
+    font-size:1.55rem;
+    font-weight:800;
+    letter-spacing:0.02em;
+    color:var(--ink);
+  }
+
+  .brand{
+    text-align:right;
+    flex-shrink:0;
+  }
+  .brand .sm{
+    font-size:1.05rem;
+    font-weight:800;
+    color:var(--navy);
+    letter-spacing:0.02em;
+    line-height:1.05;
+  }
+  .brand .express{
+    font-size:0.72rem;
+    font-weight:700;
+    color:var(--navy);
+    letter-spacing:0.08em;
+  }
+  .brand .tag{
+    font-size:0.52rem;
+    color:#6b6f79;
+    margin-top:1px;
+  }
+
+  .row{
+    display:flex;
+    align-items:baseline;
+    gap:8px;
+    padding:9px 16px;
+    border-bottom:2px solid var(--navy);
+    min-height:20px;
+  }
+  .row:last-of-type{border-bottom:none;}
+  .row .k{
+    font-weight:800;
+    font-size:0.85rem;
+    color:var(--ink);
+    flex-shrink:0;
+  }
+  .row .v{
+    font-size:0.85rem;
+    color:var(--ink);
+    word-break:break-word;
+  }
+  .row .v.empty{color:#c3c6cc;}
+
+  .label-foot{
+    background:var(--navy);
+    color:#fff;
+    text-align:center;
+    padding:7px 10px 8px;
+    font-size:0.64rem;
+    line-height:1.5;
+  }
+  .label-foot b{font-weight:700;}
+
+  .no-preview{
+    color:#9599a3;
+    text-align:center;
+    padding:40px 0;
+    font-size:0.92rem;
+  }
+
+  /* ---------- Print ---------- */
+  @media print{
+    body *{visibility:hidden;}
+    .print-area, .print-area *{visibility:visible;}
+    .print-area{
+      position:absolute;
+      top:0; left:0;
+      width:100%;
+      margin:0;
+      padding:0;
+    }
+    .sheet{background:#fff;padding:0;border-radius:0;gap:0;}
+    .page{
+      box-shadow:none;
+      max-width:100%;
+      width:100%;
+      padding:6mm;
+      margin:0;
+      page-break-after:always;
+    }
+    .page:last-child{page-break-after:auto;}
+    @page{size:A4 portrait;margin:8mm;}
+  }
+</style>
+</head>
+<body>
+<div style="max-width:1000px;margin:0 auto;padding:14px 20px 0;">
+  <a href="{{ url_for('upload') }}"
+     style="font:600 0.85rem 'Segoe UI',Arial,sans-serif;color:#5b5f6b;
+            text-decoration:none;">&larr; Gate Pass</a>
+</div>
+
+<div class="app">
+
+  <header class="top">
+    <div>
+      <h1>SM Express — Surface Label Printer</h1>
+      <p>Add as many AWB entries as you need — the sheet prints 3 labels per page automatically.</p>
     </div>
+  </header>
 
-    <p class="hint" style="margin-bottom:14px">
-      One sticker per box, all identical. Prints onto SM Express stationery —
-      only the three values go on the page, into the blanks beside the
-      courier's own AWB No, ORIGIN and DESTINATION. Three labels to a
-      163 &times; 248mm sheet. Nothing is saved, and no gate pass number is used.
-    </p>
-
-    <form class="card sticker-form" id="sticker-form" autocomplete="off">
-      <div class="sticker-fields">
-        <div>
-          <label for="lr">LR Number</label>
-          {# inputmode numeric rather than type=number: an LR can carry a
-             leading zero, and a number input would drop it. #}
-          <input type="text" id="lr" name="lr" value="{{ lr }}"
-                 inputmode="numeric" placeholder="71703457">
-        </div>
-        <div>
-          <label for="sender">Sender</label>
-          <input type="text" id="sender" name="sender" value="{{ sender }}">
-        </div>
-        <div>
-          <label for="receiver">Receiver</label>
-          {# An input with a datalist, not a select: the list is a starting
-             point, and a destination nobody has sent to before must be
-             typeable without anybody editing a list first. #}
-          <input type="text" id="receiver" name="receiver" value="{{ receiver }}"
-                 list="receiver-options" placeholder="CHENNAI (SUMANGALI)">
-          <datalist id="receiver-options">
-            {% for option in receiver_presets %}
-              <option value="{{ option }}"></option>
-            {% endfor %}
-          </datalist>
-        </div>
-        <div>
-          <label for="qty">Number of boxes</label>
-          <input type="number" id="qty" name="qty" min="1" max="{{ max_stickers }}"
-                 value="{{ quantity if quantity is not none else '' }}"
-                 placeholder="27">
-        </div>
+  <section class="panel">
+    <h2>Add a label</h2>
+    <div class="entry-form">
+      <div class="field">
+        <label for="awb">AWB No.</label>
+        <input type="text" id="awb" placeholder="e.g. 8801234567" autocomplete="off">
       </div>
-
-      <div class="sticker-actions">
-        <button type="submit" class="primary" id="generate">Generate Stickers</button>
-        <button type="button" id="print-stickers" disabled>Print</button>
-        <span class="hint" id="sticker-count"></span>
+      <div class="field">
+        <label for="origin">Origin</label>
+        <input type="text" id="origin" placeholder="e.g. Mumbai" autocomplete="off" value="BENGALURU">
       </div>
-
-      {# The single most important thing on this page, and the reason a print
-         can come out wrong while the preview and the PDF are both right. A
-         browser asked to fit a 164mm page onto A4 enlarges everything by
-         about 1.16, which slides each label's values further down than the
-         last: the first is 9mm out, the third is 35mm out. No offset below
-         can correct a scale error. #}
-      <p class="sticker-warning">
-        <strong>In the print dialog, set Scale to 100%.</strong>
-        Anything called “Fit to page”, “Shrink to fit” or “Scale to fit”
-        stretches the sheet and nothing will line up — the further down the
-        page, the further out it goes.
-      </p>
-
-      {# Set once, when this printer is first lined up against a real sheet,
-         and then left alone. Overlay printing always needs a nudge — no two
-         printers agree on where the paper starts — and it cannot be worked
-         out anywhere but in front of the printer. Remembered per browser. #}
-      <div class="sticker-align">
-        <div>
-          {# Has to match the paper size the printer is set to, or the browser
-             scales one to the other and the alignment goes with it. #}
-          <label for="align-paper">Paper</label>
-          <select id="align-paper">
-            <option value="sheet">SM sheet (163 × 248 mm)</option>
-            <option value="a4">A4 (210 × 297 mm)</option>
-          </select>
-        </div>
-        <div>
-          <label for="align-left">Left (mm)</label>
-          <input type="number" id="align-left" value="36" step="0.5" min="0" max="140">
-        </div>
-        <div>
-          <label for="align-top">First line down (mm)</label>
-          <input type="number" id="align-top" value="19.4" step="0.1" min="0" max="80">
-        </div>
-        <div>
-          <label for="align-gap">Line spacing (mm)</label>
-          <input type="number" id="align-gap" value="16.66" step="0.01" min="4" max="40">
-        </div>
-        <div>
-          {# The knob for "the first one is fine and the rest are creeping
-             down the page". Nothing inside a label changes; only the step
-             from one label to the next. #}
-          <label for="align-pitch">Label pitch (mm)</label>
-          <input type="number" id="align-pitch" value="82.7" step="0.1" min="40" max="120">
-        </div>
-        <div>
-          {# The answer to a printer that scales anyway. Print the test page,
-             put a ruler on the printed line, type what it really measured —
-             100 means the printer left the page alone. #}
-          <label for="align-scale">100 mm line printed as</label>
-          <input type="number" id="align-scale" value="100" step="0.5" min="50" max="200">
-        </div>
-        <button type="button" id="align-test" class="quiet">Print test page</button>
-        <button type="button" id="align-reset" class="quiet">Reset</button>
-        <span class="hint">
-          Pick the paper the printer is loaded with, then
-          <strong>Print test page</strong> on plain paper and hold it against a
-          sticker. <em>Left</em>, <em>First line down</em> and <em>Line
-          spacing</em> line the first label up. If the first is right but the
-          second and third creep further down the page, shorten
-          <em>Label pitch</em> — about 1mm for every 1mm the second label is
-          out. <em>100 mm line printed as</em> cures the same thing at the
-          root, if the printed line does not measure 100mm.
-        </span>
+      <div class="field">
+        <label for="destination">Destination</label>
+        <input type="text" id="destination" placeholder="e.g. Bangalore" autocomplete="off">
       </div>
-    </form>
-  </div>
+      <div class="field">
+        <label for="qty">Qty</label>
+        <input type="number" id="qty" min="1" step="1" value="1">
+      </div>
+      <button class="btn-add" id="addBtn">Add label</button>
+    </div>
+  </section>
 
-  {# Filled by the script below. Left empty on load on purpose: an empty sheet
-     is honestly empty, where a sheet of blank cards looks like a bug. #}
-  <div id="sticker-sheet" class="sticker-sheet" hidden></div>
+  <section class="panel">
+    <h2>Print alignment (for your pre-printed stickers)</h2>
+    <p style="margin:0 0 14px;color:#5b5f6b;font-size:0.88rem;">Only the AWB / Origin / Destination text is printed — no borders, logo or footer, so it lands in the blank space on your existing sticker sheet. Each value sits in a 1.6cm (h) × 9.5cm (w) box starting 60mm from the left, and the font size automatically responds to the number of letters — shrinking for longer text so it always fits inside that box. Print one test sheet first, then nudge these if needed.</p>
+    <div class="entry-form" style="grid-template-columns:1fr 1fr;">
+      <div class="field">
+        <label for="indentMm">Text left indent (mm)</label>
+        <input type="number" id="indentMm" value="60" step="1">
+      </div>
+      <div class="field">
+        <label for="nudgeMm">Vertical nudge (mm, +down / -up)</label>
+        <input type="number" id="nudgeMm" value="0" step="1">
+      </div>
+    </div>
+  </section>
 
-  <div class="no-print empty" id="sticker-empty">
-    <div class="empty-icon">🏷️</div>
-    <div class="empty-title">No stickers yet</div>
-    <div class="empty-sub">Fill in the LR number and how many boxes, then press Generate.</div>
-  </div>
+  <section class="panel">
+    <h2>Labels to print</h2>
+    <div id="listWrap">
+      <p class="empty-note">No labels added yet.</p>
+    </div>
+    <div class="actions">
+      <button class="btn-print" id="openBtn">Print labels</button>
+      <button class="btn-clear" id="clearBtn">Clear all</button>
+      <span class="count-note" id="countNote"></span>
+    </div>
+  </section>
 
-  <script>
-    (function () {
-      "use strict";
+  <section class="panel">
+    <h2>Preview (visual reference — actual print is text-only, see below)</h2>
+    <div class="sheet" id="preview">
+      <p class="no-preview">Add a label above to see the print preview here.</p>
+    </div>
+  </section>
 
-      const form     = document.getElementById("sticker-form");
-      const sheet    = document.getElementById("sticker-sheet");
-      const empty    = document.getElementById("sticker-empty");
-      const printBtn = document.getElementById("print-stickers");
-      const countHint= document.getElementById("sticker-count");
-      const options  = document.getElementById("receiver-options");
-      const receiver = document.getElementById("receiver");
-      const qtyInput = document.getElementById("qty");
+</div>
 
-      const MAX = {{ max_stickers }};
-      const STORE = "custom_sticker_receivers";
+<script>
+  let entries = [];
 
-      // Three to a sheet: the stationery is three 82mm labels on a 164 x
-      // 247mm page. It has to agree with the CSS, and the tests prove the
-      // count by printing a real PDF, so this cannot drift unnoticed.
-      const PER_PAGE = 3;
-      // Versioned, and the version matters. An offset saved against the old
-      // A4 layout means nothing on a 164 x 247mm sheet — the page it was
-      // measured against no longer exists — but a saved value beats a default,
-      // so browsers that had tried the page were pinning every line a row too
-      // high and it looked like the new measurements were wrong. Bumping the
-      // key retires those quietly.
-      //
-      // Bump it when the GEOMETRY moves, and only then. Adding a setting is
-      // not a reason: a saved object without it simply takes the default,
-      // because the defaults are merged underneath whatever was stored. This
-      // was bumped once for adding the pitch and put back — somebody had a
-      // printer lined up by hand, and that would have thrown their numbers
-      // away to no purpose.
-      const ALIGN_STORE = "sticker_sheet_alignment_v5";
-      const ALIGN_DEFAULTS = { left: 36, top: 19.4, gap: 16.66, pitch: 82.7,
-                               paper: "sheet", scale: 100 };
+  const listWrap = document.getElementById('listWrap');
+  const preview = document.getElementById('preview');
+  const countNote = document.getElementById('countNote');
 
-      // @page cannot read a custom property, so the rule is rewritten instead.
-      // It must match the paper the PRINTER is set to, not the paper the
-      // stationery happens to be: a browser asked to put a 164mm page on A4
-      // scales it by about 1.16 to fit, and that scale is what put the third
-      // label's values 35mm out of their rows. When the two agree there is
-      // nothing to fit and nothing to scale.
-      //
-      // The sheet content stays 164 x 247mm either way. On A4 it sits at the
-      // top left with white around it, and the Left/Top offsets move it to
-      // wherever the stationery actually sits in the tray.
-      const PAPER_SIZES = {
-        sheet: "163mm 248mm",
-        a4: "A4 portrait",
-      };
-      const pageRule = document.createElement("style");
-      document.head.appendChild(pageRule);
+  const awbInput = document.getElementById('awb');
+  const originInput = document.getElementById('origin');
+  const destInput = document.getElementById('destination');
+  const qtyInput = document.getElementById('qty');
 
-      function applyPaper(save) {
-        const choice = PAPER_SIZES[paperSelect.value] ? paperSelect.value : "sheet";
-        pageRule.textContent =
-          `@page { size: ${PAPER_SIZES[choice]}; margin: 0; }`;
-        if (save) {
-          const values = savedAlignment();
-          values.paper = choice;
-          try {
-            window.localStorage.setItem(ALIGN_STORE, JSON.stringify(values));
-          } catch (e) { /* private window; the sheet still prints */ }
-        }
-      }
+  function escapeHtml(str){
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+  }
 
-      // --- remembered destinations --------------------------------------
-      // In the browser, not the database. A destination is a habit of whoever
-      // does the dispatching, not a fact about the company: it needs no
-      // migration, no admin screen and no deploy to add one, and it cannot
-      // break anything if it is wrong. The cost is that it does not follow
-      // anyone to another machine, which for a list of six place names is a
-      // fair trade.
-      //
-      // Every read and write is wrapped: storage throws outright in a private
-      // window and in browsers set to block site data, and a sticker page
-      // that will not load because it could not remember CHENNAI would be a
-      // ridiculous way to fail.
-      function savedReceivers() {
-        try {
-          const raw = window.localStorage.getItem(STORE);
-          const list = raw ? JSON.parse(raw) : [];
-          return Array.isArray(list) ? list.filter((s) => typeof s === "string") : [];
-        } catch (e) {
-          return [];
-        }
-      }
+  function addEntry(){
+    const awb = awbInput.value.trim();
+    const origin = originInput.value.trim();
+    const destination = destInput.value.trim();
+    let qty = parseInt(qtyInput.value, 10);
+    if(!qty || qty < 1) qty = 1;
+    if(!awb && !origin && !destination){
+      awbInput.focus();
+      return;
+    }
+    entries.push({awb, origin, destination, qty});
+    awbInput.value = '';
+    originInput.value = 'BENGALURU';
+    destInput.value = '';
+    qtyInput.value = '1';
+    awbInput.focus();
+    render();
+  }
 
-      function knownReceivers() {
-        return [...options.options].map((o) => o.value);
-      }
+  function removeEntry(i){
+    entries.splice(i,1);
+    render();
+  }
 
-      function remember(name) {
-        const clean = name.trim();
-        if (!clean) return;
-        // Case-insensitively: "Chennai (Sumangali)" and "CHENNAI (SUMANGALI)"
-        // are the same destination, and a list that accumulates both spellings
-        // stops being a shortcut.
-        const already = knownReceivers()
-          .some((v) => v.toLowerCase() === clean.toLowerCase());
-        if (already) return;
+  function clearAll(){
+    if(entries.length && !confirm('Remove all ' + entries.length + ' label(s)?')) return;
+    entries = [];
+    render();
+  }
 
-        const saved = savedReceivers();
-        saved.push(clean);
-        try {
-          window.localStorage.setItem(STORE, JSON.stringify(saved));
-        } catch (e) {
-          /* Out of quota, or storage blocked. The sticker still prints. */
-        }
-        addOption(clean);
-      }
+  function labelHtml(e){
+    const awb = e.awb ? escapeHtml(e.awb) : '';
+    const origin = e.origin ? escapeHtml(e.origin) : '';
+    const destination = e.destination ? escapeHtml(e.destination) : '';
+    return `
+      <div class="label">
+        <div class="label-head">
+          <div class="badge"><span class="n">29</span><span class="y">YEARS</span><span class="est">Estb. 17th July 1996</span></div>
+          <div class="title-block">
+            <svg class="truck" width="34" height="24" viewBox="0 0 34 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M1 3h16v14H1z" fill="currentColor"/>
+              <path d="M17 8h6l6 5v4h-12z" fill="currentColor"/>
+              <circle cx="8" cy="20" r="3" fill="#fff" stroke="currentColor" stroke-width="2"/>
+              <circle cx="24" cy="20" r="3" fill="#fff" stroke="currentColor" stroke-width="2"/>
+              <path d="M1 3l4-2h4l2 2" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            </svg>
+            <span class="surface">SURFACE</span>
+          </div>
+          <div class="brand">
+            <div class="sm">SM</div>
+            <div class="express">EXPRESS</div>
+            <div class="tag">You Promise We Deliver</div>
+          </div>
+        </div>
+        <div class="row"><span class="k">AWB No:</span><span class="v ${awb?'':'empty'}">${awb || '—'}</span></div>
+        <div class="row"><span class="k">ORIGIN:</span><span class="v ${origin?'':'empty'}">${origin || '—'}</span></div>
+        <div class="row"><span class="k">DESTINATION:</span><span class="v ${destination?'':'empty'}">${destination || '—'}</span></div>
+        <div class="label-foot">
+          <div>Tel.: +91 (022) 6842 0900 / 01 / 02 / 11 / 12</div>
+          <div>Email: support@smexpresslogistics.com &nbsp;•&nbsp; Web: www.smexpresslogistics.com</div>
+        </div>
+      </div>`;
+  }
 
-      function addOption(value) {
-        const option = document.createElement("option");
-        option.value = value;
-        options.appendChild(option);
-      }
+  function expandByQty(list){
+    const out = [];
+    list.forEach(e => {
+      const n = e.qty && e.qty > 0 ? e.qty : 1;
+      for(let i=0;i<n;i++) out.push(e);
+    });
+    return out;
+  }
 
-      savedReceivers().forEach(function (name) {
-        const already = knownReceivers()
-          .some((v) => v.toLowerCase() === name.toLowerCase());
-        if (!already) addOption(name);
-      });
+  function buildPagesHtml(list){
+    let html = '';
+    for(let i=0; i<list.length; i+=3){
+      const chunk = list.slice(i, i+3);
+      html += `<div class="page">${chunk.map(labelHtml).join('')}</div>`;
+    }
+    return html;
+  }
 
-      // --- building the sheet -------------------------------------------
-      function textLine(className, text) {
-        const line = document.createElement("div");
-        line.className = className;
-        line.textContent = text;   // never innerHTML: these are typed values
-        return line;
-      }
+  function render(){
+    // list panel
+    if(entries.length === 0){
+      listWrap.innerHTML = '<p class="empty-note">No labels added yet.</p>';
+    } else {
+      listWrap.innerHTML = entries.map((e,i) => `
+        <div class="list-row">
+          <span class="num">${i+1}.</span>
+          <div class="cols">
+            <div><span class="lbl">AWB</span>${escapeHtml(e.awb) || '—'}</div>
+            <div><span class="lbl">Origin</span>${escapeHtml(e.origin) || '—'}</div>
+            <div><span class="lbl">Destination</span>${escapeHtml(e.destination) || '—'}</div>
+            <div><span class="lbl">Qty</span>${e.qty}</div>
+          </div>
+          <button class="remove" onclick="removeEntry(${i})">Remove</button>
+        </div>
+      `).join('');
+    }
 
-      function build() {
-        const lr       = document.getElementById("lr").value.trim();
-        const sender   = document.getElementById("sender").value.trim();
-        const to       = receiver.value.trim();
-        let quantity   = parseInt(qtyInput.value, 10);
+    const expanded = expandByQty(entries);
+    const totalLabels = expanded.length;
+    const totalPages = Math.ceil(totalLabels/3);
+    countNote.textContent = totalLabels
+      ? totalLabels + ' label' + (totalLabels>1?'s':'') + ' → ' + totalPages + ' page' + (totalPages>1?'s':'')
+      : '';
+    document.getElementById('openBtn').disabled = totalLabels === 0;
 
-        if (!Number.isFinite(quantity) || quantity < 1) {
-          qtyInput.focus();
-          return;
-        }
-        if (quantity > MAX) quantity = MAX;
+    // preview
+    if(totalLabels === 0){
+      preview.innerHTML = '<p class="no-preview">Add a label above to see the print preview here.</p>';
+    } else {
+      preview.innerHTML = buildPagesHtml(expanded);
+    }
+  }
 
-        sheet.textContent = "";
-        let page = null;
-        for (let n = 1; n <= quantity; n++) {
-          // Pages are built explicitly rather than letting the cards reflow
-          // and break where they may. Padding on one long container is applied
-          // once, at the top of the first sheet — so every page after it began
-          // hard against the edge of the paper, with the top row's cut guide
-          // inside the strip the printer cannot reach. A container per page
-          // puts the same margin on every page. Same reason, and the same
-          // shape, as .sheet on the printed gate pass.
-          if ((n - 1) % PER_PAGE === 0) {
-            page = document.createElement("div");
-            page.className = "sticker-page";
-            // Hidden unless a test page is being printed. It has to be laid
-            // out inside the scaled sheet, not beside it, or it would measure
-            // the printer's scaling without the correction applied to it and
-            // every reading would send the number further out.
-            const ruler = document.createElement("div");
-            ruler.className = "sticker-ruler";
-            ruler.textContent = "\u2190 this line is 100 mm \u2192";
-            page.appendChild(ruler);
+  document.getElementById('addBtn').addEventListener('click', addEntry);
+  document.getElementById('clearBtn').addEventListener('click', clearAll);
+  document.getElementById('openBtn').addEventListener('click', openPrintable);
 
-            // The settings this sheet was drawn with, printed on the test
-            // page itself. Without it a photograph of a wrong print says
-            // only that it is wrong — not which numbers produced it, or
-            // whether the page that produced it was even the current one.
-            // Several rounds went by on exactly that ambiguity.
-            const stamp = document.createElement("div");
-            stamp.className = "sticker-stamp";
-            page.appendChild(stamp);
-            sheet.appendChild(page);
-          }
-          const card = document.createElement("div");
-          card.className = "sticker-card";
-          // Three lines, and they are not labels — they are the VALUES that
-          // drop into the blanks already printed on the yellow SM Express
-          // sheet, beside its own "AWB No:", "ORIGIN:" and "DESTINATION:".
-          // Printing those words again would double them up on the label.
-          //
-          // No box number. Every sticker in a batch is identical: the count in
-          // brackets says how many boxes the consignment is, and which
-          // particular box this one is was never on the courier's sheet.
-          card.appendChild(textLine("sticker-lr", `${lr} (${quantity})`));
-          card.appendChild(textLine("sticker-from", sender));
-          card.appendChild(textLine("sticker-to", to));
-          page.appendChild(card);
-        }
+  const PRINT_CSS = `
+    *{box-sizing:border-box;}
+    html,body{margin:0;padding:0;background:#fff;font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Arial,sans-serif;color:#000;}
+    .sheet{display:flex;flex-direction:column;}
+    .page{
+      width:164mm;
+      margin:0 auto;
+      display:flex;
+      flex-direction:column;
+      gap:0;
+      page-break-after:always;
+    }
+    .page:last-child{page-break-after:auto;}
+    .label{
+      height:82.3mm;
+      flex:0 0 82.3mm;
+      display:flex;
+      flex-direction:column;
+      border:none;
+      overflow:hidden;
+    }
+    .label-head{ flex:0 0 56pt; }
+    .row{
+      flex:0 0 45.5pt;
+      display:flex;
+      align-items:center;
+    }
+    .row .v{
+      font-size:30pt;
+      font-weight:700;
+      color:#000;
+      line-height:1;
+      word-break:break-word;
+    }
+    .label-foot{ flex:1 1 auto; }
+    @page{size:164mm 247mm;margin:0;}
+  `;
 
-        sheet.hidden = false;
-        empty.hidden = true;
-        printBtn.disabled = false;
-        countHint.textContent = quantity === 1
-          ? "1 sticker ready"
-          : `${quantity} stickers ready`;
-        if (quantity >= MAX) {
-          countHint.textContent += ` — ${MAX} is the most that can be printed at once`;
-        }
+  // Auto-fit: finds the largest font size (pt) so `text` fits within maxWidthMm,
+  // never exceeding maxFontPt (bounded by the 1.6cm row height) nor below minFontPt.
+  const fitCanvas = document.createElement('canvas');
+  const fitCtx = fitCanvas.getContext('2d');
+  function ptToPx(pt){ return pt * 96 / 72; }
+  function mmToPx(mm){ return mm * 96 / 25.4; }
+  function fitFontSizePt(text, maxWidthMm, maxFontPt, minFontPt){
+    if(!text) return maxFontPt;
+    const maxWidthPx = mmToPx(maxWidthMm);
+    let size = maxFontPt;
+    while(size > minFontPt){
+      fitCtx.font = '700 ' + ptToPx(size) + 'px "Segoe UI", Arial, sans-serif';
+      if(fitCtx.measureText(text).width <= maxWidthPx) break;
+      size -= 0.5;
+    }
+    return size;
+  }
 
-        remember(to);
-        // Applied after the cards exist, because the offsets are set on each
-        // page element and there were none to set them on until now.
-        applyAlignment(false);
-      }
+  const VALUE_BOX_WIDTH_MM = 95;  // 9.5cm writable width
+  const VALUE_MAX_FONT_PT = 34;   // bounded by the 1.6cm row height
+  const VALUE_MIN_FONT_PT = 10;
 
-      // A long destination has to stay inside its blank row. The lines are
-      // absolutely positioned, so an overflowing one does not push the next
-      // one down — it runs off the right of the label instead, over the
-      // pre-printed rule. Only the lines that actually overflow are stepped
-      // down; shrinking all of them to suit the worst case would make every
-      // sticker harder to read for the sake of one.
-      function fitLongNames() {
-        sheet.querySelectorAll(".sticker-lr, .sticker-from, .sticker-to")
-          .forEach(function (line) {
-            line.style.fontSize = "";
-            let size = parseFloat(getComputedStyle(line).fontSize);
-            let guard = 0;
-            while (line.scrollWidth > line.clientWidth && size > 8 && guard < 40) {
-              size -= 0.5;
-              line.style.fontSize = size + "px";
-              guard++;
-            }
-          });
-      }
+  function printLabelHtml(e, indentMm, nudgeMm){
+    const awb = e.awb ? escapeHtml(e.awb) : '';
+    const origin = e.origin ? escapeHtml(e.origin) : '';
+    const destination = e.destination ? escapeHtml(e.destination) : '';
+    const pad = 'padding-left:' + indentMm + 'mm;';
+    const nudgeStyle = nudgeMm ? ('transform:translateY(' + nudgeMm + 'mm);') : '';
+    const awbSize = fitFontSizePt(e.awb || '', VALUE_BOX_WIDTH_MM, VALUE_MAX_FONT_PT, VALUE_MIN_FONT_PT);
+    const originSize = fitFontSizePt(e.origin || '', VALUE_BOX_WIDTH_MM, VALUE_MAX_FONT_PT, VALUE_MIN_FONT_PT);
+    const destSize = fitFontSizePt(e.destination || '', VALUE_BOX_WIDTH_MM, VALUE_MAX_FONT_PT, VALUE_MIN_FONT_PT);
+    const boxStyle = 'max-width:' + VALUE_BOX_WIDTH_MM + 'mm;overflow:hidden;white-space:nowrap;display:inline-block;';
+    return `
+      <div class="label" style="${nudgeStyle}">
+        <div class="label-head"></div>
+        <div class="row" style="${pad}"><span class="v" style="font-size:${awbSize}pt;${boxStyle}">${awb}</span></div>
+        <div class="row" style="${pad}"><span class="v" style="font-size:${originSize}pt;${boxStyle}">${origin}</span></div>
+        <div class="row" style="${pad}"><span class="v" style="font-size:${destSize}pt;${boxStyle}">${destination}</span></div>
+        <div class="label-foot"></div>
+      </div>`;
+  }
 
-      // --- lining the sheet up with the printer -------------------------
-      // Kept in the browser with the destinations, and for the same reason:
-      // it is a property of the machine sitting in front of the person, not
-      // of the company. Two offices with two printers need two answers, and
-      // neither should need a deploy.
-      const alignInputs = {
-        left: document.getElementById("align-left"),
-        top: document.getElementById("align-top"),
-        gap: document.getElementById("align-gap"),
-        pitch: document.getElementById("align-pitch"),
-        scale: document.getElementById("align-scale"),
-      };
-      const paperSelect = document.getElementById("align-paper");
+  function buildPrintPagesHtml(list, indentMm, nudgeMm){
+    let html = '';
+    for(let i=0; i<list.length; i+=3){
+      const chunk = list.slice(i, i+3);
+      html += '<div class="page">' + chunk.map(e => printLabelHtml(e, indentMm, nudgeMm)).join('') + '</div>';
+    }
+    return html;
+  }
 
-      function savedAlignment() {
-        try {
-          const raw = window.localStorage.getItem(ALIGN_STORE);
-          const saved = raw ? JSON.parse(raw) : {};
-          return Object.assign({}, ALIGN_DEFAULTS, saved);
-        } catch (e) {
-          return Object.assign({}, ALIGN_DEFAULTS);
-        }
-      }
+  function openPrintable(){
+    const expanded = expandByQty(entries);
+    if(!expanded.length) return;
+    const indentMm = parseFloat(document.getElementById('indentMm').value) || 0;
+    const nudgeMm = parseFloat(document.getElementById('nudgeMm').value) || 0;
+    const html = '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+      + '<title>SM Express Labels — Print</title>'
+      + '<style>' + PRINT_CSS + '</style></head><body>'
+      + '<div class="sheet">' + buildPrintPagesHtml(expanded, indentMm, nudgeMm) + '</div>'
+      + '<script>window.addEventListener("load", function(){ setTimeout(function(){ window.print(); }, 200); });<\/script>'
+      + '</body></html>';
+    const blob = new Blob([html], {type:'text/html'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
 
-      function applyAlignment(save) {
-        const values = {};
-        Object.keys(alignInputs).forEach(function (key) {
-          const n = parseFloat(alignInputs[key].value);
-          // A blank or nonsense box falls back rather than writing NaN into
-          // the stylesheet, which would drop every value to the top corner.
-          values[key] = Number.isFinite(n) ? n : ALIGN_DEFAULTS[key];
-        });
-        // What the printer did to a line that left here 100mm long. If it
-        // came out at 114, everything it printed is 1.14 times too big and
-        // too far down, so the page is drawn at 100/114 to cancel it. Clamped
-        // because a typo of 10 or 1000 would otherwise make the sheet
-        // invisible or enormous with no obvious way back.
-        const measured = Math.min(200, Math.max(50, values.scale || 100));
-        const correction = 100 / measured;
+  [awbInput, originInput, destInput, qtyInput].forEach(inp => {
+    inp.addEventListener('keydown', e => {
+      if(e.key === 'Enter'){ e.preventDefault(); addEntry(); }
+    });
+  });
 
-        sheet.querySelectorAll(".sticker-page").forEach(function (pg) {
-          pg.style.setProperty("--sticker-left", values.left + "mm");
-          pg.style.setProperty("--sticker-top", values.top + "mm");
-          pg.style.setProperty("--sticker-gap", values.gap + "mm");
-          pg.style.setProperty("--sticker-pitch", values.pitch + "mm");
-          pg.style.setProperty("--sheet-scale", correction);
-        });
-        if (save) {
-          // Carried through, or choosing an offset would forget the paper.
-          values.paper = paperSelect.value;
-          try {
-            window.localStorage.setItem(ALIGN_STORE, JSON.stringify(values));
-          } catch (e) { /* private window; the sheet still prints */ }
-        }
-        sheet.querySelectorAll(".sticker-stamp").forEach(function (el) {
-          el.textContent =
-            `paper ${paperSelect.value} \u00b7 left ${values.left} \u00b7 ` +
-            `first line ${values.top} \u00b7 spacing ${values.gap} \u00b7 ` +
-            `pitch ${values.pitch} \u00b7 100mm printed as ${values.scale} ` +
-            `\u00b7 drawn at ${(correction * 100).toFixed(1)}%`;
-        });
-        if (!sheet.hidden) fitLongNames();
-      }
+  window.removeEntry = removeEntry;
 
-      (function restoreAlignment() {
-        const saved = savedAlignment();
-        Object.keys(alignInputs).forEach(function (key) {
-          alignInputs[key].value = saved[key];
-        });
-        paperSelect.value = PAPER_SIZES[saved.paper] ? saved.paper : "sheet";
-        // Written now rather than at print time: the @page rule has to be in
-        // the document before the print dialog reads it.
-        applyPaper(false);
-      })();
-
-      Object.keys(alignInputs).forEach(function (key) {
-        alignInputs[key].addEventListener("input", function () {
-          applyAlignment(true);
-        });
-      });
-
-      paperSelect.addEventListener("change", function () { applyPaper(true); });
-
-      // One sheet of plain paper, carrying the ruler and one label's values,
-      // rather than the whole batch. Lining a printer up should not cost
-      // nine sheets of stationery.
-      document.getElementById("align-test").addEventListener("click", function () {
-        if (sheet.hidden) {
-          qtyInput.value = qtyInput.value || "1";
-          build();
-        }
-        const pages = [...sheet.querySelectorAll(".sticker-page")];
-        pages.slice(1).forEach(function (pg) { pg.dataset.hidden = "1"; pg.hidden = true; });
-        document.body.classList.add("is-test-print");
-        window.print();
-        document.body.classList.remove("is-test-print");
-        pages.forEach(function (pg) {
-          if (pg.dataset.hidden) { pg.hidden = false; delete pg.dataset.hidden; }
-        });
-      });
-
-      document.getElementById("align-reset").addEventListener("click", function () {
-        Object.keys(alignInputs).forEach(function (key) {
-          alignInputs[key].value = ALIGN_DEFAULTS[key];
-        });
-        paperSelect.value = ALIGN_DEFAULTS.paper;
-        alignInputs.scale.value = ALIGN_DEFAULTS.scale;
-        alignInputs.pitch.value = ALIGN_DEFAULTS.pitch;
-        applyPaper(true);
-        applyAlignment(true);
-      });
-
-      form.addEventListener("submit", function (event) {
-        event.preventDefault();
-        build();
-      });
-
-      printBtn.addEventListener("click", function () { window.print(); });
-
-      // Opened from a link that already carries everything — the whole point
-      // of accepting the values in the URL — so there is nothing to press.
-      if (document.getElementById("lr").value.trim() && qtyInput.value.trim()) {
-        build();
-      }
-
-      // The cards are sized in millimetres, so a window resize cannot change
-      // whether they fit. Re-running after the web fonts land can: a line that
-      // fitted in the fallback face may not fit in the real one.
-      if (document.fonts && document.fonts.ready) {
-        document.fonts.ready.then(function () {
-          if (!sheet.hidden) fitLongNames();
-        });
-      }
-    })();
-  </script>
-{% endblock %}
+  render();
+</script>
+</body>
+</html>
