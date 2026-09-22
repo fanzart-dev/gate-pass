@@ -5954,8 +5954,8 @@ def test_box_stickers_need_no_database(tmpdir):
     source = inspect.getsource(flask_app.view_functions["print_stickers"])
     check("the view runs no query", "db." not in source)
     check("and saves nothing", "commit" not in source and "INSERT" not in source.upper())
-    check("it is handed nothing to render", "render_template(\"stickers.html\")" in source)
 
+    # The schema must be untouched by the feature existing at all.
     conn = db.connect(flask_app.config["DB_PATH"])
     tables = {r["name"] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table'")}
@@ -5963,77 +5963,462 @@ def test_box_stickers_need_no_database(tmpdir):
           not any("sticker" in t.lower() for t in tables))
     conn.close()
 
+    # Reachable under both names the request asked for.
     for path in ("/print-stickers", "/stickers"):
         check(f"{path} answers", client.get(path).status_code == 200)
 
-    # Nothing secret on it, but the app answers on a public link and an open
-    # page is a page that gets found and poked at.
+
+def test_box_stickers_start_empty_except_the_sender(tmpdir):
+    """Blank is the only safe default for the two fields that identify a load.
+
+    A sticker carrying last week's LR because a default was left in the box is
+    worse than a blank one: the carton still gets a label, it still goes out,
+    and nothing about it looks wrong until it arrives somewhere else.
+    """
+    flask_app, client = logged_in_app(tmpdir, "stickerdefaults")
+    page = markup_only(client.get("/print-stickers").get_data(as_text=True))
+
+    check("the LR box is empty", 'id="lr" name="lr" value=""' in page)
+    check("and so is the quantity",
+          re.search(r'id="qty"[^>]*value=""', page) is not None)
+    check("the sender is filled in, being the same every time",
+          'id="sender" name="sender" value="BENGALURU"' in page)
+    check("the receiver is left for the operator",
+          'id="receiver" name="receiver" value=""' in page)
+
+    # Every preset offered, so the common destinations are one keystroke away.
+    for preset in app_module.STICKER_RECEIVERS:
+        check(f"{preset} is offered", f'<option value="{preset}"></option>' in page)
+    check("as a datalist, so anything else can still be typed",
+          '<datalist id="receiver-options">' in page
+          and 'list="receiver-options"' in page)
+
+
+def test_box_stickers_can_be_opened_pre_filled(tmpdir):
+    """The whole reason the values are in the query string."""
+    flask_app, client = logged_in_app(tmpdir, "stickerargs")
+    page = markup_only(client.get(
+        "/print-stickers?lr=71703457&receiver=CHENNAI+(SUMANGALI)"
+        "&qty=27&sender=BENGALURU").get_data(as_text=True))
+
+    check("the LR arrives", 'value="71703457"' in page)
+    check("the quantity arrives", 'id="qty"' in page and 'value="27"' in page)
+    check("the receiver arrives, brackets and all",
+          'value="CHENNAI (SUMANGALI)"' in page)
+
+    # A quantity from a URL is a number the browser will turn into that many
+    # elements, so it is the browser being protected here, not the server.
+    capped = markup_only(client.get("/print-stickers?qty=900000").get_data(as_text=True))
+    check("an absurd quantity is capped rather than obeyed",
+          f'value="{app_module.MAX_STICKERS}"' in capped)
+    check("and the cap is a number a person could actually ship",
+          50 <= app_module.MAX_STICKERS <= 2000)
+
+    for junk in ("qty=abc", "qty=-5", "qty=0", "qty=", "qty=3.7"):
+        page = markup_only(client.get(f"/print-stickers?{junk}").get_data(as_text=True))
+        check(f"{junk} does not produce a broken page",
+              '<datalist id="receiver-options">' in page)
+    check("a negative quantity does not become a negative field",
+          'value="-5"' not in markup_only(
+              client.get("/print-stickers?qty=-5").get_data(as_text=True)))
+
+    # Signed out, it is not a page anyone on the internet should find. There is
+    # nothing secret on it, but the app answers on a public link and an open
+    # page is a page that gets indexed and poked at.
     anon = flask_app.test_client()
     check("signing in is required", anon.get("/print-stickers").status_code == 302)
 
 
-def test_the_supplied_label_printer_is_served_unaltered(tmpdir):
-    """The page is sm_express_label_printer.html, as supplied and working.
+def test_the_sticker_sheet_is_built_for_paper():
+    """The print rules are the feature. Everything else is a preview of them."""
+    css = (ROOT / "static" / "css" / "style.css").read_text()
+    template = (ROOT / "templates" / "stickers.html").read_text()
 
-    Several versions were written here first, from measurements of the sheet
-    and of a Word file, and every one printed wrong in the same way: lines
-    placed at an offset plus a multiple of a gap accumulate the error in
-    both, so the first label looked right while the third was half a row out,
-    and adjusting the offsets could never fix both at once.
+    print_block = css[css.rindex("@media print"):]
+    check("the control panel is hidden on paper",
+          ".no-print { display: none !important; }" in print_block)
+    check("and so is the site's own navigation",
+          ".topbar" in print_block and "display: none !important" in print_block)
 
-    The supplied file does not have that shape, and these checks are here to
-    stop it being given one again.
+    # A sticker cut in half by a page break is waste paper: it cannot be stuck
+    # to anything, and the box it belonged to goes out unlabelled.
+    check("a sticker never splits across a page",
+          "page-break-inside: avoid;" in print_block
+          and "break-inside: avoid;" in print_block)
+    check("both spellings, because older print engines only read the first",
+          print_block.index("page-break-inside") < print_block.index("break-inside: avoid"))
+
+    # Browsers print their own title, URL and timestamp into whatever margin
+    # the page leaves. Leaving none is what keeps them off the top sticker.
+    # The page IS the stationery, stated in millimetres, so one millimetre of
+    # stylesheet is one millimetre of paper. A named size would leave the
+    # scale to whatever the printer has loaded, which for an overlay is the
+    # difference between landing in a blank and landing on a printed rule.
+    check("the printed page is the sheet, not A4",
+          "@page { size: 163mm 248mm; margin: 0; }" in template)
+
+    check("each printed page is its own element",
+          'className = "sticker-page"' in template)
+    check("which ends the page after it",
+          "page-break-after: always;" in print_block)
+    check("except the last, which must not eject a blank sheet",
+          ".sticker-page:last-child" in print_block)
+
+    # The measured sheet: 164 x 247mm, three labels of 82mm.
+    sticker_css = css[css.index("Box stickers  (/print-stickers)"):]
+    check("the page is one sheet of stationery",
+          "width: 163mm;" in sticker_css and "height: 248mm;" in sticker_css)
+    check("one column", "grid-template-columns: 1fr;" in sticker_css)
+    check("of three labels", "grid-template-rows: repeat(3, var(--sticker-pitch));"
+          in sticker_css)
+    check("three to a page, and the script agrees with the grid",
+          "const PER_PAGE = 3;" in template)
+    card = sticker_css[sticker_css.index(".sticker-card {"):
+                       sticker_css.index("}", sticker_css.index(".sticker-card {"))]
+    check("the card is the label's own size",
+          "width: 163mm;" in card and "height: var(--sticker-pitch);" in card)
+    check("and measured from its border, not its content",
+          "box-sizing: border-box;" in sticker_css[sticker_css.index(".sticker-card {"):])
+
+    # Type taken from the document that printed correctly: 29pt for the AWB
+    # number and the origin, 25pt for the longer destination, bold, and
+    # CENTRED in a 110mm block rather than pushed against the printed label.
+    # An earlier pass had this at 17px left-aligned, which reads on a screen
+    # and is far too small on the side of a carton across a warehouse.
+    values = sticker_css[sticker_css.index(".sticker-card div {"):]
+    check("the values are centred, as in the document",
+          "text-align: center;" in values)
+    check("in a block the document's width", "width: 110mm;" in values)
+    check("bold, so it reads against yellow", "font-weight: 700;" in values)
+    # Each rule read on its own. Slicing from one selector to the end of the
+    # file sees the NEXT rule's size too, so changing just one of these went
+    # undetected — the check passed on its neighbour's declaration.
+    def rule_for(selector):
+        start = sticker_css.index(selector)
+        return sticker_css[start:sticker_css.index("}", start)]
+
+    check("the AWB line is the document's 29pt",
+          "font-size: 29pt;" in rule_for(".sticker-lr"))
+    check("the origin matches it",
+          "font-size: 29pt;" in rule_for(".sticker-from"))
+    check("and the longer destination is the document's 25pt",
+          "font-size: 25pt;" in rule_for(".sticker-to"))
+
+    # Absolutely positioned: a long destination must not push the line below
+    # it out of its blank and onto a printed rule.
+    check("each line is pinned to its own row", "position: absolute;" in values)
+    # One spacing drives all three rows: line two is one gap below line one
+    # and line three is two. Three separate offsets would drift apart the
+    # moment anyone nudged one of them.
+    check("the rows are spaced by one setting, not three",
+          "top: calc(var(--sticker-top) + var(--sticker-gap));" in css
+          and "top: calc(var(--sticker-top) + (2 * var(--sticker-gap)));" in css)
+
+    # Nothing of ours may be drawn on paper: the yellow sheet already carries
+    # the artwork, and a border or a ghost label would print on top of it.
+    check("no border is printed round a label",
+          "border: 0;" in print_block)
+    check("and the on-screen ghost labels are not printed",
+          ".sticker-card::before { content: none; }" in print_block)
+    # The screen preview draws the label's own rules so the calibration can be
+    # judged without printing. On paper the stationery already has them.
+    check("nor the preview's copy of the label's rules",
+          "background: none;" in print_block)
+
+
+def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
+    """Overlay printing always needs a nudge, and it cannot be guessed.
+
+    The offsets start from the original Word file, which was itself an overlay
+    for this sheet. They are a starting point and not an answer: no two
+    printers agree on where the paper begins, so the number that works here is
+    not the number that works on the machine in the office.
     """
-    page = (ROOT / "templates" / "stickers.html").read_text()
+    template = (ROOT / "templates" / "stickers.html").read_text()
+    css = (ROOT / "static" / "css" / "style.css").read_text()
 
-    # A label is a column of fixed-height blocks: the courier's header band,
-    # three rows with the value centred in each, then the footer. A row that
-    # is 45.5pt tall is 45.5pt tall wherever it sits, so nothing accumulates.
-    check("a label is laid out by flow", "flex-direction:column;" in page)
-    check("the header band is held open", "flex:0 0 56pt;" in page)
-    check("each row has a fixed height", "flex:0 0 45.5pt;" in page)
-    check("with the value centred in it", "align-items:center;" in page)
-    check("and the footer takes the rest", "flex:1 1 auto;" in page)
-    check("the label is the sheet's 82.3mm", "flex:0 0 82.3mm;" in page)
-    check("nothing is placed at an accumulating offset",
-          "--sticker-top" not in page and "--sticker-gap" not in page
-          and "--sticker-pitch" not in page)
+    for control in ("align-left", "align-top", "align-gap", "align-pitch"):
+        check(f"{control} can be nudged", f'id="{control}"' in template)
+    check("and put back", 'id="align-reset"' in template)
 
-    # Printed from a document of its own. Printing the app page meant hiding
-    # the navigation, undoing the container's width and keeping the browser's
-    # own header out of the margin — any of which going wrong moved the
-    # values, and several did.
-    check("printing builds its own document", "function openPrintable" in page)
-    check("with its own stylesheet", "const PRINT_CSS" in page)
-    check("on the stationery's page size", "@page{size:164mm 247mm;margin:0;}" in page)
-    check("three labels to a page", "i+=3" in page)
+    # Every number is the document's, taken from the file that prints
+    # correctly and NOT adjusted towards what looked better against a scan.
+    # Compared line by line the earlier values were short at every step —
+    # 3.06mm on the first line, 0.26mm per line gap, 0.68mm per label — and
+    # short errors in one direction accumulate, which is why the third
+    # label's last line came out 6.5mm high. Matching the document takes the
+    # largest difference across all nine lines from 6.47mm to 1.42mm, and
+    # what is left oscillates about zero instead of growing.
+    check("the defaults are the document's",
+          "left: 36, top: 19.4, gap: 16.66, pitch: 82.7" in template
+          and "scale: 100" in template)
 
-    # Only the values are printed: the sheet already carries the labels, the
-    # header band and the footer, and printing them again would double them.
-    printable = page[page.index("function printLabelHtml"):
-                     page.index("function buildPrintPagesHtml")]
-    check("the printed label's header band is empty",
-          '<div class="label-head"></div>' in printable)
-    check("and its footer is empty", '<div class="label-foot"></div>' in printable)
-    for word in ("AWB No", "ORIGIN:", "DESTINATION:", "SURFACE"):
-        check(f"the sheet's own {word!r} is not printed over", word not in printable)
+    # The step from one label to the next, separate from everything inside a
+    # label. A printer that enlarges the page spaces the labels further apart
+    # than they were sent, and the error compounds: the second label is out
+    # by one step, the third by two. That is the shape people actually
+    # report — "the first one is fine, the rest are jumping" — and it is the
+    # only knob that fixes it without disturbing the first label.
+    check("the label pitch is adjustable", "--sticker-pitch" in css)
+    check("it drives the grid", "repeat(3, var(--sticker-pitch))" in css)
+    check("and the height of each card", "height: var(--sticker-pitch);" in css)
+    check("starting from the document's 82.7mm", "--sticker-pitch: 82.7mm;" in css
+          and 'id="align-pitch" value="82.7"' in template)
+    check("and it is written to every page",
+          'setProperty("--sticker-pitch", values.pitch + "mm")' in template)
 
-    # A long destination is fitted rather than clipped, measured in the face
-    # the printed document uses rather than guessed from a character count.
-    check("long values are fitted", "function fitFontSizePt" in page)
-    check("within the row's writable width", "VALUE_BOX_WIDTH_MM = 95" in page)
-    check("and never taller than the row", "VALUE_MAX_FONT_PT = 34" in page)
+    # A shortened pitch puts the destination line near the bottom of its own
+    # box. Clipping it there would hide the thing the pitch is being changed
+    # to fix.
+    card_rule = css[css.index(".sticker-card {"):css.index("}", css.index(".sticker-card {"))]
+    check("a card does not clip its own last line", "overflow: hidden" not in card_rule)
+    check("and the stylesheet starts from the same numbers",
+          "--sticker-left: 36mm;" in css and "--sticker-top: 19.4mm;" in css
+          and "--sticker-gap: 16.66mm;" in css)
+    check("the form boxes start there too",
+          'id="align-left" value="36"' in template
+          and 'id="align-top" value="19.4"' in template
+          and 'id="align-gap" value="16.66"' in template)
 
-    # Typed values reach the page as HTML, so they have to be escaped.
-    check("values are escaped", "function escapeHtml" in page)
-    check("by setting text rather than replacing characters",
-          "d.textContent = str;" in page and "return d.innerHTML;" in page)
+    # A 110mm block from 36mm centres on 91mm, which is the middle of the
+    # blank on every row and well clear of "DESTINATION:", the longest
+    # printed label, which ends at 38mm.
+    check("the text block is centred in the blank, not jammed against the label",
+          "--sticker-left: 36mm;" in css and "width: 110mm;" in css)
 
-    flask_app, client = logged_in_app(tmpdir, "stickerserved")
-    served = client.get("/print-stickers").get_data(as_text=True)
-    check("and that is what is served", "SM Express" in served
-          and "function openPrintable" in served)
-    check("with a way back to the app", "/upload" in served or "Gate Pass" in served)
+    # Remembered per browser, like the destinations: the offset is a property
+    # of the machine in front of the person, not of the company.
+    check("the alignment is remembered",
+          'ALIGN_STORE = "sticker_sheet_alignment_v5"' in template)
+    check("in the browser, not the database",
+          "localStorage.setItem(ALIGN_STORE" in template)
+
+    # VERSIONED, and the version is the point. A saved value beats a default,
+    # so when the sheet moved from A4 to 164 x 247mm every browser that had
+    # opened the page carried on applying offsets measured against a layout
+    # that no longer existed — putting each line a row too high and making the
+    # new measurements look wrong. The suffix retires those quietly.
+    check("the key is versioned, so a geometry change retires old offsets",
+          "_v5" in template and 'localStorage.getItem(ALIGN_STORE)' in template)
+    check("and nothing still reads the unversioned key",
+          '"sticker_sheet_alignment"' not in template)
+
+    # A blank or nonsense box must not write NaN into the stylesheet, which
+    # would drop every value into the top corner of the sheet.
+    check("a nonsense offset falls back rather than breaking the layout",
+          "Number.isFinite(n) ? n : ALIGN_DEFAULTS[key]" in template)
+
+    # The controls are part of the setup, not the printout.
+    align_block = template[template.index('class="sticker-align"'):]
+    check("the nudge controls are inside the form, which is not printed",
+          "</form>" in align_block)
+
+    # The ghost labels stand for ink already on the paper, so they must NOT
+    # move with the calibration. Two of them used to be pinned while the third
+    # rode on its own value's line, so nudging the offsets slid DESTINATION:
+    # up until it printed on top of ORIGIN:. One element cannot disagree with
+    # itself, so all three are now one.
+    screen = css[css.index("@media screen {", css.index("Box stickers")):]
+    screen = screen[:screen.index("@media print")]
+    check("all three pre-printed labels are drawn as one element",
+          screen.count("content:") == 1
+          and "AWB No:" in screen and "ORIGIN:" in screen and "DESTINATION:" in screen)
+    check("fixed to the sheet, not to a value that moves",
+          "top: 20.6mm;" in screen)
+    check("and nothing rides on the destination line any more",
+          ".sticker-to::before" not in css)
+    no_print = template[template.index('<div class="no-print">'):
+                        template.index('id="sticker-sheet"')]
+    check("and the whole control panel is marked not-for-print",
+          'class="sticker-align"' in no_print)
+
+    # The route itself still knows nothing about any of this.
+    flask_app, client = logged_in_app(tmpdir, "stickeralign")
+    source = inspect.getsource(flask_app.view_functions["print_stickers"])
+    check("the server is not involved in alignment", "align" not in source.lower())
+
+
+def test_the_sticker_sheet_cannot_be_silently_rescaled():
+    """The failure that no offset can correct.
+
+    A print came back with the first label 9mm out, the second worse and the
+    third 35mm out — values sliding further down the sheet the further they
+    went. The page was right and so was the PDF: 164 x 247mm, values at 26.4,
+    43.1 and 59.2mm on every label. The printer had been asked to fit that
+    page onto A4 and enlarged everything by about 1.16 to do it.
+
+    A scale error looks like a drifting offset and is not one. Nudging Left
+    or Top only moves where the drift starts.
+    """
+    template = (ROOT / "templates" / "stickers.html").read_text()
+    css = (ROOT / "static" / "css" / "style.css").read_text()
+
+    # Said plainly, and set apart from the offsets, because someone reaching
+    # for the offsets to fix this will never succeed.
+    check("the page warns about scaling at all", "sticker-warning" in template)
+    check("and says what to set", "Scale to 100%" in template)
+    check("naming the settings that cause it",
+          all(phrase in template
+              for phrase in ("Fit to page", "Shrink to fit", "Scale to fit")))
+    check("the warning is styled as a warning, not another hint",
+          ".sticker-warning {" in css)
+    # The class, not the CSS selector: this is the markup being searched.
+    check("and is not printed", 'class="sticker-warning"' in
+          template[template.index('<div class="no-print">'):
+                   template.index('id="sticker-sheet"')])
+
+    # The real cure: the page size has to match the paper the printer is set
+    # to. When they agree there is nothing to fit, so nothing is scaled.
+    check("the paper can be chosen", 'id="align-paper"' in template)
+    check("the stationery is one option", 'value="sheet"' in template)
+    check("and ordinary A4 the other", 'value="a4"' in template)
+    check("both map to a real page size",
+          'sheet: "163mm 248mm"' in template and 'a4: "A4 portrait"' in template)
+
+    # @page cannot read a custom property, so the rule is rewritten instead.
+    check("the page rule follows the choice",
+          "@page { size: ${PAPER_SIZES[choice]}; margin: 0; }" in template)
+    check("written into the document, not at print time",
+          "document.head.appendChild(pageRule)" in template)
+    check("and the choice is remembered with the offsets",
+          "values.paper = paperSelect.value;" in template)
+
+    # Adding a setting must not retire everyone's calibration: the defaults
+    # are merged underneath whatever was stored, so an older saved object
+    # simply takes the default for anything it does not carry. Bumping the
+    # key for that would throw away a printer somebody lined up by hand.
+    check("a saved setting survives a new one being added",
+          "Object.assign({}, ALIGN_DEFAULTS, saved)" in template)
+    check("a paper it does not recognise falls back to the stationery",
+          'PAPER_SIZES[paperSelect.value] ? paperSelect.value : "sheet"' in template)
+
+    # On A4 the sheet is smaller than the page. It must sit at the top left at
+    # true size, because where the stationery really sits is what Left and Top
+    # are for — a centred sheet would add a margin they then have to subtract.
+    print_block = css[css.rindex("@media print"):]
+    check("the sheet is not centred on a larger page",
+          ".sticker-page { margin: 0 !important; }" in print_block)
+
+
+def test_a_printer_that_scales_anyway_can_be_cancelled():
+    """The belt to the print dialog's braces.
+
+    Setting Scale to 100% is the right fix and it is what the page asks for.
+    It is also one checkbox in one dialog, on machines nobody here controls,
+    and it came back wrong twice — the second print was still enlarged 1.14
+    times with a 6.5mm shift. So the page can now cancel a scale it cannot
+    prevent, mechanically, without anybody having to find the setting.
+    """
+    template = (ROOT / "templates" / "stickers.html").read_text()
+    css = (ROOT / "static" / "css" / "style.css").read_text()
+
+    # Measured, not guessed at: the page prints a line of known length, and
+    # whoever holds a ruler against it types back what it really came out as.
+    check("a known length is printed to measure", ".sticker-ruler" in css)
+    check("100mm of it", "width: 100mm;" in css)
+    check("with end stops, so it is measured between marks",
+          ".sticker-ruler::before" in css and ".sticker-ruler::after" in css)
+    check("and the measurement can be typed back", 'id="align-scale"' in template)
+    check("there is a way to print it", 'id="align-test"' in template)
+
+    # Only on a test page. A ruler printed across real stationery would be
+    # worse than the misalignment it is there to cure.
+    check("the ruler is hidden by default", "display: none;" in
+          css[css.index(".sticker-ruler {"):css.index(".sticker-ruler::before")])
+    check("and shown only while testing",
+          "body.is-test-print .sticker-ruler," in css
+          and "body.is-test-print .sticker-stamp { display: block; }" in css)
+
+    # The test page also carries the numbers it was drawn with. A photograph
+    # of a bad print otherwise says only that it is bad — not which settings
+    # produced it, nor whether the page that produced it was even the current
+    # one. Several rounds of this went by on that ambiguity.
+    check("the test page says what produced it", ".sticker-stamp" in template)
+    check("naming every setting",
+          all(word in template for word in
+              ("left ${values.left}", "first line ${values.top}",
+               "spacing ${values.gap}", "pitch ${values.pitch}",
+               "100mm printed as ${values.scale}")))
+    check("and the scale it actually drew at",
+          "drawn at ${(correction * 100).toFixed(1)}%" in template)
+    check("but it is not printed on real stationery",
+          ".sticker-stamp {" in css
+          and "display: none;" in css[css.index(".sticker-stamp {"):
+                                      css.index("}", css.index(".sticker-stamp {"))])
+    check("which is turned on and off around the print, not left on",
+          'classList.add("is-test-print")' in template
+          and 'classList.remove("is-test-print")' in template)
+
+    # One sheet, not the whole batch: lining up a printer must not cost nine
+    # sheets of stationery.
+    check("a test print is one page", 'pages.slice(1)' in template)
+    check("and the rest come back afterwards",
+          "delete pg.dataset.hidden" in template)
+
+    # The correction itself.
+    check("the correction is the ratio of wanted to measured",
+          "const correction = 100 / measured;" in template)
+    check("applied as a scale on the sheet",
+          '--sheet-scale' in css and 'setProperty("--sheet-scale", correction)' in template)
+    check("from the corner the paper starts at",
+          "transform-origin: top left;" in css)
+    # A typo of 10 or 1000 would make the sheet invisible or enormous, with
+    # nothing on screen to explain why.
+    check("a wild measurement is clamped rather than obeyed",
+          "Math.min(200, Math.max(50, values.scale || 100))" in template)
+
+
+def test_every_sticker_in_a_batch_is_the_same(tmpdir):
+    """No box numbers. Twenty-seven boxes get twenty-seven identical labels.
+
+    They carried (1), (2), (3) at first, which reads sensibly and is wrong for
+    this sheet: the courier's own label has one blank for the AWB number and
+    nowhere to put "which box of how many". The count in brackets already says
+    the consignment is twenty-seven boxes, which is what the far end checks.
+    """
+    template = (ROOT / "templates" / "stickers.html").read_text()
+    builder = template[template.index("function build()"):]
+
+    check("no per-box counter is rendered", "sticker-seq" not in template)
+    check("and none is built", "(${n})" not in builder)
+
+    # Three lines, in the order the courier's sheet prints its own labels.
+    for cls in ("sticker-lr", "sticker-from", "sticker-to"):
+        check(f"{cls} is one of them", cls in builder)
+    check("and there are only three",
+          builder.count("card.appendChild(") == 3)
+
+    # The values only. The yellow sheet already says AWB No, ORIGIN and
+    # DESTINATION; printing those words again would double them on the label.
+    #
+    # Comments stripped first: the code explains which blanks these three lines
+    # drop into, and naming them there is not the same as printing them.
+    code = "\n".join(line.split("//")[0] for line in builder.splitlines())
+    for printed in ("AWB No", "ORIGIN:", "DESTINATION:"):
+        check(f"the sheet's own {printed!r} is not printed over",
+              printed not in code)
+
+    # The count in brackets is the total, and it must be the SAME total on
+    # every card — the number of boxes, not a running position.
+    check("the bracketed number is the batch total",
+          "${lr} (${quantity})" in builder)
+
+
+def test_sticker_values_cannot_carry_markup(tmpdir):
+    """Every field is free text that goes straight onto the page."""
+    flask_app, client = logged_in_app(tmpdir, "stickerxss")
+    nasty = "<script>alert(1)</script>"
+    page = client.get(f"/print-stickers?lr={nasty}&receiver={nasty}"
+                      f"&sender={nasty}").get_data(as_text=True)
+    check("a script tag is escaped, not rendered", nasty not in page)
+    check("and arrives as text", "&lt;script&gt;" in page)
+
+    # The cards are built in the browser from those same values, so the script
+    # that builds them must not use innerHTML either.
+    template = (ROOT / "templates" / "stickers.html").read_text()
+    builder = template[template.index("function build()"):]
+    check("the card builder sets text, never markup",
+          "innerHTML" not in builder)
 
 
 def test_the_office_instructions_do_not_name_a_dead_host(tmpdir):
@@ -6927,7 +7312,14 @@ def main():
         test_dropping_charges_renumbers_and_reports()
         test_an_invoice_of_nothing_but_charges_says_so(tmpdir)
         test_box_stickers_need_no_database(tmpdir)
-        test_the_supplied_label_printer_is_served_unaltered(tmpdir)
+        test_box_stickers_start_empty_except_the_sender(tmpdir)
+        test_box_stickers_can_be_opened_pre_filled(tmpdir)
+        test_the_sticker_sheet_is_built_for_paper()
+        test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir)
+        test_the_sticker_sheet_cannot_be_silently_rescaled()
+        test_a_printer_that_scales_anyway_can_be_cancelled()
+        test_every_sticker_in_a_batch_is_the_same(tmpdir)
+        test_sticker_values_cannot_carry_markup(tmpdir)
         test_the_office_instructions_do_not_name_a_dead_host(tmpdir)
         test_the_windows_name_repair_cannot_depend_on_the_name()
         test_nginx_hands_out_the_repair_scripts_but_not_the_rest_of_deploy()
