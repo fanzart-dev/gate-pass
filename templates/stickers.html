@@ -86,11 +86,16 @@
          printers agree on where the paper starts — and it cannot be worked
          out anywhere but in front of the printer. Remembered per browser.
 
-         Admin only. These are not a preference: a wrong number here prints a
-         whole consignment onto the wrong part of the sticker, and whoever is
-         printing has no way to tell until the boxes are labelled. The people
-         issuing gate passes all day want the Print button, not six
-         millimetre offsets sitting above it.
+         Behind its own permission. These are not a preference: a wrong number
+         here prints a whole consignment onto the wrong part of the sticker,
+         and whoever is printing has no way to tell until the boxes are
+         labelled. The people issuing gate passes all day want the Print
+         button, not six millimetre offsets sitting above it.
+
+         Its own, rather than riding on is_admin as it did at first — which
+         in this app means riding on Manage Users, since the two are kept in
+         lockstep. Lining a printer up and administering accounts are not the
+         same job and rarely the same person.
 
          Hiding them is safe rather than merely tidy, because there is
          nothing behind them to reach: the values live in this browser's own
@@ -100,7 +105,7 @@
 
          The script must therefore work with the whole block absent, which is
          why it reads the saved values rather than the boxes. #}
-      {% if current_user.is_admin %}
+      {% if can('can_calibrate_stickers') %}
       <div class="sticker-align">
         <div>
           {# Has to match the paper size the printer is set to, or the browser

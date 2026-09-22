@@ -1139,6 +1139,49 @@ def test_upgrading_keeps_a_totals_preference(tmpdir):
     check("and the old key is cleared away", "show_totals" not in upgraded)
 
 
+def test_upgrading_keeps_the_calibration_with_whoever_had_it(tmpdir):
+    """Adding a permission must not take one away.
+
+    The sticker offsets were shown to admins before they had a permission of
+    their own. Someone had already lined a printer up against the courier's
+    stationery by then. Ship the new permission without backfilling it and
+    their next click loses the controls — the feature looks broken on exactly
+    the machine that was working.
+
+    Same reasoning as can_batch_print at version 7, and the same fix.
+    """
+    path = Path(tmpdir) / "old_perms.db"
+    conn = db.connect(path)
+    db.create_user(conn, "boss", "Admin One", "gatepass-test-pw",
+                    status=db.APPROVED, is_admin=True)
+    db.create_user(conn, "ops", "Staff One", "gatepass-test-pw", status=db.APPROVED)
+
+    # Put the database back the way version 15 left it: the permission did
+    # not exist, so nobody carried it either way.
+    with db.writing(conn):
+        conn.execute("UPDATE users SET permissions = "
+                     "json_remove(permissions, '$.can_calibrate_stickers')")
+    conn.execute("PRAGMA user_version = 15")
+    conn.close()
+
+    upgraded = db.connect(path)
+    boss = db.get_user_by_username(upgraded, "boss")
+    ops = db.get_user_by_username(upgraded, "ops")
+
+    check("the admin who was seeing the offsets still sees them",
+          db.user_can(boss, "can_calibrate_stickers"))
+    check("and someone who was not does not gain them",
+          not db.user_can(ops, "can_calibrate_stickers"))
+    check("the database is at the new version",
+          upgraded.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION)
+
+    # Nothing else moved: a backfill that reached other permissions would be
+    # handing out access nobody granted.
+    check("the ordinary account gained nothing at all",
+          not any(db.user_can(ops, key) for key in db.PERMISSIONS))
+    upgraded.close()
+
+
 def test_a_two_page_pass_signs_off_only_at_the_end(tmpdir):
     """Totals and signatures belong at the end of the document, once.
 
@@ -6231,15 +6274,27 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     check("a nonsense offset falls back rather than breaking the layout",
           "Number.isFinite(n) ? n : ALIGN_DEFAULTS[key]" in template)
 
-    # Admin only. A wrong number here puts a whole consignment on the wrong
-    # part of the sticker, and whoever is printing cannot tell until the
-    # boxes are labelled.
+    # Behind its own permission. A wrong number here puts a whole consignment
+    # on the wrong part of the sticker, and whoever is printing cannot tell
+    # until the boxes are labelled.
+    #
+    # Its own, rather than riding on is_admin as it did at first — which in
+    # this app means riding on Manage Users, since the two are kept in
+    # lockstep. Lining a printer up and administering accounts are not the
+    # same job and rarely the same person.
+    #
     # .find, not .index: a missing gate must fail this check rather than
     # raise out of the whole suite, or removing it reads as a crash instead
     # of as the one thing that broke.
-    gate = template.find("{% if current_user.is_admin %}")
-    check("the calibration bar is admin only",
+    gate = template.find("{% if can('can_calibrate_stickers') %}")
+    check("the calibration bar is behind its own permission",
           gate != -1 and gate < template.index('class="sticker-align"'))
+    check("which is offered in the permissions list",
+          "can_calibrate_stickers" in db.PERMISSIONS)
+    check("with a line saying what it does",
+          db.PERMISSION_HINTS.get("can_calibrate_stickers"))
+    check("and it is not tied to managing accounts",
+          "current_user.is_admin" not in template)
     check("and the gate closes after the last control",
           gate != -1
           and template.find("{% endif %}", gate)
@@ -6433,8 +6488,12 @@ def test_the_sticker_page_works_without_the_calibration_bar(tmpdir):
     flask_app, admin = logged_in_app(
         tmpdir, "stickerroles", users=(("boss", "Admin One"), ("ops", "Staff One")))
     conn = db.connect(flask_app.config["DB_PATH"])
-    check("the second account really is not an admin",
-          not db.get_user_by_username(conn, "ops")["is_admin"])
+    ops = db.get_user_by_username(conn, "ops")
+    check("the second account is not an admin", not ops["is_admin"])
+    check("and does not hold the calibration permission",
+          not db.user_can(ops, "can_calibrate_stickers"))
+    boss = db.get_user_by_username(conn, "boss")
+    check("while the first does", db.user_can(boss, "can_calibrate_stickers"))
     conn.close()
 
     staff = flask_app.test_client()
@@ -7421,6 +7480,7 @@ def main():
         test_totals_sit_between_the_items_and_the_signatures(tmpdir)
         test_the_two_totals_are_independent(tmpdir)
         test_upgrading_keeps_a_totals_preference(tmpdir)
+        test_upgrading_keeps_the_calibration_with_whoever_had_it(tmpdir)
         test_a_two_page_pass_signs_off_only_at_the_end(tmpdir)
         test_carton_lookup_rules(tmpdir)
         test_sequence_derives_from_the_book(tmpdir)

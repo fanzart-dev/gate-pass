@@ -83,6 +83,7 @@ PERMISSIONS = {
     "can_review_drafts": "Review Drafts",
     "can_edit_parsed_details": "Edit Draft Details",
     "can_edit_issued_pass": "Edit Issued Gate Pass",
+    "can_calibrate_stickers": "Sticker Alignment",
 }
 
 # The sentence under each tick box. Kept apart from the label so the tick list
@@ -90,6 +91,12 @@ PERMISSIONS = {
 # these change how the app behaves, not just what is visible.
 PERMISSION_HINTS = {
     "can_search_register": "Search and filter the register by date and status",
+    # Its own permission rather than riding on Manage Users, which is what it
+    # did at first. Lining a printer up against pre-printed courier stationery
+    # and administering accounts are not the same job and rarely the same
+    # person — and a wrong offset here puts a whole consignment onto the wrong
+    # part of the sticker, which nobody notices until the boxes are labelled.
+    "can_calibrate_stickers": "Set the sticker print offsets for this machine",
     "can_export_reports": "Open Reports and generate CSV or Excel exports",
     "can_access_settings": "View and change Settings, including the numbering",
     "can_manage_people": "Create accounts and set what others may do",
@@ -247,7 +254,7 @@ DEFAULT_SETTINGS = {
 # Bump when schema.sql or ADDED_COLUMNS changes. Stored in the file as
 # PRAGMA user_version, so a connection can tell in one cheap read whether the
 # schema script needs running at all.
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # How long a writer waits for another writer before giving up. Four people
 # clicking Issue at the same moment are serialised in milliseconds, so this is
@@ -387,6 +394,18 @@ def _migrate_data(conn, previous_version):
             conn.execute(
                 "UPDATE users SET permissions = json_set(permissions, "
                 "'$.can_review_drafts', json('true')) WHERE is_admin = 1")
+        except sqlite3.OperationalError:
+            pass
+
+    if previous_version and previous_version < 16:
+        # can_calibrate_stickers was added after the sticker page already
+        # existed, where the controls had been shown to admins. Anyone who was
+        # seeing them keeps seeing them; without this an upgrade would take the
+        # calibration away from the person who set the printer up.
+        try:
+            conn.execute(
+                "UPDATE users SET permissions = json_set(permissions, "
+                "'$.can_calibrate_stickers', json('true')) WHERE is_admin = 1")
         except sqlite3.OperationalError:
             pass
 
