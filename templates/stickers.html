@@ -61,22 +61,37 @@
              typeable without anybody editing a list first. A select would
              make the first consignment to a new place impossible until
              somebody edited a list. #}
-          <div class="receiver-field">
+          {# A list that can be SEEN. This was an <input list> with a
+             datalist, which is a combobox on paper and shows no dropdown
+             arrow in Firefox at all — so there was nothing to click and no
+             sign the saved names existed. The menu below is drawn by the
+             page, so it looks the same in every browser and can be opened
+             deliberately. #}
+          {# The starting names, for a browser that has never used the page.
+             After that the browser's own list is the one that counts, so a
+             name can be deleted and stay deleted.
+
+             A data attribute rather than a <script> block: this is data, it
+             is inspectable in the rendered page, and it survives anything
+             that reads the markup without running scripts. #}
+          {# SINGLE quotes round the attribute. tojson escapes an apostrophe
+             but not a double quote, so in a double-quoted attribute the
+             JSON's own quotes close it and the list arrives as rubbish — the
+             menu came up empty and silently. #}
+          <div class="receiver-field"
+               data-receiver-defaults='{{ receiver_presets|list|tojson }}'>
             <input type="text" id="receiver" name="receiver" value="{{ receiver }}"
-                   list="receiver-options" placeholder="CHENNAI (SUMANGALI)"
-                   autocomplete="off">
+                   placeholder="CHENNAI (SUMANGALI)" autocomplete="off"
+                   role="combobox" aria-expanded="false"
+                   aria-controls="receiver-menu" aria-autocomplete="list">
+            <button type="button" id="receiver-toggle" class="receiver-caret"
+                    aria-label="Show saved receivers" tabindex="-1">&#9662;</button>
             <button type="button" id="receiver-manage" class="quiet"
                     aria-expanded="false" aria-controls="receiver-list"
                     title="Add or remove saved receivers">Manage</button>
+            <ul class="receiver-menu" id="receiver-menu" role="listbox" hidden></ul>
           </div>
-          <datalist id="receiver-options">
-            {# Seeded from here on a browser that has never used the page.
-               After that the browser's own list is the one that counts, so a
-               name can be deleted and stay deleted. #}
-            {% for option in receiver_presets %}
-              <option value="{{ option }}"></option>
-            {% endfor %}
-          </datalist>
+
 
           <div class="receiver-list" id="receiver-list" hidden>
             <ul id="receiver-items"></ul>
@@ -233,7 +248,6 @@
       const empty    = document.getElementById("sticker-empty");
       const printBtn = document.getElementById("print-stickers");
       const countHint= document.getElementById("sticker-count");
-      const options  = document.getElementById("receiver-options");
       const receiver = document.getElementById("receiver");
       const qtyInput = document.getElementById("qty");
 
@@ -326,7 +340,14 @@
       }
 
       function serverDefaults() {
-        return [...options.options].map((o) => o.value);
+        try {
+          const raw = document.querySelector(".receiver-field")
+                              .dataset.receiverDefaults;
+          const list = JSON.parse(raw);
+          return Array.isArray(list) ? list.filter((v) => typeof v === "string") : [];
+        } catch (e) {
+          return [];
+        }
       }
 
       function loadReceivers() {
@@ -358,12 +379,7 @@
       let receivers = dedupe(loadReceivers());
 
       function renderReceivers() {
-        options.textContent = "";
-        receivers.forEach(function (name) {
-          const option = document.createElement("option");
-          option.value = name;
-          options.appendChild(option);
-        });
+        renderMenu();
 
         const items = document.getElementById("receiver-items");
         items.textContent = "";
@@ -405,15 +421,118 @@
         return true;
       }
 
-      renderReceivers();
-
+      // ---- the dropdown --------------------------------------------------
+      // Drawn here rather than left to the browser. An <input list> with a
+      // datalist is a combobox by the letter of the spec and shows no arrow
+      // at all in Firefox: the saved names were there and there was no way to
+      // see that, let alone click one.
+      const menu = document.getElementById("receiver-menu");
+      const toggle = document.getElementById("receiver-toggle");
       const manageButton = document.getElementById("receiver-manage");
       const managePanel = document.getElementById("receiver-list");
+      let activeIndex = -1;
+
+      function closeManage() {
+        managePanel.hidden = true;
+        manageButton.setAttribute("aria-expanded", "false");
+      }
+
+      function visibleNames() {
+        const typed = receiver.value.trim().toLowerCase();
+        // Everything when the box is empty or the typed text is itself a
+        // saved name — picking one and reopening should show the whole list
+        // again, not just the one already chosen.
+        if (!typed || receivers.some((v) => v.toLowerCase() === typed)) return receivers;
+        return receivers.filter((v) => v.toLowerCase().includes(typed));
+      }
+
+      function closeMenu() {
+        menu.hidden = true;
+        activeIndex = -1;
+        receiver.setAttribute("aria-expanded", "false");
+      }
+
+      function renderMenu() {
+        const names = visibleNames();
+        menu.textContent = "";
+        if (!names.length) {
+          closeMenu();
+          return;
+        }
+        names.forEach(function (name, i) {
+          const li = document.createElement("li");
+          li.textContent = name;   // never innerHTML: these are typed values
+          li.setAttribute("role", "option");
+          li.setAttribute("aria-selected", i === activeIndex ? "true" : "false");
+          if (i === activeIndex) li.className = "is-active";
+          // mousedown, not click: the input's blur would close the menu and
+          // remove this element before a click ever landed on it.
+          li.addEventListener("mousedown", function (event) {
+            event.preventDefault();
+            receiver.value = name;
+            closeMenu();
+            receiver.focus();
+          });
+          menu.appendChild(li);
+        });
+      }
+
+      function openMenu() {
+        activeIndex = -1;
+        renderMenu();
+        if (menu.childElementCount) {
+          menu.hidden = false;
+          receiver.setAttribute("aria-expanded", "true");
+          // Two views of one list, and both hang below the same field, so
+          // the menu was landing on top of the manage panel and swallowing
+          // clicks meant for its delete buttons. Only one is open at a time.
+          closeManage();
+        }
+      }
+
+      toggle.addEventListener("mousedown", function (event) {
+        // Before focus moves, so clicking the arrow while the menu is open
+        // closes it instead of blurring and reopening.
+        event.preventDefault();
+        if (menu.hidden) { receiver.focus(); openMenu(); } else { closeMenu(); }
+      });
+
+      receiver.addEventListener("input", function () {
+        if (menu.hidden) { openMenu(); } else { activeIndex = -1; renderMenu(); }
+      });
+      receiver.addEventListener("focus", openMenu);
+      receiver.addEventListener("blur", closeMenu);
+
+      receiver.addEventListener("keydown", function (event) {
+        const names = visibleNames();
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          if (menu.hidden) { openMenu(); return; }
+          const step = event.key === "ArrowDown" ? 1 : -1;
+          activeIndex = (activeIndex + step + names.length) % names.length;
+          renderMenu();
+        } else if (event.key === "Enter" && !menu.hidden && activeIndex >= 0) {
+          // Only when something is highlighted. Otherwise Enter belongs to
+          // the form, and typing a brand new destination then pressing it
+          // should queue the job rather than be swallowed here.
+          event.preventDefault();
+          receiver.value = names[activeIndex];
+          closeMenu();
+        } else if (event.key === "Escape") {
+          closeMenu();
+        }
+      });
+
+      renderReceivers();
+
       manageButton.addEventListener("click", function () {
         const opening = managePanel.hidden;
         managePanel.hidden = !opening;
         manageButton.setAttribute("aria-expanded", opening ? "true" : "false");
-        if (opening) document.getElementById("receiver-new").focus();
+        if (opening) {
+          closeMenu();
+          document.getElementById("receiver-new").focus();
+        }
       });
 
       const newBox = document.getElementById("receiver-new");

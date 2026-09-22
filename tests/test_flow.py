@@ -7,6 +7,7 @@ group, so it never touches storage/ (the real book).
 
 import functools
 import hashlib
+import html as html_module
 import inspect
 import io
 import json
@@ -6030,11 +6031,18 @@ def test_box_stickers_start_empty_except_the_sender(tmpdir):
           'id="receiver" name="receiver" value=""' in page)
 
     # Every preset offered, so the common destinations are one keystroke away.
+    # Carried as data now rather than as a datalist: the page draws its own
+    # menu, because an <input list> shows no dropdown arrow at all in Firefox
+    # and the saved names could not be seen, let alone clicked.
     for preset in app_module.STICKER_RECEIVERS:
-        check(f"{preset} is offered", f'<option value="{preset}"></option>' in page)
-    check("as a datalist, so anything else can still be typed",
-          '<datalist id="receiver-options">' in page
-          and 'list="receiver-options"' in page)
+        check(f"{preset} is offered", preset in page)
+    check("as a list the page draws itself",
+          "data-receiver-defaults=" in page and 'id="receiver-menu"' in page)
+    # Scoped to the receiver. A bare "<select id=" also matches the Paper
+    # control further down, which has nothing to do with this.
+    check("and the box still takes anything typed into it",
+          'id="receiver" name="receiver"' in page
+          and '<select id="receiver"' not in page)
 
 
 def test_the_receiver_list_can_be_added_to_and_pruned(tmpdir):
@@ -6051,13 +6059,41 @@ def test_the_receiver_list_can_be_added_to_and_pruned(tmpdir):
     # Still a text box with a datalist, not a select. A select would make the
     # first consignment to a new place impossible until somebody edited a list.
     check("the receiver can be typed", 'id="receiver" name="receiver"' in page)
-    check("with a list of suggestions", 'list="receiver-options"' in page)
     check("and it is not a closed dropdown", "<select id=\"receiver\"" not in page)
 
-    # The server still supplies the starting names.
+    # A list that can be SEEN. It was an <input list> with a datalist, which
+    # is a combobox by the letter of the spec and draws no arrow whatsoever
+    # in Firefox: the saved names were there with no way to know it.
+    check("there is something to click to open it", 'id="receiver-toggle"' in page)
+
+    # SINGLE-quoted, and that is not a style choice. tojson escapes an
+    # apostrophe but not a double quote, so in a double-quoted attribute the
+    # JSON's own quotes close it early and the list arrives as rubbish — the
+    # menu came up empty, with nothing in the console to say why.
+    check("the defaults survive being put in an attribute",
+          "data-receiver-defaults='[" in page)
+    check("and are valid JSON when they get there",
+          json.loads(html_module.unescape(
+              re.search(r"data-receiver-defaults='([^']*)'", page).group(1)))
+          == list(app_module.STICKER_RECEIVERS))
+
+    # Both panels hang under the same field, so the menu used to land on top
+    # of the manage list and swallow clicks meant for its delete buttons.
+    template = (ROOT / "templates" / "stickers.html").read_text()
+    check("opening the menu closes the manage panel",
+          "closeManage();" in template)
+    check("and opening the manage panel closes the menu",
+          "closeMenu();\n          document.getElementById(\"receiver-new\").focus();"
+          in template)
+    check("and a menu for it to open", 'id="receiver-menu"' in page)
+    check("announced as a combobox", 'role="combobox"' in page)
+    check("with the menu as its list", 'role="listbox"' in page)
+
+    # The server still supplies the starting names, now as data.
     for preset in app_module.STICKER_RECEIVERS:
-        check(f"{preset} is offered to a new browser",
-              f'<option value="{preset}"></option>' in page)
+        check(f"{preset} is offered to a new browser", preset in page)
+    check("read from a data attribute, not a datalist",
+          "data-receiver-defaults=" in page and "<datalist" not in page)
 
     check("there is a way to manage the list", 'id="receiver-manage"' in page)
     check("a place to add one", 'id="receiver-add"' in page)
@@ -6136,7 +6172,7 @@ def test_box_stickers_can_be_opened_pre_filled(tmpdir):
     for junk in ("qty=abc", "qty=-5", "qty=0", "qty=", "qty=3.7"):
         page = markup_only(client.get(f"/print-stickers?{junk}").get_data(as_text=True))
         check(f"{junk} does not produce a broken page",
-              '<datalist id="receiver-options">' in page)
+              'id="receiver-menu"' in page)
     check("a negative quantity does not become a negative field",
           'value="-5"' not in markup_only(
               client.get("/print-stickers?qty=-5").get_data(as_text=True)))

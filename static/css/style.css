@@ -2453,3 +2453,48 @@ body.is-test-print .sticker-stamp { display: block; }
 .queue-remove:hover { text-decoration: underline; }
 
 .sticker-queue .hint { margin: 10px 0 0; }
+
+/* --- the receiver dropdown -------------------------------------------- */
+/* The field is the positioning context for the menu, which hangs under it. */
+.receiver-field { position: relative; }
+
+.receiver-caret {
+  flex: 0 0 auto;
+  width: 30px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--label);
+}
+.receiver-caret:hover { color: var(--ink); }
+
+.receiver-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+  /* A long list scrolls inside the menu rather than running off the page. */
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.receiver-menu li {
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.receiver-menu li:hover,
+.receiver-menu li.is-active { background: var(--head-bg); }
+
+/* Keyboard and mouse agree: the highlighted row looks the same either way. */
+.receiver-menu li.is-active { outline: 1px solid var(--line); }
