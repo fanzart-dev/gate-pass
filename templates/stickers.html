@@ -58,14 +58,38 @@
           <label for="receiver">Receiver</label>
           {# An input with a datalist, not a select: the list is a starting
              point, and a destination nobody has sent to before must be
-             typeable without anybody editing a list first. #}
-          <input type="text" id="receiver" name="receiver" value="{{ receiver }}"
-                 list="receiver-options" placeholder="CHENNAI (SUMANGALI)">
+             typeable without anybody editing a list first. A select would
+             make the first consignment to a new place impossible until
+             somebody edited a list. #}
+          <div class="receiver-field">
+            <input type="text" id="receiver" name="receiver" value="{{ receiver }}"
+                   list="receiver-options" placeholder="CHENNAI (SUMANGALI)"
+                   autocomplete="off">
+            <button type="button" id="receiver-manage" class="quiet"
+                    aria-expanded="false" aria-controls="receiver-list"
+                    title="Add or remove saved receivers">Manage</button>
+          </div>
           <datalist id="receiver-options">
+            {# Seeded from here on a browser that has never used the page.
+               After that the browser's own list is the one that counts, so a
+               name can be deleted and stay deleted. #}
             {% for option in receiver_presets %}
               <option value="{{ option }}"></option>
             {% endfor %}
           </datalist>
+
+          <div class="receiver-list" id="receiver-list" hidden>
+            <ul id="receiver-items"></ul>
+            <div class="receiver-add">
+              <input type="text" id="receiver-new" placeholder="Add a receiver"
+                     autocomplete="off">
+              <button type="button" id="receiver-add" class="quiet">+ Add</button>
+            </div>
+            <p class="hint">
+              Saved in this browser only — nothing here is sent to the server
+              or shared with another machine.
+            </p>
+          </div>
         </div>
         <div>
           <label for="qty">Number of boxes</label>
@@ -237,62 +261,143 @@
         }
       }
 
-      // --- remembered destinations --------------------------------------
-      // In the browser, not the database. A destination is a habit of whoever
-      // does the dispatching, not a fact about the company: it needs no
-      // migration, no admin screen and no deploy to add one, and it cannot
-      // break anything if it is wrong. The cost is that it does not follow
-      // anyone to another machine, which for a list of six place names is a
-      // fair trade.
+      // --- the receiver list --------------------------------------------
+      // One list, held in this browser. It starts as the names rendered into
+      // the datalist above and is the browser's own from then on, which is
+      // what makes a name deletable: while the defaults were re-sent by the
+      // server on every load, deleting one only lasted until the next visit.
+      //
+      // In the browser rather than the database because a destination is a
+      // habit of whoever does the dispatching, not a fact about the company.
+      // It needs no migration, no admin screen and no deploy to add one, and
+      // it cannot break anything if it is wrong. The cost is that it does not
+      // follow anyone to another machine, which for a list of place names is
+      // a fair trade.
       //
       // Every read and write is wrapped: storage throws outright in a private
       // window and in browsers set to block site data, and a sticker page
-      // that will not load because it could not remember CHENNAI would be a
+      // that would not load because it could not remember CHENNAI would be a
       // ridiculous way to fail.
-      function savedReceivers() {
-        try {
-          const raw = window.localStorage.getItem(STORE);
-          const list = raw ? JSON.parse(raw) : [];
-          return Array.isArray(list) ? list.filter((s) => typeof s === "string") : [];
-        } catch (e) {
-          return [];
-        }
+      const RECEIVER_STORE = "sticker_receivers_v2";
+      const OLD_RECEIVER_STORE = "custom_sticker_receivers";
+
+      // Case-insensitively, keeping the first spelling seen: "Chennai
+      // (Sumangali)" and "CHENNAI (SUMANGALI)" are the same place, and a list
+      // holding both has stopped being a shortcut.
+      function dedupe(list) {
+        const seen = new Set();
+        return list.filter(function (name) {
+          const key = String(name).trim().toLowerCase();
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
       }
 
-      function knownReceivers() {
+      function serverDefaults() {
         return [...options.options].map((o) => o.value);
       }
 
-      function remember(name) {
-        const clean = name.trim();
-        if (!clean) return;
-        // Case-insensitively: "Chennai (Sumangali)" and "CHENNAI (SUMANGALI)"
-        // are the same destination, and a list that accumulates both spellings
-        // stops being a shortcut.
-        const already = knownReceivers()
-          .some((v) => v.toLowerCase() === clean.toLowerCase());
-        if (already) return;
-
-        const saved = savedReceivers();
-        saved.push(clean);
+      function loadReceivers() {
         try {
-          window.localStorage.setItem(STORE, JSON.stringify(saved));
+          const raw = window.localStorage.getItem(RECEIVER_STORE);
+          if (raw !== null) {
+            const list = JSON.parse(raw);
+            // An empty array is a real answer — somebody deleted the lot — so
+            // only a MISSING key falls back to the defaults.
+            if (Array.isArray(list)) return list.filter((v) => typeof v === "string");
+          }
+          // First run under the new shape. The older key held only the names
+          // that had been typed, sitting on top of defaults the server re-sent
+          // every time; carry those over rather than losing them.
+          const older = window.localStorage.getItem(OLD_RECEIVER_STORE);
+          const carried = older ? JSON.parse(older) : [];
+          return serverDefaults().concat(Array.isArray(carried) ? carried : []);
         } catch (e) {
-          /* Out of quota, or storage blocked. The sticker still prints. */
+          return serverDefaults();
         }
-        addOption(clean);
       }
 
-      function addOption(value) {
-        const option = document.createElement("option");
-        option.value = value;
-        options.appendChild(option);
+      function saveReceivers() {
+        try {
+          window.localStorage.setItem(RECEIVER_STORE, JSON.stringify(receivers));
+        } catch (e) { /* out of quota, or blocked; the sticker still prints */ }
       }
 
-      savedReceivers().forEach(function (name) {
-        const already = knownReceivers()
-          .some((v) => v.toLowerCase() === name.toLowerCase());
-        if (!already) addOption(name);
+      let receivers = dedupe(loadReceivers());
+
+      function renderReceivers() {
+        options.textContent = "";
+        receivers.forEach(function (name) {
+          const option = document.createElement("option");
+          option.value = name;
+          options.appendChild(option);
+        });
+
+        const items = document.getElementById("receiver-items");
+        items.textContent = "";
+        if (!receivers.length) {
+          const li = document.createElement("li");
+          li.className = "receiver-empty";
+          li.textContent = "None saved. Whatever you type is kept.";
+          items.appendChild(li);
+          return;
+        }
+        receivers.forEach(function (name) {
+          const li = document.createElement("li");
+          const label = document.createElement("span");
+          label.textContent = name;   // never innerHTML: these are typed values
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "receiver-remove";
+          remove.textContent = "\u00d7";
+          remove.title = "Remove " + name;
+          remove.setAttribute("aria-label", "Remove " + name);
+          remove.addEventListener("click", function () {
+            receivers = receivers.filter((v) => v !== name);
+            saveReceivers();
+            renderReceivers();
+          });
+          li.appendChild(label);
+          li.appendChild(remove);
+          items.appendChild(li);
+        });
+      }
+
+      function remember(name) {
+        const clean = String(name).trim();
+        if (!clean) return false;
+        if (receivers.some((v) => v.toLowerCase() === clean.toLowerCase())) return false;
+        receivers.push(clean);
+        saveReceivers();
+        renderReceivers();
+        return true;
+      }
+
+      renderReceivers();
+
+      const manageButton = document.getElementById("receiver-manage");
+      const managePanel = document.getElementById("receiver-list");
+      manageButton.addEventListener("click", function () {
+        const opening = managePanel.hidden;
+        managePanel.hidden = !opening;
+        manageButton.setAttribute("aria-expanded", opening ? "true" : "false");
+        if (opening) document.getElementById("receiver-new").focus();
+      });
+
+      const newBox = document.getElementById("receiver-new");
+      function addTyped() {
+        if (remember(newBox.value)) newBox.value = "";
+        newBox.focus();
+      }
+      document.getElementById("receiver-add").addEventListener("click", addTyped);
+      newBox.addEventListener("keydown", function (event) {
+        // Enter here would otherwise submit the form and generate stickers,
+        // which is not what pressing Enter in an "add a name" box should do.
+        if (event.key === "Enter") {
+          event.preventDefault();
+          addTyped();
+        }
       });
 
       // --- building the sheet -------------------------------------------

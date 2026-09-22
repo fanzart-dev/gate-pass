@@ -2053,6 +2053,63 @@ table.people-table th { padding: 10px 12px !important; }
 
 /* The calibration boxes. Quieter than the fields above, because they are set
    once when the printer is first lined up and then left alone. */
+/* The receiver box and its Manage button share a line, so the button reads
+   as belonging to that field rather than to the form. */
+.receiver-field { display: flex; gap: 6px; align-items: stretch; }
+.receiver-field input { flex: 1 1 auto; min-width: 0; }
+.receiver-field button { flex: 0 0 auto; padding: 0 11px; font-size: 13px; }
+
+.receiver-list {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--head-bg);
+}
+
+.receiver-list ul {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  /* Long lists scroll inside the panel rather than pushing the form down the
+     page every time somebody opens it. */
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.receiver-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13.5px;
+}
+.receiver-list li span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.receiver-list .receiver-empty { color: var(--muted); }
+
+.receiver-remove {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  line-height: 1;
+  font-size: 15px;
+  border-radius: 50%;
+  border-color: transparent;
+  background: none;
+  color: var(--muted);
+}
+.receiver-remove:hover {
+  background: var(--danger-bg);
+  border-color: transparent;
+  color: var(--danger);
+}
+
+.receiver-add { display: flex; gap: 6px; }
+.receiver-add input { flex: 1 1 auto; min-width: 0; }
+.receiver-add button { flex: 0 0 auto; white-space: nowrap; }
+.receiver-list .hint { margin: 8px 0 0; font-size: 12.5px; }
+
 .sticker-align {
   display: flex;
   flex-wrap: wrap;

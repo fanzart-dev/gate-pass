@@ -6037,6 +6037,82 @@ def test_box_stickers_start_empty_except_the_sender(tmpdir):
           and 'list="receiver-options"' in page)
 
 
+def test_the_receiver_list_can_be_added_to_and_pruned(tmpdir):
+    """A destination has to be addable, and removable, without a deploy.
+
+    It was a datalist seeded by the server on every load, so a name could be
+    added by typing it but never taken away: deleting one lasted until the
+    next visit, when the server sent it again. The list is now the browser's
+    own, seeded once from those defaults.
+    """
+    flask_app, client = logged_in_app(tmpdir, "receivers")
+    page = markup_only(client.get("/print-stickers").get_data(as_text=True))
+
+    # Still a text box with a datalist, not a select. A select would make the
+    # first consignment to a new place impossible until somebody edited a list.
+    check("the receiver can be typed", 'id="receiver" name="receiver"' in page)
+    check("with a list of suggestions", 'list="receiver-options"' in page)
+    check("and it is not a closed dropdown", "<select id=\"receiver\"" not in page)
+
+    # The server still supplies the starting names.
+    for preset in app_module.STICKER_RECEIVERS:
+        check(f"{preset} is offered to a new browser",
+              f'<option value="{preset}"></option>' in page)
+
+    check("there is a way to manage the list", 'id="receiver-manage"' in page)
+    check("a place to add one", 'id="receiver-add"' in page)
+    check("and something to type into", 'id="receiver-new"' in page)
+    check("with somewhere to list them", 'id="receiver-items"' in page)
+
+    template = (ROOT / "templates" / "stickers.html").read_text()
+
+    # The list is the browser's after the first load, which is what makes a
+    # name deletable. While the server re-sent the defaults every time, a
+    # deletion could not survive a reload.
+    check("the list lives in the browser",
+          'RECEIVER_STORE = "sticker_receivers_v2"' in template)
+    check("seeded from what the server rendered",
+          "function serverDefaults()" in template)
+    check("only when the browser has never had a list",
+          "if (raw !== null)" in template)
+    # An empty array is somebody deleting the lot, not an absent list.
+    check("deleting every name is respected, not treated as empty",
+          "// An empty array is a real answer" in template)
+
+    # Names typed under the previous key must not be lost.
+    check("the older list is carried over",
+          'OLD_RECEIVER_STORE = "custom_sticker_receivers"' in template)
+    check("onto the defaults rather than instead of them",
+          "serverDefaults().concat(" in template)
+
+    # Removing is per name, and writes through.
+    check("each name has a remove button", 'class = "receiver-remove"' in template
+          or 'remove.className = "receiver-remove"' in template)
+    check("removing writes the list back",
+          "receivers = receivers.filter((v) => v !== name);" in template)
+
+    # Adding, from the box or by generating with a name nobody has used.
+    check("a typed name is kept when stickers are generated",
+          "remember(v.destination)" in template or "remember(to)" in template)
+    check("the same name twice is not two entries",
+          "v.toLowerCase() === clean.toLowerCase()" in template)
+    check("and neither is a differently-cased one", "function dedupe" in template)
+
+    # Enter in the add box must not submit the form and print a batch.
+    check("Enter adds rather than generating stickers",
+          'if (event.key === "Enter") {' in template
+          and "event.preventDefault();" in template)
+
+    # Typed values are rendered as text, never as markup.
+    panel = template[template.index("function renderReceivers"):
+                     template.index("function remember")]
+    # Comments stripped first: the line that sets the text explains that it
+    # deliberately does not use innerHTML, and saying the word is not using it.
+    code = "\n".join(line.split("//")[0] for line in panel.splitlines())
+    check("a saved name is set as text, not markup",
+          "label.textContent = name;" in code and "innerHTML" not in code)
+
+
 def test_box_stickers_can_be_opened_pre_filled(tmpdir):
     """The whole reason the values are in the query string."""
     flask_app, client = logged_in_app(tmpdir, "stickerargs")
@@ -7459,6 +7535,7 @@ def main():
         test_an_invoice_of_nothing_but_charges_says_so(tmpdir)
         test_box_stickers_need_no_database(tmpdir)
         test_box_stickers_start_empty_except_the_sender(tmpdir)
+        test_the_receiver_list_can_be_added_to_and_pruned(tmpdir)
         test_box_stickers_can_be_opened_pre_filled(tmpdir)
         test_the_sticker_sheet_is_built_for_paper()
         test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir)
