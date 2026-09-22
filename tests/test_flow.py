@@ -6575,7 +6575,7 @@ def test_the_sticker_page_works_without_the_calibration_bar(tmpdir):
     staff = flask_app.test_client()
     sign_in(staff, "ops")
     page = markup_only(staff.get("/print-stickers").get_data(as_text=True))
-    check("a non-admin still gets the page", "Generate Stickers" in page)
+    check("a non-admin still gets the page", "Add to Queue" in page)
     check("and the Print button", 'id="print-stickers"' in page)
     check("but not the calibration bar", 'class="sticker-align"' not in page)
     for control in ("align-left", "align-top", "align-gap", "align-pitch",
@@ -6590,6 +6590,89 @@ def test_the_sticker_page_works_without_the_calibration_bar(tmpdir):
                "align-scale", "align-paper", "align-test", "align-reset")))
 
 
+def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
+    """Six customers in one trip to the printer, and no half-used sheets.
+
+    Printing each consignment on its own ends every job part-way down a
+    sheet: two boxes for one customer leaves the third slot of that sheet
+    empty and it goes in the bin. Queuing them means the break falls every
+    third LABEL rather than at the end of a customer.
+    """
+    flask_app, client = logged_in_app(tmpdir, "stickerqueue")
+    page = markup_only(client.get("/print-stickers").get_data(as_text=True))
+    template = (ROOT / "templates" / "stickers.html").read_text()
+
+    check("adding is what the form does now", "Add to Queue" in page)
+    check("and printing takes the whole queue", "Print All Queued Stickers" in page)
+    check("there is a queue table", 'id="queue-rows"' in page)
+    for column in ("#", "LR Number", "Sender", "Receiver", "Boxes"):
+        check(f"with a {column} column", f">{column}<" in page)
+    check("each row can be removed", "queue-remove" in template)
+    check("and the lot can be cleared", 'id="queue-clear"' in page)
+
+    # The flattening is the feature. Every sticker in the queue becomes one
+    # entry in one list, and the page break falls every third entry — so two
+    # boxes for one customer and one for the next share a sheet.
+    flattener = template[template.index("function allLabels()"):
+                         template.index("function renderSheet()")]
+    check("every sticker in the queue becomes one flat entry",
+          "queue.forEach" in flattener and "out.push({" in flattener)
+    check("for each box of each job", "n < job.qty" in flattener)
+
+    render = template[template.index("function renderSheet()"):
+                      template.index("function addToQueue()")]
+    check("and a page starts every third label, whoever it belongs to",
+          "i % PER_PAGE === 0" in render)
+    check("counted across the whole queue, not per customer",
+          "allLabels()" in render)
+
+    # The bracketed count belongs to the consignment, not the queue: five
+    # boxes for one customer and two for the next are (5) and (2), never (7).
+    check("the bracket is the job's own box count",
+          "${job.lr} (${job.qty})" in flattener)
+
+    # A queue somebody spent ten minutes building must survive a stray
+    # refresh or a closed tab.
+    check("the queue is kept in the browser",
+          'QUEUE_STORE = "sm_sticker_print_queue"' in template)
+    # Each of the three things that change the queue writes it back. Counting
+    # calls would pass on three in one place and none in the others.
+    for what, start, end in (
+            ("removing a row", "function renderQueue()", "function allLabels()"),
+            ("adding one", "function addToQueue()", 'getElementById("queue-clear")'),
+            ("clearing the lot", 'getElementById("queue-clear")', "function fitLongNames")):
+        block = template[template.index(start):template.index(end)]
+        check(f"{what} writes the queue back", "saveQueue();" in block)
+
+    # The test page borrows a label when the queue is empty and puts it back,
+    # and must NOT write that to storage — lining a printer up should not
+    # leave a job queued.
+    test_block = template[template.index('getElementById("align-test")'):
+                          template.index('getElementById("align-reset")')]
+    check("but the borrowed test label is not saved",
+          "saveQueue" not in test_block)
+    check("and it is taken back off afterwards", "queue.pop();" in test_block)
+    check("and read back on load", "let queue = loadQueue();" in template)
+    # It comes back from storage, which another version of this page may have
+    # written, so nothing in it is trusted.
+    check("what comes back is checked, not trusted",
+          "typeof j === \"object\"" in template
+          and "parseInt(j.qty, 10) || 1" in template)
+
+    # None of it belongs on paper.
+    check("the queue table is not printed",
+          'class="card sticker-queue no-print"' in page)
+    css = (ROOT / "static" / "css" / "style.css").read_text()
+    print_block = css[css.rindex("@media print"):]
+    check("along with the rest of the panel",
+          ".no-print { display: none !important; }" in print_block)
+
+    # And the server still holds none of it.
+    source = inspect.getsource(flask_app.view_functions["print_stickers"])
+    check("the queue never reaches the server",
+          "queue" not in source.lower())
+
+
 def test_every_sticker_in_a_batch_is_the_same(tmpdir):
     """No box numbers. Twenty-seven boxes get twenty-seven identical labels.
 
@@ -6599,7 +6682,8 @@ def test_every_sticker_in_a_batch_is_the_same(tmpdir):
     the consignment is twenty-seven boxes, which is what the far end checks.
     """
     template = (ROOT / "templates" / "stickers.html").read_text()
-    builder = template[template.index("function build()"):]
+    builder = template[template.index("function renderSheet()"):
+                       template.index("function addToQueue()")]
 
     check("no per-box counter is rendered", "sticker-seq" not in template)
     check("and none is built", "(${n})" not in builder)
@@ -6622,8 +6706,16 @@ def test_every_sticker_in_a_batch_is_the_same(tmpdir):
 
     # The count in brackets is the total, and it must be the SAME total on
     # every card — the number of boxes, not a running position.
-    check("the bracketed number is the batch total",
-          "${lr} (${quantity})" in builder)
+    # The count in brackets is the size of the consignment THAT LABEL belongs
+    # to, not the size of the queue. Five boxes for one customer and two for
+    # the next print as (5) and (2), never (7) — the far end counts against
+    # its own delivery note.
+    flattener = template[template.index("function allLabels()"):
+                         template.index("function renderSheet()")]
+    check("the bracketed number is the job's own box count",
+          "${job.lr} (${job.qty})" in flattener)
+    check("and not the queue total",
+          "totalStickers()" not in flattener)
 
 
 def test_sticker_values_cannot_carry_markup(tmpdir):
@@ -6635,12 +6727,19 @@ def test_sticker_values_cannot_carry_markup(tmpdir):
     check("a script tag is escaped, not rendered", nasty not in page)
     check("and arrives as text", "&lt;script&gt;" in page)
 
-    # The cards are built in the browser from those same values, so the script
-    # that builds them must not use innerHTML either.
+    # The cards and the queue table are both built in the browser from those
+    # same typed values, so neither may use innerHTML.
+    #
+    # Comments stripped first: the lines that set the text say outright that
+    # they avoid innerHTML, and saying the word is not using it.
     template = (ROOT / "templates" / "stickers.html").read_text()
-    builder = template[template.index("function build()"):]
-    check("the card builder sets text, never markup",
-          "innerHTML" not in builder)
+    for name, start, end in (
+            ("the card builder", "function renderSheet()", "function addToQueue()"),
+            ("the queue table", "function renderQueue()", "function allLabels()")):
+        block = template[template.index(start):template.index(end)]
+        code = "\n".join(line.split("//")[0] for line in block.splitlines())
+        check(f"{name} sets text, never markup", "innerHTML" not in code)
+        check(f"{name} uses textContent", "textContent" in code)
 
 
 def test_the_office_instructions_do_not_name_a_dead_host(tmpdir):
@@ -7536,6 +7635,7 @@ def main():
         test_box_stickers_need_no_database(tmpdir)
         test_box_stickers_start_empty_except_the_sender(tmpdir)
         test_the_receiver_list_can_be_added_to_and_pruned(tmpdir)
+        test_the_sticker_queue_fills_pages_across_customers(tmpdir)
         test_box_stickers_can_be_opened_pre_filled(tmpdir)
         test_the_sticker_sheet_is_built_for_paper()
         test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir)

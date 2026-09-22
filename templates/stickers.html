@@ -100,8 +100,9 @@
       </div>
 
       <div class="sticker-actions">
-        <button type="submit" class="primary" id="generate">Generate Stickers</button>
-        <button type="button" id="print-stickers" disabled>Print</button>
+        <button type="submit" class="primary" id="generate">Add to Queue</button>
+        <button type="button" id="print-stickers" disabled>
+          Print All Queued Stickers</button>
         <span class="hint" id="sticker-count"></span>
       </div>
 
@@ -181,6 +182,36 @@
       </div>
       {% endif %}
     </form>
+  </div>
+
+  {# The queue. Consignments accumulate here and print in one run, so a van
+     going out with six customers' boxes is one trip to the printer rather
+     than six — and the sheets do not come back with blank slots where one
+     customer's labels ran out three quarters of the way down a page. #}
+  {# no-print explicitly, not by nesting: it sits outside the panel above,
+     and a queue table printed across the top sticker would be worse than
+     useless. #}
+  <div class="card sticker-queue no-print" id="sticker-queue" hidden>
+    <div class="sticker-queue-head">
+      <h2>Queued</h2>
+      <button type="button" id="queue-clear" class="quiet">Clear Queue</button>
+    </div>
+    <div class="table-wrap">
+      <table class="list sticker-queue-table">
+        <thead>
+          <tr>
+            <th class="q-num">#</th>
+            <th>LR Number</th>
+            <th>Sender</th>
+            <th>Receiver</th>
+            <th class="q-qty">Boxes</th>
+            <th class="q-act"></th>
+          </tr>
+        </thead>
+        <tbody id="queue-rows"></tbody>
+      </table>
+    </div>
+    <p class="hint" id="queue-summary"></p>
   </div>
 
   {# Filled by the script below. Left empty on load on purpose: an empty sheet
@@ -408,29 +439,144 @@
         return line;
       }
 
-      function build() {
-        const lr       = document.getElementById("lr").value.trim();
-        const sender   = document.getElementById("sender").value.trim();
-        const to       = receiver.value.trim();
-        let quantity   = parseInt(qtyInput.value, 10);
+      // ---- the queue -----------------------------------------------------
+      // Consignments accumulate before anything is printed, so a van going
+      // out with six customers' boxes is one trip to the printer rather than
+      // six. It also stops the waste: printing each customer separately ends
+      // every job on a part-used sheet, and a sheet of three labels with one
+      // used is two labels in the bin.
+      //
+      // Kept in the browser so a refresh, a stray back button or a closed tab
+      // does not lose a queue somebody has spent ten minutes building.
+      const QUEUE_STORE = "sm_sticker_print_queue";
 
-        if (!Number.isFinite(quantity) || quantity < 1) {
-          qtyInput.focus();
+      function loadQueue() {
+        try {
+          const raw = window.localStorage.getItem(QUEUE_STORE);
+          const list = raw ? JSON.parse(raw) : [];
+          if (!Array.isArray(list)) return [];
+          // Anything that is not a job is dropped rather than trusted. This
+          // comes back from storage, which another version of this page may
+          // have written.
+          return list
+            .filter((j) => j && typeof j === "object")
+            .map(function (j) {
+              const qty = Math.min(MAX, Math.max(1, parseInt(j.qty, 10) || 1));
+              return {
+                lr: String(j.lr || "").trim(),
+                sender: String(j.sender || "").trim(),
+                receiver: String(j.receiver || "").trim(),
+                qty: qty,
+              };
+            });
+        } catch (e) {
+          return [];
+        }
+      }
+
+      function saveQueue() {
+        try {
+          window.localStorage.setItem(QUEUE_STORE, JSON.stringify(queue));
+        } catch (e) { /* private window, or full; the queue still prints */ }
+      }
+
+      let queue = loadQueue();
+
+      const queueCard = document.getElementById("sticker-queue");
+      const queueRows = document.getElementById("queue-rows");
+      const queueSummary = document.getElementById("queue-summary");
+
+      function totalStickers() {
+        return queue.reduce((sum, job) => sum + job.qty, 0);
+      }
+
+      function renderQueue() {
+        queueCard.hidden = queue.length === 0;
+        queueRows.textContent = "";
+
+        queue.forEach(function (job, index) {
+          const tr = document.createElement("tr");
+          const cell = (text, cls) => {
+            const td = document.createElement("td");
+            if (cls) td.className = cls;
+            td.textContent = text;   // typed values; never innerHTML
+            return td;
+          };
+          tr.appendChild(cell(index + 1, "q-num muted-cell"));
+          tr.appendChild(cell(job.lr || "—"));
+          tr.appendChild(cell(job.sender || "—"));
+          tr.appendChild(cell(job.receiver || "—"));
+          tr.appendChild(cell(job.qty, "q-qty"));
+
+          const actions = document.createElement("td");
+          actions.className = "q-act";
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "link-button queue-remove";
+          remove.textContent = "Delete";
+          remove.title = `Remove ${job.lr || "this job"} from the queue`;
+          remove.addEventListener("click", function () {
+            queue.splice(index, 1);
+            saveQueue();
+            renderQueue();
+            renderSheet();
+          });
+          actions.appendChild(remove);
+          tr.appendChild(actions);
+          queueRows.appendChild(tr);
+        });
+
+        const labels = totalStickers();
+        const pages = Math.ceil(labels / PER_PAGE);
+        queueSummary.textContent = queue.length
+          ? `${queue.length} consignment${queue.length === 1 ? "" : "s"}, `
+            + `${labels} sticker${labels === 1 ? "" : "s"}, `
+            + `${pages} sheet${pages === 1 ? "" : "s"}`
+          : "";
+      }
+
+      // Every sticker in the whole queue, in order, as one flat list. This is
+      // what makes the pages fill continuously: the page break falls every
+      // third LABEL, not at the end of a customer, so two boxes for one
+      // customer and one for the next share a sheet instead of wasting the
+      // two slots underneath the first.
+      function allLabels() {
+        const out = [];
+        queue.forEach(function (job) {
+          for (let n = 0; n < job.qty; n++) {
+            out.push({
+              // The count in brackets is the size of THIS consignment, so it
+              // stays the job's own quantity and not the queue total.
+              awb: job.lr ? `${job.lr} (${job.qty})` : "",
+              origin: job.sender,
+              destination: job.receiver,
+            });
+          }
+        });
+        return out;
+      }
+
+      function renderSheet() {
+        const labels = allLabels();
+        sheet.textContent = "";
+
+        if (!labels.length) {
+          sheet.hidden = true;
+          empty.hidden = false;
+          printBtn.disabled = true;
+          countHint.textContent = "";
           return;
         }
-        if (quantity > MAX) quantity = MAX;
 
-        sheet.textContent = "";
         let page = null;
-        for (let n = 1; n <= quantity; n++) {
+        labels.forEach(function (label, i) {
           // Pages are built explicitly rather than letting the cards reflow
           // and break where they may. Padding on one long container is applied
           // once, at the top of the first sheet — so every page after it began
-          // hard against the edge of the paper, with the top row's cut guide
-          // inside the strip the printer cannot reach. A container per page
-          // puts the same margin on every page. Same reason, and the same
-          // shape, as .sheet on the printed gate pass.
-          if ((n - 1) % PER_PAGE === 0) {
+          // hard against the edge of the paper, with the top row inside the
+          // strip the printer cannot reach. A container per page puts the same
+          // margin on every page.
+          if (i % PER_PAGE === 0) {
             page = document.createElement("div");
             page.className = "sticker-page";
             // Hidden unless a test page is being printed. It has to be laid
@@ -443,46 +589,91 @@
             page.appendChild(ruler);
 
             // The settings this sheet was drawn with, printed on the test
-            // page itself. Without it a photograph of a wrong print says
-            // only that it is wrong — not which numbers produced it, or
-            // whether the page that produced it was even the current one.
-            // Several rounds went by on exactly that ambiguity.
+            // page itself. Without it a photograph of a wrong print says only
+            // that it is wrong — not which numbers produced it, or whether the
+            // page that produced it was even the current one.
             const stamp = document.createElement("div");
             stamp.className = "sticker-stamp";
             page.appendChild(stamp);
             sheet.appendChild(page);
           }
+
           const card = document.createElement("div");
           card.className = "sticker-card";
           // Three lines, and they are not labels — they are the VALUES that
-          // drop into the blanks already printed on the yellow SM Express
-          // sheet, beside its own "AWB No:", "ORIGIN:" and "DESTINATION:".
-          // Printing those words again would double them up on the label.
-          //
-          // No box number. Every sticker in a batch is identical: the count in
-          // brackets says how many boxes the consignment is, and which
-          // particular box this one is was never on the courier's sheet.
-          card.appendChild(textLine("sticker-lr", `${lr} (${quantity})`));
-          card.appendChild(textLine("sticker-from", sender));
-          card.appendChild(textLine("sticker-to", to));
+          // drop into the blanks already printed on the SM Express sheet,
+          // beside its own "AWB No:", "ORIGIN:" and "DESTINATION:". Printing
+          // those words again would double them up on the label.
+          card.appendChild(textLine("sticker-lr", label.awb));
+          card.appendChild(textLine("sticker-from", label.origin));
+          card.appendChild(textLine("sticker-to", label.destination));
           page.appendChild(card);
-        }
+        });
 
         sheet.hidden = false;
         empty.hidden = true;
         printBtn.disabled = false;
-        countHint.textContent = quantity === 1
-          ? "1 sticker ready"
-          : `${quantity} stickers ready`;
-        if (quantity >= MAX) {
-          countHint.textContent += ` — ${MAX} is the most that can be printed at once`;
+
+        const pages = Math.ceil(labels.length / PER_PAGE);
+        countHint.textContent =
+          `${labels.length} sticker${labels.length === 1 ? "" : "s"}`
+          + ` → ${pages} sheet${pages === 1 ? "" : "s"}`;
+        if (totalStickers() >= MAX) {
+          countHint.textContent += ` — ${MAX} is the most that can print at once`;
         }
 
-        remember(to);
         // Applied after the cards exist, because the offsets are set on each
         // page element and there were none to set them on until now.
         applyAlignment(false);
       }
+
+      function addToQueue() {
+        const lr = document.getElementById("lr").value.trim();
+        const sender = document.getElementById("sender").value.trim();
+        const to = receiver.value.trim();
+        let quantity = parseInt(qtyInput.value, 10);
+
+        if (!Number.isFinite(quantity) || quantity < 1) {
+          qtyInput.focus();
+          return;
+        }
+        // Capped on the TOTAL, not per job: the browser has to build every
+        // card in the queue, and ten jobs of a hundred is the same weight as
+        // one job of a thousand.
+        const room = MAX - totalStickers();
+        if (room <= 0) {
+          countHint.textContent = `${MAX} stickers already queued — print or clear first`;
+          return;
+        }
+        quantity = Math.min(quantity, room);
+
+        queue.push({ lr: lr, sender: sender, receiver: to, qty: quantity });
+        saveQueue();
+        remember(to);
+        renderQueue();
+        renderSheet();
+
+        // Ready for the next customer: the LR and the count change every
+        // time, the sender almost never does, and the receiver is a fair
+        // guess at nothing, so both of those are cleared with it.
+        document.getElementById("lr").value = "";
+        receiver.value = "";
+        qtyInput.value = "";
+        document.getElementById("lr").focus();
+      }
+
+      document.getElementById("queue-clear").addEventListener("click", function () {
+        if (!queue.length) return;
+        const labels = totalStickers();
+        if (!window.confirm(
+              `Remove all ${queue.length} consignment(s) — ${labels} sticker(s)?`)) {
+          return;
+        }
+        queue = [];
+        saveQueue();
+        renderQueue();
+        renderSheet();
+      });
 
       // A long destination has to stay inside its blank row. The lines are
       // absolutely positioned, so an overflowing one does not push the next
@@ -603,9 +794,15 @@
       // nine sheets of stationery.
       const testButton = document.getElementById("align-test");
       if (testButton) testButton.addEventListener("click", function () {
-        if (sheet.hidden) {
-          qtyInput.value = qtyInput.value || "1";
-          build();
+        // Something has to be on the sheet to line anything up against. An
+        // empty queue gets one throwaway label, removed again afterwards, so
+        // testing the printer never leaves a job in the queue.
+        const borrowed = queue.length === 0;
+        if (borrowed) {
+          queue.push({ lr: document.getElementById("lr").value.trim() || "00000000",
+                       sender: document.getElementById("sender").value.trim(),
+                       receiver: receiver.value.trim(), qty: 1 });
+          renderSheet();
         }
         const pages = [...sheet.querySelectorAll(".sticker-page")];
         pages.slice(1).forEach(function (pg) { pg.dataset.hidden = "1"; pg.hidden = true; });
@@ -615,6 +812,10 @@
         pages.forEach(function (pg) {
           if (pg.dataset.hidden) { pg.hidden = false; delete pg.dataset.hidden; }
         });
+        if (borrowed) {
+          queue.pop();
+          renderSheet();
+        }
       });
 
       const resetButton = document.getElementById("align-reset");
@@ -629,15 +830,20 @@
 
       form.addEventListener("submit", function (event) {
         event.preventDefault();
-        build();
+        addToQueue();
       });
 
       printBtn.addEventListener("click", function () { window.print(); });
 
+      // Whatever was already queued when the page was opened or refreshed.
+      renderQueue();
+      renderSheet();
+
       // Opened from a link that already carries everything — the whole point
-      // of accepting the values in the URL — so there is nothing to press.
+      // of accepting the values in the URL — so it queues itself rather than
+      // waiting for a press.
       if (document.getElementById("lr").value.trim() && qtyInput.value.trim()) {
-        build();
+        addToQueue();
       }
 
       // The cards are sized in millimetres, so a window resize cannot change
