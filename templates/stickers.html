@@ -116,6 +116,10 @@
 
       <div class="sticker-actions">
         <button type="submit" class="primary" id="generate">Add to Queue</button>
+        {# Only while a queued job is being corrected. Without a way out, the
+           only escape from an edit is to save it or reload the page. #}
+        <button type="button" id="queue-cancel-edit" class="quiet" hidden>
+          Cancel edit</button>
         <button type="button" id="print-stickers" disabled>
           Print All Queued Stickers</button>
         <span class="hint" id="sticker-count"></span>
@@ -601,6 +605,13 @@
 
       let queue = loadQueue();
 
+      // Which row the form is currently correcting, or null when it is being
+      // used to add a new one. Deliberately not persisted: a half-finished
+      // correction is not worth restoring, and coming back to a page that
+      // silently overwrites row three on the next Save would be worse than
+      // losing the edit.
+      let editingIndex = null;
+
       const queueCard = document.getElementById("sticker-queue");
       const queueRows = document.getElementById("queue-rows");
       const queueSummary = document.getElementById("queue-summary");
@@ -615,6 +626,10 @@
 
         queue.forEach(function (job, index) {
           const tr = document.createElement("tr");
+          // The row being corrected is marked, because the form above it is
+          // showing that job's values and there is otherwise nothing to say
+          // which of five rows is about to be overwritten.
+          if (index === editingIndex) tr.className = "is-editing";
           const cell = (text, cls) => {
             const td = document.createElement("td");
             if (cls) td.className = cls;
@@ -629,6 +644,15 @@
 
           const actions = document.createElement("td");
           actions.className = "q-act";
+
+          const edit = document.createElement("button");
+          edit.type = "button";
+          edit.className = "link-button queue-edit";
+          edit.textContent = "Edit";
+          edit.title = `Correct ${job.lr || "this job"}`;
+          edit.addEventListener("click", function () { startEditing(index); });
+          actions.appendChild(edit);
+
           const remove = document.createElement("button");
           remove.type = "button";
           remove.className = "link-button queue-remove";
@@ -637,7 +661,14 @@
           remove.addEventListener("click", function () {
             queue.splice(index, 1);
             saveQueue();
-            renderQueue();
+            // Every row after this one has just shifted up. If the form was
+            // correcting one of them it is now pointed at its neighbour, so
+            // the edit is abandoned rather than quietly redirected.
+            if (editingIndex !== null && editingIndex >= index) {
+              stopEditing(editingIndex === index);
+            } else {
+              renderQueue();
+            }
             renderSheet();
           });
           actions.appendChild(remove);
@@ -746,6 +777,41 @@
         applyAlignment(false);
       }
 
+      const addButton = document.getElementById("generate");
+      const cancelEdit = document.getElementById("queue-cancel-edit");
+
+      function startEditing(index) {
+        const job = queue[index];
+        if (!job) return;
+        editingIndex = index;
+        document.getElementById("lr").value = job.lr;
+        document.getElementById("sender").value = job.sender;
+        receiver.value = job.receiver;
+        qtyInput.value = job.qty;
+        addButton.textContent = "Save Changes";
+        cancelEdit.hidden = false;
+        renderQueue();
+        document.getElementById("lr").focus();
+        document.getElementById("lr").scrollIntoView({ block: "center" });
+      }
+
+      function stopEditing(clearForm) {
+        editingIndex = null;
+        addButton.textContent = "Add to Queue";
+        cancelEdit.hidden = true;
+        if (clearForm) {
+          document.getElementById("lr").value = "";
+          receiver.value = "";
+          qtyInput.value = "";
+        }
+        renderQueue();
+      }
+
+      cancelEdit.addEventListener("click", function () {
+        stopEditing(true);
+        document.getElementById("lr").focus();
+      });
+
       function addToQueue() {
         const lr = document.getElementById("lr").value.trim();
         const sender = document.getElementById("sender").value.trim();
@@ -758,26 +824,35 @@
         }
         // Capped on the TOTAL, not per job: the browser has to build every
         // card in the queue, and ten jobs of a hundred is the same weight as
-        // one job of a thousand.
-        const room = MAX - totalStickers();
+        // one job of a thousand. What the row being corrected already holds
+        // is not counted against itself, or raising a job from 2 to 3 near
+        // the ceiling would be refused for boxes it is about to give back.
+        const held = editingIndex === null ? 0 : queue[editingIndex].qty;
+        const room = MAX - totalStickers() + held;
         if (room <= 0) {
           countHint.textContent = `${MAX} stickers already queued — print or clear first`;
           return;
         }
         quantity = Math.min(quantity, room);
 
-        queue.push({ lr: lr, sender: sender, receiver: to, qty: quantity });
+        const job = { lr: lr, sender: sender, receiver: to, qty: quantity };
+        if (editingIndex === null) {
+          queue.push(job);
+        } else {
+          // In place, so a corrected job keeps its position. Moving it to the
+          // end would reshuffle which labels share a sheet, and somebody
+          // fixing a typo has no reason to expect that.
+          queue[editingIndex] = job;
+        }
         saveQueue();
         remember(to);
-        renderQueue();
-        renderSheet();
 
         // Ready for the next customer: the LR and the count change every
         // time, the sender almost never does, and the receiver is a fair
         // guess at nothing, so both of those are cleared with it.
-        document.getElementById("lr").value = "";
-        receiver.value = "";
-        qtyInput.value = "";
+        // stopEditing re-renders the queue either way.
+        stopEditing(true);
+        renderSheet();
         document.getElementById("lr").focus();
       }
 
@@ -790,7 +865,7 @@
         }
         queue = [];
         saveQueue();
-        renderQueue();
+        stopEditing(true);
         renderSheet();
       });
 
