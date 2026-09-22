@@ -2111,9 +2111,14 @@ table.people-table th { padding: 10px 12px !important; }
 
      The document places its three labels by hand, so its own spacings vary
      by a couple of millimetres either way. Means are used rather than
-     copying that variation, which is not a measurement of anything. */
-  --sticker-left: 36mm;
-  --sticker-top: 19.4mm;
+     copying that variation, which is not a measurement of anything.
+
+     The left and first-line figures are no longer the document's 36 and
+     19.4mm but 37 and 21.6mm, which is where the sheet actually lines up on
+     the office printer. They were arrived at in front of it, against a real
+     sticker, which beats any measurement taken from a file. */
+  --sticker-left: 37mm;
+  --sticker-top: 21.6mm;
   --sticker-gap: 16.66mm;
   /* Top of one label to the top of the next. Measured at 82mm on the sheet,
      and adjustable for the same reason everything else here is: if a printer
@@ -2137,7 +2142,16 @@ table.people-table th { padding: 10px 12px !important; }
   margin: 0 auto;
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: repeat(3, var(--sticker-pitch));
+  /* Two rows at the pitch, and the third takes whatever is left.
+     Three rows at the pitch came to 248.1mm in a 248mm page — over by a
+     tenth of a millimetre, which is nothing on paper and everything to a
+     print engine: the third label was pushed onto a sheet of its own and one
+     consignment printed across two. The space below the last label is empty,
+     so letting it be the remainder costs nothing and cannot overflow. */
+  grid-template-rows: repeat(2, var(--sticker-pitch)) 1fr;
+  /* And if a pitch is ever set wide enough that the third label genuinely
+     does not fit, it is clipped rather than fragmenting the sheet. */
+  overflow: hidden;
   align-content: start;
 }
 
@@ -2146,7 +2160,9 @@ table.people-table th { padding: 10px 12px !important; }
 .sticker-card {
   position: relative;
   width: 163mm;
-  height: var(--sticker-pitch);
+  /* Filling its grid row rather than naming a height, so the last card is
+     the remainder of the page and the first two are exactly the pitch. */
+  height: 100%;
   box-sizing: border-box;
   /* NOT overflow:hidden. A shortened pitch leaves the destination line close
      to the bottom of its own box, and clipping it there would hide the very
