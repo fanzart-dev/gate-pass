@@ -81,23 +81,26 @@
         <span class="hint" id="sticker-count"></span>
       </div>
 
-      {# The single most important thing on this page, and the reason a print
-         can come out wrong while the preview and the PDF are both right. A
-         browser asked to fit a 164mm page onto A4 enlarges everything by
-         about 1.16, which slides each label's values further down than the
-         last: the first is 9mm out, the third is 35mm out. No offset below
-         can correct a scale error. #}
-      <p class="sticker-warning">
-        <strong>In the print dialog, set Scale to 100%.</strong>
-        Anything called “Fit to page”, “Shrink to fit” or “Scale to fit”
-        stretches the sheet and nothing will line up — the further down the
-        page, the further out it goes.
-      </p>
-
       {# Set once, when this printer is first lined up against a real sheet,
          and then left alone. Overlay printing always needs a nudge — no two
          printers agree on where the paper starts — and it cannot be worked
-         out anywhere but in front of the printer. Remembered per browser. #}
+         out anywhere but in front of the printer. Remembered per browser.
+
+         Admin only. These are not a preference: a wrong number here prints a
+         whole consignment onto the wrong part of the sticker, and whoever is
+         printing has no way to tell until the boxes are labelled. The people
+         issuing gate passes all day want the Print button, not six
+         millimetre offsets sitting above it.
+
+         Hiding them is safe rather than merely tidy, because there is
+         nothing behind them to reach: the values live in this browser's own
+         storage and are read by the script below, never sent to or held by
+         the server. Someone without the controls prints with whatever this
+         machine was set up with.
+
+         The script must therefore work with the whole block absent, which is
+         why it reads the saved values rather than the boxes. #}
+      {% if current_user.is_admin %}
       <div class="sticker-align">
         <div>
           {# Has to match the paper size the printer is set to, or the browser
@@ -147,6 +150,7 @@
           root, if the printed line does not measure 100mm.
         </span>
       </div>
+      {% endif %}
     </form>
   </div>
 
@@ -215,7 +219,8 @@
       document.head.appendChild(pageRule);
 
       function applyPaper(save) {
-        const choice = PAPER_SIZES[paperSelect.value] ? paperSelect.value : "sheet";
+        const asked = paperSelect ? paperSelect.value : savedAlignment().paper;
+        const choice = PAPER_SIZES[asked] ? asked : "sheet";
         pageRule.textContent =
           `@page { size: ${PAPER_SIZES[choice]}; margin: 0; }`;
         if (save) {
@@ -414,9 +419,14 @@
       }
 
       function applyAlignment(save) {
+        // Read from the boxes when they are on the page, and from what this
+        // browser last saved when they are not — a non-admin has no
+        // calibration bar, and everything below still has to work.
+        const stored = savedAlignment();
         const values = {};
         Object.keys(alignInputs).forEach(function (key) {
-          const n = parseFloat(alignInputs[key].value);
+          const box = alignInputs[key];
+          const n = parseFloat(box ? box.value : stored[key]);
           // A blank or nonsense box falls back rather than writing NaN into
           // the stylesheet, which would drop every value to the top corner.
           values[key] = Number.isFinite(n) ? n : ALIGN_DEFAULTS[key];
@@ -438,14 +448,15 @@
         });
         if (save) {
           // Carried through, or choosing an offset would forget the paper.
-          values.paper = paperSelect.value;
+          values.paper = paperSelect ? paperSelect.value : stored.paper;
           try {
             window.localStorage.setItem(ALIGN_STORE, JSON.stringify(values));
           } catch (e) { /* private window; the sheet still prints */ }
         }
+        values.paper = values.paper || (paperSelect ? paperSelect.value : stored.paper);
         sheet.querySelectorAll(".sticker-stamp").forEach(function (el) {
           el.textContent =
-            `paper ${paperSelect.value} \u00b7 left ${values.left} \u00b7 ` +
+            `paper ${values.paper || stored.paper} \u00b7 left ${values.left} \u00b7 ` +
             `first line ${values.top} \u00b7 spacing ${values.gap} \u00b7 ` +
             `pitch ${values.pitch} \u00b7 100mm printed as ${values.scale} ` +
             `\u00b7 drawn at ${(correction * 100).toFixed(1)}%`;
@@ -456,26 +467,32 @@
       (function restoreAlignment() {
         const saved = savedAlignment();
         Object.keys(alignInputs).forEach(function (key) {
-          alignInputs[key].value = saved[key];
+          if (alignInputs[key]) alignInputs[key].value = saved[key];
         });
-        paperSelect.value = PAPER_SIZES[saved.paper] ? saved.paper : "sheet";
+        if (paperSelect) {
+          paperSelect.value = PAPER_SIZES[saved.paper] ? saved.paper : "sheet";
+        }
         // Written now rather than at print time: the @page rule has to be in
         // the document before the print dialog reads it.
         applyPaper(false);
       })();
 
       Object.keys(alignInputs).forEach(function (key) {
+        if (!alignInputs[key]) return;
         alignInputs[key].addEventListener("input", function () {
           applyAlignment(true);
         });
       });
 
-      paperSelect.addEventListener("change", function () { applyPaper(true); });
+      if (paperSelect) {
+        paperSelect.addEventListener("change", function () { applyPaper(true); });
+      }
 
       // One sheet of plain paper, carrying the ruler and one label's values,
       // rather than the whole batch. Lining a printer up should not cost
       // nine sheets of stationery.
-      document.getElementById("align-test").addEventListener("click", function () {
+      const testButton = document.getElementById("align-test");
+      if (testButton) testButton.addEventListener("click", function () {
         if (sheet.hidden) {
           qtyInput.value = qtyInput.value || "1";
           build();
@@ -490,13 +507,12 @@
         });
       });
 
-      document.getElementById("align-reset").addEventListener("click", function () {
+      const resetButton = document.getElementById("align-reset");
+      if (resetButton) resetButton.addEventListener("click", function () {
         Object.keys(alignInputs).forEach(function (key) {
-          alignInputs[key].value = ALIGN_DEFAULTS[key];
+          if (alignInputs[key]) alignInputs[key].value = ALIGN_DEFAULTS[key];
         });
-        paperSelect.value = ALIGN_DEFAULTS.paper;
-        alignInputs.scale.value = ALIGN_DEFAULTS.scale;
-        alignInputs.pitch.value = ALIGN_DEFAULTS.pitch;
+        if (paperSelect) paperSelect.value = ALIGN_DEFAULTS.paper;
         applyPaper(true);
         applyAlignment(true);
       });

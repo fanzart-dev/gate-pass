@@ -6231,6 +6231,20 @@ def test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir):
     check("a nonsense offset falls back rather than breaking the layout",
           "Number.isFinite(n) ? n : ALIGN_DEFAULTS[key]" in template)
 
+    # Admin only. A wrong number here puts a whole consignment on the wrong
+    # part of the sticker, and whoever is printing cannot tell until the
+    # boxes are labelled.
+    # .find, not .index: a missing gate must fail this check rather than
+    # raise out of the whole suite, or removing it reads as a crash instead
+    # of as the one thing that broke.
+    gate = template.find("{% if current_user.is_admin %}")
+    check("the calibration bar is admin only",
+          gate != -1 and gate < template.index('class="sticker-align"'))
+    check("and the gate closes after the last control",
+          gate != -1
+          and template.find("{% endif %}", gate)
+              > template.find("100 mm line printed as", gate))
+
     # The controls are part of the setup, not the printout.
     align_block = template[template.index('class="sticker-align"'):]
     check("the nudge controls are inside the form, which is not printed",
@@ -6276,19 +6290,11 @@ def test_the_sticker_sheet_cannot_be_silently_rescaled():
     template = (ROOT / "templates" / "stickers.html").read_text()
     css = (ROOT / "static" / "css" / "style.css").read_text()
 
-    # Said plainly, and set apart from the offsets, because someone reaching
-    # for the offsets to fix this will never succeed.
-    check("the page warns about scaling at all", "sticker-warning" in template)
-    check("and says what to set", "Scale to 100%" in template)
-    check("naming the settings that cause it",
-          all(phrase in template
-              for phrase in ("Fit to page", "Shrink to fit", "Scale to fit")))
-    check("the warning is styled as a warning, not another hint",
-          ".sticker-warning {" in css)
-    # The class, not the CSS selector: this is the markup being searched.
-    check("and is not printed", 'class="sticker-warning"' in
-          template[template.index('<div class="no-print">'):
-                   template.index('id="sticker-sheet"')])
+    # The banner that used to say this was removed at the operator's request:
+    # it sat above the form on every visit, repeating itself to people who
+    # had set their printer up long ago.
+    check("no banner shouts about the print dialog",
+          "sticker-warning" not in template)
 
     # The real cure: the page size has to match the paper the printer is set
     # to. When they agree there is nothing to fit, so nothing is scaled.
@@ -6304,7 +6310,7 @@ def test_the_sticker_sheet_cannot_be_silently_rescaled():
     check("written into the document, not at print time",
           "document.head.appendChild(pageRule)" in template)
     check("and the choice is remembered with the offsets",
-          "values.paper = paperSelect.value;" in template)
+          "values.paper = paperSelect ? paperSelect.value : stored.paper;" in template)
 
     # Adding a setting must not retire everyone's calibration: the defaults
     # are merged underneath whatever was stored, so an older saved object
@@ -6313,7 +6319,7 @@ def test_the_sticker_sheet_cannot_be_silently_rescaled():
     check("a saved setting survives a new one being added",
           "Object.assign({}, ALIGN_DEFAULTS, saved)" in template)
     check("a paper it does not recognise falls back to the stationery",
-          'PAPER_SIZES[paperSelect.value] ? paperSelect.value : "sheet"' in template)
+          'PAPER_SIZES[asked] ? asked : "sheet"' in template)
 
     # On A4 the sheet is smaller than the page. It must sit at the top left at
     # true size, because where the stationery really sits is what Left and Top
@@ -6389,6 +6395,64 @@ def test_a_printer_that_scales_anyway_can_be_cancelled():
     # nothing on screen to explain why.
     check("a wild measurement is clamped rather than obeyed",
           "Math.min(200, Math.max(50, values.scale || 100))" in template)
+
+
+def test_the_sticker_page_works_without_the_calibration_bar(tmpdir):
+    """A non-admin never sees it, and must still be able to print.
+
+    Hiding the block removes eight elements the script had been reading on
+    every run. Left as it was, getElementById("align-left").value would throw
+    on load and the page would be dead for everyone who is not an admin —
+    which is most of the people who print.
+
+    Hiding is safe rather than merely tidy: the values live in the browser's
+    own storage and never reach the server, so there is nothing behind the
+    controls to reach. Someone without them prints with whatever this machine
+    was set up with, which is the point of hiding them.
+    """
+    template = (ROOT / "templates" / "stickers.html").read_text()
+
+    # Every read of a control has to survive it being absent.
+    check("the paper is read defensively",
+          "paperSelect ? paperSelect.value : savedAlignment().paper" in template)
+    check("and so is every offset",
+          "const box = alignInputs[key];" in template
+          and "parseFloat(box ? box.value : stored[key])" in template)
+    check("falling back to what this browser saved",
+          "const stored = savedAlignment();" in template)
+
+    # And every listener, or binding one throws before the page finishes.
+    check("restoring skips controls that are not there",
+          "if (alignInputs[key]) alignInputs[key].value = saved[key];" in template)
+    check("wiring skips them too", "if (!alignInputs[key]) return;" in template)
+    check("the paper listener is guarded", "if (paperSelect) {" in template)
+    check("the test-page button is guarded", "if (testButton)" in template)
+    check("and the reset button", "if (resetButton)" in template)
+
+    # Two accounts on one app: the first is an admin, the second is not.
+    flask_app, admin = logged_in_app(
+        tmpdir, "stickerroles", users=(("boss", "Admin One"), ("ops", "Staff One")))
+    conn = db.connect(flask_app.config["DB_PATH"])
+    check("the second account really is not an admin",
+          not db.get_user_by_username(conn, "ops")["is_admin"])
+    conn.close()
+
+    staff = flask_app.test_client()
+    sign_in(staff, "ops")
+    page = markup_only(staff.get("/print-stickers").get_data(as_text=True))
+    check("a non-admin still gets the page", "Generate Stickers" in page)
+    check("and the Print button", 'id="print-stickers"' in page)
+    check("but not the calibration bar", 'class="sticker-align"' not in page)
+    for control in ("align-left", "align-top", "align-gap", "align-pitch",
+                    "align-scale", "align-paper", "align-test", "align-reset"):
+        check(f"nor {control}", f'id="{control}"' not in page)
+
+    admin_page = markup_only(admin.get("/print-stickers").get_data(as_text=True))
+    check("an admin does get it", 'class="sticker-align"' in admin_page)
+    check("with every control on it",
+          all(f'id="{c}"' in admin_page for c in
+              ("align-left", "align-top", "align-gap", "align-pitch",
+               "align-scale", "align-paper", "align-test", "align-reset")))
 
 
 def test_every_sticker_in_a_batch_is_the_same(tmpdir):
@@ -7340,6 +7404,7 @@ def main():
         test_the_sticker_sheet_is_built_for_paper()
         test_the_sticker_sheet_can_be_lined_up_with_the_printer(tmpdir)
         test_the_sticker_sheet_cannot_be_silently_rescaled()
+        test_the_sticker_page_works_without_the_calibration_bar(tmpdir)
         test_a_printer_that_scales_anyway_can_be_cancelled()
         test_every_sticker_in_a_batch_is_the_same(tmpdir)
         test_sticker_values_cannot_carry_markup(tmpdir)
