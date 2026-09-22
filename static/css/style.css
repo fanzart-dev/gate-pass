@@ -1998,3 +1998,355 @@ table.people-table th { padding: 10px 12px !important; }
 @media print {
   .fan-blade { animation: none !important; }
 }
+
+/* ===================================================================
+   Box stickers  (/print-stickers)
+
+   An OVERLAY for pre-printed SM Express stationery, not a design. The paper
+   already carries "AWB No:", "ORIGIN:", "DESTINATION:", the SURFACE header
+   band and the courier's footer. This contributes three short strings and
+   nothing else.
+
+   EVERY NUMBER BELOW IS MEASURED, NOT CHOSEN
+   -------------------------------------------------------------------
+   From a scan of the real sheet, using its known 164mm width to turn pixels
+   into millimetres. Distances are from the top of the sheet:
+
+       4.9mm   top border of the first label
+      20.6mm   header band ends, AWB No row begins
+      36.3mm   AWB row ends, ORIGIN begins
+      52.0mm   ORIGIN ends, DESTINATION begins
+      70.6mm   DESTINATION ends, footer band begins
+      76.9mm   footer ends
+
+   The three labels repeat every 82.4mm by measurement; 82mm is used here
+   because that is the stated size, and the 0.4mm difference comes to 0.8mm
+   by the third label — a fifth of the slack in a 15.7mm row.
+
+   Row centres are therefore 28.5, 44.2 and 61.3mm. A single spacing cannot
+   hit all three because the DESTINATION row is taller than the other two
+   (18.6mm against 15.7mm), so 16.4mm is used: it lands line two 0.7mm above
+   its row centre and line three exactly on it.
+
+   The pre-printed labels end at 17mm (AWB No:), 24mm (ORIGIN:) and 38mm
+   (DESTINATION:), so values start at 44mm and clear the longest by 6mm.
+
+   None of this is the last word. No two printers agree on where the paper
+   starts, so these are only the STARTING values for the three calibration
+   boxes on the page, which move the whole block and are remembered per
+   browser.
+   =================================================================== */
+
+.sticker-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px 18px;
+}
+
+.sticker-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+/* The calibration boxes. Quieter than the fields above, because they are set
+   once when the printer is first lined up and then left alone. */
+.sticker-align {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+/* The one thing on this page that must be read. A scale error cannot be
+   corrected by any of the offsets below it, so it is set apart from them
+   rather than being another line of hint text. */
+.sticker-warning {
+  margin: 18px 0 0;
+  padding: 11px 14px;
+  border: 1px solid #f0c987;
+  border-left: 3px solid #d98c1f;
+  border-radius: var(--radius-sm);
+  background: #fdf7ec;
+  color: #7a4d06;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sticker-warning {
+    border-color: #6b4f1d;
+    border-left-color: #d98c1f;
+    background: #251d0d;
+    color: #f0d9a8;
+  }
+}
+
+.sticker-align label { display: block; }
+.sticker-align select { min-width: 190px; }
+.sticker-align input[type="number"] { width: 92px; }
+.sticker-align .hint { flex: 1 1 220px; }
+
+.sticker-sheet { margin-top: 18px; }
+
+/* One physical sheet: 164 x 247mm, three labels of 82mm. */
+.sticker-page {
+  /* Every number here is the document's, measured out of the file that
+     prints correctly, and NOT adjusted towards what looked better against a
+     scan. Comparing the two line by line, the earlier values were short at
+     every step — 3.06mm on the first line, 0.26mm on each line gap, 0.68mm
+     on each label — and short errors in the same direction accumulate, so by
+     the last line of the third label the page was 6.5mm high.
+
+         first line   19.40mm from the top of the page (4.09mm page margin
+                      plus the block's own 15.31mm)
+         line gap     16.66mm, the mean of the document's six
+         label pitch  82.68mm, the mean of its two
+         left         36mm, its blocks at 35.95, 35.95 and 36.18mm
+
+     The document places its three labels by hand, so its own spacings vary
+     by a couple of millimetres either way. Means are used rather than
+     copying that variation, which is not a measurement of anything. */
+  --sticker-left: 36mm;
+  --sticker-top: 19.4mm;
+  --sticker-gap: 16.66mm;
+  /* Top of one label to the top of the next. Measured at 82mm on the sheet,
+     and adjustable for the same reason everything else here is: if a printer
+     enlarges the page, the labels come out further apart than they were sent
+     and the drift compounds — the second label is out by one gap, the third
+     by two. Shrinking the pitch cancels that without disturbing the first
+     label, which by then is usually already lined up. */
+  --sticker-pitch: 82.7mm;
+  /* Cancels whatever the printer does to the page. 1 means it was left
+     alone. See .sticker-ruler below for how the number is arrived at. */
+  --sheet-scale: 1;
+
+  transform: scale(var(--sheet-scale));
+  /* From the corner the paper starts at, so the correction moves every value
+     by the same proportion of its distance from that corner — which is
+     exactly how the printer's own scaling went wrong. */
+  transform-origin: top left;
+
+  width: 163mm;
+  height: 248mm;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(3, var(--sticker-pitch));
+  align-content: start;
+}
+
+/* One label's worth of the sheet. It draws nothing on paper — the stationery
+   already has the artwork — it only gives the three values somewhere to be. */
+.sticker-card {
+  position: relative;
+  width: 163mm;
+  height: var(--sticker-pitch);
+  box-sizing: border-box;
+  /* NOT overflow:hidden. A shortened pitch leaves the destination line close
+     to the bottom of its own box, and clipping it there would hide the very
+     thing the pitch is being adjusted to fix. */
+  color: #000;
+}
+
+/* Absolute, so a long destination cannot push the line below it out of its
+   blank and onto a printed rule. Each line stays where the paper expects it
+   whatever it contains. */
+/* Centred in a 110mm box, not left-aligned against the printed label — this
+   is what the document that printed correctly does, and the reason is legible
+   on the sheet: the blank is 120mm of empty row, and text pushed hard against
+   "DESTINATION:" reads as a caption to it rather than as the destination.
+   Centred, the value sits in the middle of its own space.
+
+   Absolute, so a long destination cannot push the line below it out of its
+   blank and onto a printed rule. Each line stays where the paper expects it
+   whatever it contains. */
+.sticker-card div {
+  position: absolute;
+  left: var(--sticker-left);
+  width: 110mm;
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* 29pt and 25pt, from the document. This is a label read off the side of a
+   carton across a warehouse, not a form field — the earlier 17px was legible
+   on screen and far too small on the box. The destination is the smaller of
+   the two for the reason a longer line always is: it has twice as far to go. */
+.sticker-lr   { top: var(--sticker-top); font-size: 29pt; }
+.sticker-from { top: calc(var(--sticker-top) + var(--sticker-gap)); font-size: 29pt; }
+.sticker-to   { top: calc(var(--sticker-top) + (2 * var(--sticker-gap)));
+                font-size: 25pt; }
+
+/* A printed 100mm rule, for measuring what the printer actually did.
+   A driver set to fit the page to the paper enlarges everything, and the
+   error grows with distance down the sheet: the first label is a few
+   millimetres out and the third is thirty. No offset can correct that, and
+   nothing on screen can reveal it — it happens after the page is handed over.
+   So the page prints a line of known length, and whoever holds a ruler
+   against it types back what they measured. */
+.sticker-ruler {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 4mm;
+  width: 100mm;
+  border-top: 0.4mm solid #000;
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  padding-top: 1mm;
+}
+
+/* End stops, so it is measured between two marks rather than by eye. */
+.sticker-ruler::before,
+.sticker-ruler::after {
+  content: "";
+  position: absolute;
+  top: -2.5mm;
+  width: 0.4mm;
+  height: 5mm;
+  background: #000;
+}
+.sticker-ruler::before { left: 0; }
+.sticker-ruler::after  { right: 0; }
+
+/* What the sheet was drawn with, printed beside the rule. A photograph of a
+   test page then says which numbers produced it, which is the one thing a
+   photograph of a bad print could not previously tell anybody. */
+.sticker-stamp {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 12mm;
+  font-size: 8px;
+  color: #000;
+}
+
+/* Shown only while a test page is being printed, so neither lands on real
+   stationery. */
+body.is-test-print .sticker-ruler,
+body.is-test-print .sticker-stamp { display: block; }
+
+/* On screen only: the stationery drawn from the same measurements, so the
+   preview shows which blank each value is aimed at and the calibration can
+   be judged without printing a sheet. None of it reaches paper. */
+@media screen {
+  .sticker-page {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    margin: 0 auto 14px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  }
+
+  /* The label's own rules, at the measured offsets: the header band, the
+     three row dividers and the footer band. */
+  .sticker-card {
+    background:
+      linear-gradient(#e2e8f0, #e2e8f0) 0 4.9mm / 100% 0.3mm no-repeat,
+      linear-gradient(#eef2f7, #eef2f7) 0 4.9mm / 100% 15.7mm no-repeat,
+      linear-gradient(#e2e8f0, #e2e8f0) 0 20.6mm / 100% 0.3mm no-repeat,
+      linear-gradient(#e2e8f0, #e2e8f0) 0 36.3mm / 100% 0.3mm no-repeat,
+      linear-gradient(#e2e8f0, #e2e8f0) 0 52.0mm / 100% 0.3mm no-repeat,
+      linear-gradient(#e2e8f0, #e2e8f0) 0 70.6mm / 100% 0.3mm no-repeat,
+      linear-gradient(#eef2f7, #eef2f7) 0 70.6mm / 100% 6.3mm no-repeat;
+  }
+
+  /* The pre-printed labels, all three in ONE pseudo-element.
+     They are fixed to the SHEET and must not move: they stand for ink that
+     is already on the paper. Only the values move, which is the whole point
+     of the preview — it shows where the calibration is putting them relative
+     to blanks that are staying put.
+
+     Previously two were pinned here and the third rode on its own value's
+     line, so it drifted with the calibration and ended up printed on top of
+     ORIGIN:. One element cannot disagree with itself.
+
+     The rows are evenly pitched — 20.6, 36.3, 52.0mm, so 15.7mm apart — so
+     a line-height of 15.7mm starting at the first row's top lands all three
+     in their own rows without positioning each by hand. */
+  .sticker-card::before {
+    position: absolute;
+    left: 4mm;
+    top: 20.6mm;
+    content: "AWB No:\A ORIGIN:\A DESTINATION:";
+    white-space: pre;
+    line-height: 15.7mm;
+    font-size: 14px;
+    font-weight: 700;
+    color: #b6c0cd;
+    pointer-events: none;
+  }
+}
+
+@media print {
+  /* Everything that is not a value. The form, the heading and the hints are
+     inside .no-print already; the site's own chrome is not, and a nav bar
+     across the top label is exactly the failure this rule exists for. */
+  .no-print { display: none !important; }
+  .topbar, .flashes { display: none !important; }
+
+  /* main.container centres the page and caps its width for reading. On paper
+     that would shrink the sheet and shift every value out of its blank, so it
+     is undone rather than worked around. */
+  body, main.container, .container-wide {
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+    width: auto !important;
+    background: #fff !important;
+  }
+
+  .sticker-sheet { margin: 0; padding: 0; border: 0; background: #fff; }
+
+  /* Top left, not centred. On A4 the sheet is smaller than the page, and
+     where the stationery actually sits in the tray is what the Left and Top
+     offsets are for — centring would add a margin they would then have to
+     subtract. On the sheet size itself there is nothing to centre. */
+  .sticker-page { margin: 0 !important; }
+
+  /* No border, no shadow, no row rules, no ghost labels. The sheet in the
+     printer already has every one of those on it; anything drawn here lands
+     on top of the courier's own artwork. */
+  .sticker-page {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+    page-break-after: always;
+    break-after: page;
+  }
+
+  /* ...except the last, which would otherwise eject a blank sheet. */
+  .sticker-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  .sticker-card {
+    border: 0;
+    background: none;
+    /* A label split down the middle by a page break puts half a destination
+       on one sheet and half on the next. Both spellings, because the older
+       one is what some print engines still read. */
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Clipped on paper only. A value too long for its blank must stop at the
+     edge rather than run across the courier's pre-printed rule — but on
+     screen the same rule also clipped the ghost labels drawn to the left of
+     each line, which is where they belong. */
+  .sticker-card div { overflow: hidden; }
+
+  .sticker-card::before { content: none; }
+}
