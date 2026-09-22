@@ -2423,3 +2423,33 @@ body.is-test-print .sticker-stamp { display: block; }
 
   .sticker-card::before { content: none; }
 }
+
+/* --- the sticker queue ------------------------------------------------- */
+.sticker-queue { margin-top: 18px; }
+
+.sticker-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.sticker-queue-head h2 { margin: 0; font-size: 16px; }
+
+.sticker-queue-table { table-layout: auto; }
+.sticker-queue-table .q-num { width: 40px; }
+.sticker-queue-table .q-qty { width: 70px; text-align: right; }
+.sticker-queue-table .q-act { width: 80px; text-align: right; }
+.sticker-queue-table td, .sticker-queue-table th { white-space: nowrap; }
+
+/* The destination is the one column that can be long, so it is the one that
+   gives way rather than pushing the row into a horizontal scroll. */
+.sticker-queue-table td:nth-child(4) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.queue-remove { color: var(--danger); }
+.queue-remove:hover { text-decoration: underline; }
+
+.sticker-queue .hint { margin: 10px 0 0; }
