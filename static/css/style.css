@@ -2439,7 +2439,8 @@ body.is-test-print .sticker-stamp { display: block; }
 .sticker-queue-table { table-layout: auto; }
 .sticker-queue-table .q-num { width: 40px; }
 .sticker-queue-table .q-qty { width: 70px; text-align: right; }
-.sticker-queue-table .q-act { width: 80px; text-align: right; }
+/* Two buttons live here now, and 80px clipped Delete to "Delet". */
+.sticker-queue-table .q-act { width: 130px; text-align: right; }
 .sticker-queue-table td, .sticker-queue-table th { white-space: nowrap; }
 
 /* The destination is the one column that can be long, so it is the one that
@@ -2498,3 +2499,11 @@ body.is-test-print .sticker-stamp { display: block; }
 
 /* Keyboard and mouse agree: the highlighted row looks the same either way. */
 .receiver-menu li.is-active { outline: 1px solid var(--line); }
+
+/* The queue row the form is currently correcting. Without it, nothing says
+   which of five rows the Save is about to overwrite. */
+.sticker-queue-table tr.is-editing {
+  background: var(--blue-soft);
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+.queue-edit { margin-right: 10px; }

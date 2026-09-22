@@ -6644,7 +6644,47 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
     for column in ("#", "LR Number", "Sender", "Receiver", "Boxes"):
         check(f"with a {column} column", f">{column}<" in page)
     check("each row can be removed", "queue-remove" in template)
+    check("and corrected", "queue-edit" in template)
     check("and the lot can be cleared", 'id="queue-clear"' in page)
+
+    # Correcting a queued job. A typo in an LR number is otherwise a delete
+    # and a full retype, and the row loses its place in the queue with it.
+    check("editing loads the row back into the form",
+          "function startEditing(index)" in template)
+    check("and says which row is being corrected",
+          "if (index === editingIndex) tr.className = \"is-editing\";" in template)
+    check("the button changes to match",
+          'addButton.textContent = "Save Changes";' in template
+          and 'addButton.textContent = "Add to Queue";' in template)
+    check("and there is a way out that does not save",
+          'id="queue-cancel-edit"' in page and "function stopEditing" in template)
+
+    # In place, so a corrected job keeps its position. Moving it to the end
+    # would reshuffle which labels share a sheet, which is not what somebody
+    # fixing a typo is asking for.
+    check("a corrected job keeps its place in the queue",
+          "queue[editingIndex] = job;" in template)
+
+    # The row under edit can be deleted, and every row after it shifts up —
+    # so the form would end up pointed at a neighbour and silently overwrite
+    # the wrong job on the next Save.
+    check("deleting the row being corrected abandons the edit",
+          "if (editingIndex !== null && editingIndex >= index)" in template)
+    clear_handler = template[template.index('getElementById("queue-clear")'):
+                             template.index("function fitLongNames")]
+    check("and so does clearing the queue",
+          "queue = [];" in clear_handler and "stopEditing(true);" in clear_handler)
+
+    # The cap must not count a row against itself, or raising a job from 2 to
+    # 3 near the ceiling would be refused for boxes it is about to give back.
+    check("editing does not count the row against its own limit",
+          "const held = editingIndex === null ? 0 : queue[editingIndex].qty;" in template)
+
+    # Deliberately not persisted: coming back to a page that silently
+    # overwrites row three on the next Save is worse than losing the edit.
+    check("a half-finished correction is not restored",
+          "editingIndex" not in template[template.index("function saveQueue"):
+                                          template.index("let queue = loadQueue();")])
 
     # The flattening is the feature. Every sticker in the queue becomes one
     # entry in one list, and the page break falls every third entry — so two
