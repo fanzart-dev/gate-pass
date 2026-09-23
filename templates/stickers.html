@@ -157,9 +157,8 @@
            only escape from an edit is to save it or reload the page. #}
         <button type="button" id="queue-cancel-edit" class="quiet" hidden>
           Cancel edit</button>
-        <button type="button" id="print-stickers" disabled>Print</button>
-        {# Beside Print, because it is the answer to "how much paper is this
-           about to use" and that is asked with a hand on that button. #}
+        {# Beside Add: it answers "how much paper is this batch now", which is
+           the question each Add changes. #}
         <span class="hint sticker-count" id="sticker-count"></span>
       </div>
 
@@ -240,9 +239,17 @@
      and a queue table printed across the top sticker would be worse than
      useless. #}
   <div class="card sticker-queue no-print" id="sticker-queue" hidden>
+    {# Print lives with the thing it prints. The top row is for building the
+       batch; this card IS the batch, so the two actions that finish it --
+       send it to paper, or throw it away -- sit on it as a pair. The card is
+       hidden while the queue is empty, so Print is only ever on screen when
+       there is something to print. #}
     <div class="sticker-queue-head">
       <h2>Queued</h2>
-      <button type="button" id="queue-clear" class="danger-solid">Clear</button>
+      <div class="queued-header-actions no-print">
+        <button type="button" id="queue-clear" class="btn-clear">Clear</button>
+        <button type="button" id="print-stickers" class="btn-print" disabled>Print</button>
+      </div>
     </div>
     <div class="table-wrap">
       <table class="list sticker-queue-table">

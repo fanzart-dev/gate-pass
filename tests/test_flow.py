@@ -6773,10 +6773,17 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
           'id="print-stickers"' in page and ">Print</button>" in page)
     check("there is a queue table", 'id="queue-rows"' in page)
 
-    # The count belongs against Print: it answers "how much paper is this
-    # about to use", which is asked with a hand on that button.
-    check("the live count sits with the print button",
-          page.index('id="print-stickers"') < page.index('id="sticker-count"'))
+    # The top row builds the batch; the queue card finishes it. The count
+    # sits with Add, since each Add is what changes it, and Print sits on the
+    # queue card beside Clear -- the two actions that end a batch, as a pair.
+    actions = page[page.index('class="sticker-actions"'):page.index('id="sticker-count"')]
+    check("the live count sits with the Add button", 'id="generate"' in actions)
+    check("and Print is no longer in the top row", 'id="print-stickers"' not in actions)
+    header = page[page.index('class="queued-header-actions'):page.index("</table>")]
+    check("Print sits on the queue card, after Clear",
+          0 <= header.index('id="queue-clear"') < header.index('id="print-stickers"'))
+    check("and that pair is kept off the paper",
+          'class="queued-header-actions no-print"' in page)
     for column in ("#", "LR Number", "Sender", "Receiver", "Boxes"):
         check(f"with a {column} column", f">{column}<" in page)
     check("each row can be removed", "queue-remove" in template)
