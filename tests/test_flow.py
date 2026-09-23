@@ -1176,10 +1176,13 @@ def test_upgrading_keeps_the_calibration_with_whoever_had_it(tmpdir):
     check("the database is at the new version",
           upgraded.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION)
 
-    # Nothing else moved: a backfill that reached other permissions would be
-    # handing out access nobody granted.
-    check("the ordinary account gained nothing at all",
-          not any(db.user_can(ops, key) for key in db.PERMISSIONS))
+    # Nothing else moved, bar the sticker page itself: a backfill that reached
+    # further would be handing out access nobody granted. can_print_stickers
+    # is the one exception on purpose — it was added to a page everybody could
+    # already open, so the upgrade leaves everybody able to open it.
+    gained = sorted(k for k in db.PERMISSIONS if db.user_can(ops, k))
+    check("the ordinary account gained nothing it did not already have",
+          gained == ["can_print_stickers"])
     upgraded.close()
 
 
@@ -3761,7 +3764,12 @@ def test_permissions_backfill_on_upgrade(tmpdir):
     boss = db.get_user_by_username(conn, "boss")
     hand = db.get_user_by_username(conn, "hand")
     check("a former admin keeps every permission", all(boss["permissions"].values()))
-    check("former staff start with none", not any(hand["permissions"].values()))
+    # Except the sticker page, which needed nothing but a sign-in before it
+    # had a permission at all. Everyone could open it, so the upgrade keeps
+    # everyone able to — taking it away would be removing access people were
+    # using that morning, not adding a permission.
+    check("former staff start with none but the sticker page",
+          [k for k, v in hand["permissions"].items() if v] == ["can_print_stickers"])
     check("both accounts survive the upgrade", db.count_users(conn) == 2)
     db.close(conn)
 
@@ -6608,10 +6616,18 @@ def test_the_sticker_page_works_without_the_calibration_bar(tmpdir):
     check("while the first does", db.user_can(boss, "can_calibrate_stickers"))
     conn.close()
 
+    # The page itself is behind can_print_stickers now, so an account that
+    # prints labels holds that and not the calibration one. That split is the
+    # point: printing is an everyday job, lining the printer up is not.
+    conn = db.connect(flask_app.config["DB_PATH"])
+    ops_row = db.get_user_by_username(conn, "ops")
+    db.set_user_permissions(conn, ops_row["id"], {"can_print_stickers": True})
+    conn.close()
+
     staff = flask_app.test_client()
     sign_in(staff, "ops")
     page = markup_only(staff.get("/print-stickers").get_data(as_text=True))
-    check("a non-admin still gets the page", "Add to Queue" in page)
+    check("someone who may print gets the page", "Add to Queue" in page)
     check("and the Print button", 'id="print-stickers"' in page)
     check("but not the calibration bar", 'class="sticker-align"' not in page)
     for control in ("align-left", "align-top", "align-gap", "align-pitch",
@@ -6624,6 +6640,102 @@ def test_the_sticker_page_works_without_the_calibration_bar(tmpdir):
           all(f'id="{c}"' in admin_page for c in
               ("align-left", "align-top", "align-gap", "align-pitch",
                "align-scale", "align-paper", "align-test", "align-reset")))
+
+
+def test_the_sticker_page_is_behind_a_permission_of_its_own(tmpdir):
+    """Two permissions, because they are two jobs.
+
+    Printing courier labels is an everyday task. Lining the printer up
+    against pre-printed stationery is a one-off somebody does standing in
+    front of it, and a wrong offset there puts a whole consignment on the
+    wrong part of the sticker. Whoever prints all day should not be able to
+    move the offsets by accident, and whoever sets them up need not be an
+    administrator.
+    """
+    check("the page has a permission", "can_print_stickers" in db.PERMISSIONS)
+    check("with a line saying what it does",
+          db.PERMISSION_HINTS.get("can_print_stickers"))
+    check("and the offsets keep their own",
+          "can_calibrate_stickers" in db.PERMISSIONS)
+
+    flask_app, admin = logged_in_app(
+        tmpdir, "stickerperm", users=(("boss", "Admin One"), ("ops", "Staff One")))
+    conn = db.connect(flask_app.config["DB_PATH"])
+    ops_id = db.get_user_by_username(conn, "ops")["id"]
+
+    # Without it, the page is not reachable — not merely unlinked. Hiding a
+    # nav link is a courtesy; the route is the control.
+    staff = flask_app.test_client()
+    sign_in(staff, "ops")
+    check("without the permission the page is refused",
+          staff.get("/print-stickers").status_code == 302)
+    check("and the other spelling of it too",
+          staff.get("/stickers").status_code == 302)
+    nav = markup_only(staff.get("/register").get_data(as_text=True))
+    check("and it is not in the navigation", "/stickers" not in nav)
+
+    # With it, the page opens but the calibration bar does not follow.
+    db.set_user_permissions(conn, ops_id, {"can_print_stickers": True})
+    page = markup_only(staff.get("/print-stickers").get_data(as_text=True))
+    check("with it the page opens", "Add to Queue" in page)
+    check("but not the calibration bar", 'class="sticker-align"' not in page)
+    nav = markup_only(staff.get("/register").get_data(as_text=True))
+    check("and the link appears", "/stickers" in nav)
+
+    # Both, and the offsets appear too.
+    db.set_user_permissions(conn, ops_id, {"can_print_stickers": True,
+                                            "can_calibrate_stickers": True})
+    page = markup_only(staff.get("/print-stickers").get_data(as_text=True))
+    check("with both, the offsets are there too", 'class="sticker-align"' in page)
+
+    # Calibration alone is not a way in: the page guard runs first.
+    db.set_user_permissions(conn, ops_id, {"can_calibrate_stickers": True})
+    check("the calibration permission alone does not open the page",
+          staff.get("/print-stickers").status_code == 302)
+    conn.close()
+
+    check("an admin has both", 
+          markup_only(admin.get("/print-stickers").get_data(as_text=True))
+          .count('class="sticker-align"') == 1)
+
+
+def test_adding_the_sticker_permission_takes_it_from_nobody(tmpdir):
+    """The page needed nothing but a sign-in, so everyone could open it.
+
+    Backfilling only admins — the pattern every other permission here
+    follows — would take the sticker page away from the whole office on
+    upgrade. That is not adding a permission; it is removing access people
+    were using that morning.
+    """
+    path = Path(tmpdir) / "before_sticker_perm.db"
+    conn = db.connect(path)
+    db.create_user(conn, "boss", "Admin One", "gatepass-test-pw",
+                    status=db.APPROVED, is_admin=True)
+    db.create_user(conn, "ops", "Staff One", "gatepass-test-pw", status=db.APPROVED)
+    db.create_user(conn, "gone", "Left Us", "gatepass-test-pw", status=db.DISABLED)
+
+    # Back to the version before the permission existed.
+    with db.writing(conn):
+        conn.execute("UPDATE users SET permissions = "
+                     "json_remove(permissions, '$.can_print_stickers')")
+    conn.execute("PRAGMA user_version = 16")
+    conn.close()
+
+    upgraded = db.connect(path)
+    for username in ("boss", "ops", "gone"):
+        row = db.get_user_by_username(upgraded, username)
+        check(f"{username} can still open the sticker page",
+              db.user_can(row, "can_print_stickers"))
+
+    # And only that one. A backfill reaching further would be handing out
+    # access nobody granted.
+    ops = db.get_user_by_username(upgraded, "ops")
+    check("and gained nothing else",
+          sorted(k for k in db.PERMISSIONS if db.user_can(ops, k))
+          == ["can_print_stickers"])
+    check("the database is at the new version",
+          upgraded.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION)
+    upgraded.close()
 
 
 def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
@@ -7709,6 +7821,8 @@ def main():
         test_dropping_charges_renumbers_and_reports()
         test_an_invoice_of_nothing_but_charges_says_so(tmpdir)
         test_box_stickers_need_no_database(tmpdir)
+        test_the_sticker_page_is_behind_a_permission_of_its_own(tmpdir)
+        test_adding_the_sticker_permission_takes_it_from_nobody(tmpdir)
         test_box_stickers_start_empty_except_the_sender(tmpdir)
         test_the_receiver_list_can_be_added_to_and_pruned(tmpdir)
         test_the_sticker_queue_fills_pages_across_customers(tmpdir)

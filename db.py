@@ -83,6 +83,7 @@ PERMISSIONS = {
     "can_review_drafts": "Review Drafts",
     "can_edit_parsed_details": "Edit Draft Details",
     "can_edit_issued_pass": "Edit Issued Gate Pass",
+    "can_print_stickers": "Box Stickers",
     "can_calibrate_stickers": "Sticker Alignment",
 }
 
@@ -91,11 +92,12 @@ PERMISSIONS = {
 # these change how the app behaves, not just what is visible.
 PERMISSION_HINTS = {
     "can_search_register": "Search and filter the register by date and status",
-    # Its own permission rather than riding on Manage Users, which is what it
-    # did at first. Lining a printer up against pre-printed courier stationery
-    # and administering accounts are not the same job and rarely the same
-    # person — and a wrong offset here puts a whole consignment onto the wrong
-    # part of the sticker, which nobody notices until the boxes are labelled.
+    # Two permissions, not one, and the split is deliberate. Printing box
+    # stickers is an everyday job; lining the printer up against pre-printed
+    # courier stationery is a one-off somebody does standing in front of it.
+    # Whoever prints all day should not be able to move the offsets by
+    # accident, and whoever sets them up need not be an administrator.
+    "can_print_stickers": "Open Box Stickers and print courier labels",
     "can_calibrate_stickers": "Set the sticker print offsets for this machine",
     "can_export_reports": "Open Reports and generate CSV or Excel exports",
     "can_access_settings": "View and change Settings, including the numbering",
@@ -254,7 +256,7 @@ DEFAULT_SETTINGS = {
 # Bump when schema.sql or ADDED_COLUMNS changes. Stored in the file as
 # PRAGMA user_version, so a connection can tell in one cheap read whether the
 # schema script needs running at all.
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # How long a writer waits for another writer before giving up. Four people
 # clicking Issue at the same moment are serialised in milliseconds, so this is
@@ -394,6 +396,20 @@ def _migrate_data(conn, previous_version):
             conn.execute(
                 "UPDATE users SET permissions = json_set(permissions, "
                 "'$.can_review_drafts', json('true')) WHERE is_admin = 1")
+        except sqlite3.OperationalError:
+            pass
+
+    if previous_version and previous_version < 17:
+        # can_print_stickers was added to a page that had needed nothing but a
+        # sign-in, so EVERYONE could already open it. Backfilling only admins
+        # here — the pattern every other permission follows — would take the
+        # sticker page away from the whole office on upgrade, which is a
+        # different thing from adding a permission: it would be removing
+        # access people already had and were using that morning.
+        try:
+            conn.execute(
+                "UPDATE users SET permissions = json_set(permissions, "
+                "'$.can_print_stickers', json('true'))")
         except sqlite3.OperationalError:
             pass
 

@@ -1021,7 +1021,7 @@ def register_routes(app):
 
     @app.route("/print-stickers")
     @app.route("/stickers")
-    @login_required
+    @requires("can_print_stickers")
     def print_stickers():
         """Courier box stickers — a printing tool, and nothing else.
 
@@ -1036,10 +1036,13 @@ def register_routes(app):
         to look up afterwards — so writing one down would create an audit
         trail with no audit in it, and a migration to maintain for ever.
 
-        That is also why it carries no permission of its own. There is nothing
-        here to protect: every value on the page came from the person typing
-        it. It still needs a sign-in, because the app answers on the public
-        link and an open page is a page anyone can find.
+        Behind can_print_stickers. Not because there is anything here to
+        protect — every value on the page is typed by the person printing —
+        but because an account that only issues gate passes has no use for a
+        courier label screen, and a nav full of pages somebody never opens is
+        its own small cost. The offsets sit behind a second permission on top
+        of this one, since setting a printer up is a different job from using
+        it.
 
         Everything arrives in the query string, so the page can be opened
         pre-filled from somewhere else:
