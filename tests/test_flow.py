@@ -6219,12 +6219,17 @@ def test_the_sticker_sheet_is_built_for_paper():
 
     # Browsers print their own title, URL and timestamp into whatever margin
     # the page leaves. Leaving none is what keeps them off the top sticker.
-    # The page IS the stationery, stated in millimetres, so one millimetre of
-    # stylesheet is one millimetre of paper. A named size would leave the
-    # scale to whatever the printer has loaded, which for an overlay is the
-    # difference between landing in a blank and landing on a printed rule.
-    check("the printed page is the sheet, not A4",
-          "@page { size: 163mm 248mm; margin: 0; }" in template)
+    # The page box is whatever paper is loaded, which is the only setting
+    # that behaves the same in every browser.
+    #
+    # Naming a size smaller than the paper made Chrome and Brave CENTRE the
+    # sheet on it: with A4 loaded every value moved 24.6mm down and 23.5mm
+    # right, exactly half the difference on each axis. Firefox anchors a
+    # small page box to the top left instead, which is why the same page
+    # printed correctly there and nowhere else.
+    check("the page box is the paper", "@page { size: auto; margin: 0; }" in template)
+    check("and nothing hard-codes the sheet's size into it",
+          "@page { size: 163mm 248mm" not in template)
 
     check("each printed page is its own element",
           'className = "sticker-page"' in template)
@@ -6493,8 +6498,21 @@ def test_the_sticker_sheet_cannot_be_silently_rescaled():
     # key for that would throw away a printer somebody lined up by hand.
     check("a saved setting survives a new one being added",
           "Object.assign({}, ALIGN_DEFAULTS, saved)" in template)
-    check("a paper it does not recognise falls back to the stationery",
-          'PAPER_SIZES[asked] ? asked : "sheet"' in template)
+    check("a paper it does not recognise falls back to matching the printer",
+          'PAPER_SIZES[asked] ? asked : "auto"' in template)
+    check("which is also the default", 'paper: "auto"' in template)
+    check("with the named sizes kept for a printer that needs telling",
+          'sheet: "163mm 248mm"' in template and 'a4: "A4 portrait"' in template)
+
+    # A browser that chose a paper before `auto` existed is moved onto it
+    # once — and ONLY the paper. The offsets somebody tuned in front of a
+    # printer are left alone, which bumping the whole key would have thrown
+    # away to change one field.
+    check("an older paper choice is migrated once",
+          'values.paper = "auto";' in template and "values.paperAuto = true;" in template)
+    check("only when something was stored", "if (raw && !values.paperAuto)" in template)
+    check("and the flag is kept on every later write",
+          template.count("values.paperAuto = true;") >= 3)
 
     # On A4 the sheet is smaller than the page. It must sit at the top left at
     # true size, because where the stationery really sits is what Left and Top

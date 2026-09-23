@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Box Stickers{% endblock %}
+{% block title %}SM Stickers{% endblock %}
 {# The sheet is wider than the reading width the form pages use. #}
 {% block container_class %}container-wide{% endblock %}
 
@@ -22,7 +22,7 @@
        timestamp) into whatever margin the page leaves, so a margin here would
        stamp four lines of chrome across the top label of every sheet. With
        none, there is nowhere for them to go. */
-    @page { size: 163mm 248mm; margin: 0; }
+    @page { size: auto; margin: 0; }
   </style>
 {% endblock %}
 
@@ -35,10 +35,9 @@
     </div>
 
     <p class="hint" style="margin-bottom:14px">
-      One sticker per box, all identical. Prints onto SM Express stationery —
-      only the three values go on the page, into the blanks beside the
-      courier's own AWB No, ORIGIN and DESTINATION. Three labels to a
-      163 &times; 248mm sheet. Nothing is saved, and no gate pass number is used.
+      Prints onto SM Express stationery —
+     only the three values go on the page, into the blanks beside the
+      courier's own AWB No, ORIGIN and DESTINATION.Nothing is saved.
     </p>
 
     <form class="card sticker-form" id="sticker-form" autocomplete="off">
@@ -156,6 +155,7 @@
              scales one to the other and the alignment goes with it. #}
           <label for="align-paper">Paper</label>
           <select id="align-paper">
+            <option value="auto">Match the printer</option>
             <option value="sheet">SM sheet (163 × 248 mm)</option>
             <option value="a4">A4 (210 × 297 mm)</option>
           </select>
@@ -188,16 +188,6 @@
         </div>
         <button type="button" id="align-test" class="quiet">Print test page</button>
         <button type="button" id="align-reset" class="quiet">Reset</button>
-        <span class="hint">
-          Pick the paper the printer is loaded with, then
-          <strong>Print test page</strong> on plain paper and hold it against a
-          sticker. <em>Left</em>, <em>First line down</em> and <em>Line
-          spacing</em> line the first label up. If the first is right but the
-          second and third creep further down the page, shorten
-          <em>Label pitch</em> — about 1mm for every 1mm the second label is
-          out. <em>100 mm line printed as</em> cures the same thing at the
-          root, if the printed line does not measure 100mm.
-        </span>
       </div>
       {% endif %}
     </form>
@@ -277,7 +267,7 @@
       // away to no purpose.
       const ALIGN_STORE = "sticker_sheet_alignment_v6";
       const ALIGN_DEFAULTS = { left: 37, top: 21.6, gap: 16.66, pitch: 82.7,
-                               paper: "sheet", scale: 100 };
+                               paper: "auto", scale: 100 };
 
       // @page cannot read a custom property, so the rule is rewritten instead.
       // It must match the paper the PRINTER is set to, not the paper the
@@ -289,7 +279,22 @@
       // The sheet content stays 164 x 247mm either way. On A4 it sits at the
       // top left with white around it, and the Left/Top offsets move it to
       // wherever the stationery actually sits in the tray.
+      // `auto` means the page box IS the paper the printer is loaded with,
+      // whatever that is — so there is nothing for the browser to fit the
+      // page into and nothing to centre it on.
+      //
+      // That last part is the bug this fixes. Naming a size smaller than the
+      // paper made Chrome and Brave CENTRE the sheet on it: with A4 loaded,
+      // every value moved 24.6mm down and 23.5mm right, which is exactly half
+      // the difference on each axis. Firefox anchors a small page box to the
+      // top left instead, which is why the same page printed correctly there
+      // and nowhere else.
+      //
+      // `auto` is never worse than naming a size: when the paper IS the sheet
+      // the two are the same thing, and when it is not, only `auto` is right.
+      // The explicit sizes stay for a printer that needs telling.
       const PAPER_SIZES = {
+        auto: "auto",
         sheet: "163mm 248mm",
         a4: "A4 portrait",
       };
@@ -298,12 +303,13 @@
 
       function applyPaper(save) {
         const asked = paperSelect ? paperSelect.value : savedAlignment().paper;
-        const choice = PAPER_SIZES[asked] ? asked : "sheet";
+        const choice = PAPER_SIZES[asked] ? asked : "auto";
         pageRule.textContent =
           `@page { size: ${PAPER_SIZES[choice]}; margin: 0; }`;
         if (save) {
           const values = savedAlignment();
           values.paper = choice;
+          values.paperAuto = true;
           try {
             window.localStorage.setItem(ALIGN_STORE, JSON.stringify(values));
           } catch (e) { /* private window; the sheet still prints */ }
@@ -907,7 +913,23 @@
         try {
           const raw = window.localStorage.getItem(ALIGN_STORE);
           const saved = raw ? JSON.parse(raw) : {};
-          return Object.assign({}, ALIGN_DEFAULTS, saved);
+          const values = Object.assign({}, ALIGN_DEFAULTS, saved);
+
+          // A browser that chose a paper before `auto` existed is moved onto
+          // it once, and only the paper — the offsets somebody tuned in front
+          // of a printer are left exactly as they are. Bumping the whole key
+          // would have thrown those away to change one field.
+          //
+          // Flagged rather than done every load, so choosing a named size
+          // afterwards is respected instead of being reset on the next visit.
+          if (raw && !values.paperAuto) {
+            values.paper = "auto";
+            values.paperAuto = true;
+            try {
+              window.localStorage.setItem(ALIGN_STORE, JSON.stringify(values));
+            } catch (e) { /* private window; it is corrected in memory anyway */ }
+          }
+          return values;
         } catch (e) {
           return Object.assign({}, ALIGN_DEFAULTS);
         }
@@ -942,8 +964,11 @@
           pg.style.setProperty("--sheet-scale", correction);
         });
         if (save) {
-          // Carried through, or choosing an offset would forget the paper.
+          // Carried through, or choosing an offset would forget the paper —
+          // and the one-time paper migration would run again and undo a
+          // deliberate choice on the next load.
           values.paper = paperSelect ? paperSelect.value : stored.paper;
+          values.paperAuto = true;
           try {
             window.localStorage.setItem(ALIGN_STORE, JSON.stringify(values));
           } catch (e) { /* private window; the sheet still prints */ }
@@ -965,7 +990,7 @@
           if (alignInputs[key]) alignInputs[key].value = saved[key];
         });
         if (paperSelect) {
-          paperSelect.value = PAPER_SIZES[saved.paper] ? saved.paper : "sheet";
+          paperSelect.value = PAPER_SIZES[saved.paper] ? saved.paper : "auto";
         }
         // Written now rather than at print time: the @page rule has to be in
         // the document before the print dialog reads it.
