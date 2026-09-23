@@ -1452,12 +1452,14 @@ class TestReceiverList:
 
 
 class TestStickerTypeface:
-    """The three values print in Arial Black at its own weight.
+    """The three values print in Arial Black, unthickened.
 
-    Arial Black is already a black face. Asking for bold on top of it gets
-    no heavier letters: the browser synthesises the weight by smearing each
-    glyph, which at 29pt reads as muddy rather than bolder. The sizes are
-    off the courier's own document and must not drift with the typeface.
+    Weight 400: Arial Black is already a black face, and CSS font matching
+    resolves a 400 request to the only weight the family has. Asking for
+    bold on top is what smears the glyphs.
+
+    The sizes come off the courier's own document and must not drift with
+    the typeface.
     """
 
     def _card(self, page, base_url):
@@ -1481,20 +1483,64 @@ class TestStickerTypeface:
         got = page.evaluate(
             f"""() => {{
               const cs = getComputedStyle(document.querySelector('{selector}'));
-              return {{family: cs.fontFamily, weight: cs.fontWeight, size: cs.fontSize}};
+              return {{family: cs.fontFamily, weight: cs.fontWeight, size: cs.fontSize,
+                       synthesis: cs.fontSynthesisWeight === 'none' ? 'none'
+                                  : (cs.fontSynthesis || 'unset')}};
             }}""")
 
         assert got["family"].lower().startswith('"arial black"'), \
             f"{selector} asks for {got['family']!r} first"
-        # 400, not 700: see the class docstring. Normal weight is what makes
-        # Arial Black print as drawn instead of synthetically thickened.
         assert got["weight"] == "400", \
-            f"{selector} is weight {got['weight']}, which re-synthesises the bold"
+            f"{selector} is weight {got['weight']}; Arial Black must not be re-bolded"
+        # Nothing in this stack may be faked: a synthesised weight is how a
+        # missing font disguises itself as a present one.
+        assert got["synthesis"] in ("none", "weight style small-caps"), got["synthesis"]
         # pt -> px at the CSS 96dpi reference, which is what the document's
         # measurements were taken in.
         expected = pt * 96 / 72
         assert abs(float(got["size"].rstrip("px")) - expected) < 0.1, \
             f"{selector} is {got['size']}, expected {expected:.2f}px ({pt}pt)"
+
+    @pytest.mark.parametrize(
+        "selector", [".awb-text", ".origin-text", ".dest-text"])
+    def test_the_on_screen_preview_uses_it_too(self, page, base_url, selector):
+        """Screen media, deliberately.
+
+        Every other test here emulates print, so all of them kept passing
+        with the screen rule deleted. The preview is what somebody checks
+        before committing a sheet of stationery to the printer; if it shows a
+        different typeface, it is not a preview.
+        """
+        self._card(page, base_url)
+        got = page.evaluate(
+            f"""() => {{
+              const cs = getComputedStyle(document.querySelector('{selector}'));
+              return {{family: cs.fontFamily, weight: cs.fontWeight}};
+            }}""")
+        assert got["family"].lower().startswith('"arial black"'), \
+            f"{selector} asks for {got['family']!r} first on screen"
+        assert got["weight"] == "400", f"{selector} is weight {got['weight']} on screen"
+
+    @pytest.mark.parametrize(
+        "selector", [".awb-text", ".origin-text", ".dest-text"])
+    def test_the_print_cascade_carries_the_same_typeface(
+            self, page, base_url, selector):
+        """Print is a separate cascade in every engine.
+
+        Screen being right proves nothing about paper, and paper is the one
+        that costs pre-printed stationery when it is wrong.
+        """
+        self._card(page, base_url)
+        page.emulate_media(media="print")
+        got = page.evaluate(
+            f"""() => {{
+              const cs = getComputedStyle(document.querySelector('{selector}'));
+              return {{family: cs.fontFamily, weight: cs.fontWeight}};
+            }}""")
+        assert got["family"].lower().startswith('"arial black"'), \
+            f"{selector} asks for {got['family']!r} first on paper"
+        assert got["weight"] == "400", \
+            f"{selector} prints at weight {got['weight']}"
 
     def test_the_ghost_labels_beside_the_values_stay_bold(self, page, base_url):
         """Only the DATA changed.
@@ -1508,3 +1554,178 @@ class TestStickerTypeface:
             "() => getComputedStyle(document.querySelector('.sticker-card'), '::before')"
             "        .fontWeight")
         assert weight == "700", f"the ghost labels went to {weight}"
+
+
+class TestQueueClearsAfterPrinting:
+    """A printed batch does not survive into the next one.
+
+    The labels are gone the moment they leave the printer, so a queue that
+    stays behind is a queue somebody prints twice -- a second set of stickers
+    for boxes that already have them, which is the same failure the duplicate
+    LR check exists to stop.
+    """
+
+    def _queued(self, page, base_url, jobs=(("LR-1", "CHENNAI", "4"),
+                                            ("LR-2", "MYSURU", "2"))):
+        page.goto(f"{base_url}/stickers")
+        page.wait_for_selector("#generate")
+        page.evaluate("() => localStorage.removeItem('sm_sticker_print_queue')")
+        page.reload()
+        page.wait_for_selector("#generate")
+        # A real window.print() opens a dialog nothing can dismiss here. The
+        # stub fires the same event the browser fires when the dialog closes,
+        # so what is under test is our handler, not Chromium's dialog.
+        page.evaluate(
+            "() => { window.print = () => window.dispatchEvent(new Event('afterprint')); }")
+        for lr, receiver, qty in jobs:
+            page.fill("#lr", lr)
+            page.fill("#receiver", receiver)
+            page.fill("#qty", qty)
+            page.click("#generate")
+
+    def _rows(self, page):
+        return page.locator(".sticker-queue-table tbody tr").count()
+
+    def test_printing_empties_the_queue_and_the_stored_copy(self, page, base_url):
+        self._queued(page, base_url)
+        assert self._rows(page) == 2
+
+        page.click("#print-stickers")
+        page.wait_for_timeout(200)
+
+        assert self._rows(page) == 0, "the queue survived the print"
+        assert page.locator(".sticker-card").count() == 0, "the sheet still has cards"
+        assert page.evaluate(
+            "() => window.localStorage.getItem('sm_sticker_print_queue')") is None, \
+            "the stored queue was left behind"
+
+    def test_the_empty_state_comes_back(self, page, base_url):
+        self._queued(page, base_url)
+        page.click("#print-stickers")
+        page.wait_for_timeout(200)
+        assert page.locator("text=No stickers yet").is_visible(), \
+            "the sheet did not return to its empty state"
+
+    def test_it_stays_empty_after_a_reload(self, page, base_url):
+        """Clearing the array is not enough if the browser still holds a copy."""
+        self._queued(page, base_url)
+        page.click("#print-stickers")
+        page.wait_for_timeout(200)
+
+        page.reload()
+        page.wait_for_selector("#generate")
+        assert self._rows(page) == 0, "the printed queue came back on reload"
+
+    def test_the_alignment_test_page_leaves_the_queue_alone(self, page, base_url):
+        """It also calls window.print(), and it is not a print of the batch.
+
+        Wiping somebody's queue because they checked the printer would be
+        the opposite of helpful.
+        """
+        self._queued(page, base_url)
+        if not page.locator("#align-test").count():
+            pytest.skip("no alignment test button for this user")
+
+        page.click("#align-test")
+        page.wait_for_timeout(200)
+        assert self._rows(page) == 2, "the alignment test print wiped the queue"
+
+    def test_an_empty_queue_printing_nothing_is_harmless(self, page, base_url):
+        """Nothing queued, nothing to clear, no error."""
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base_url}/stickers")
+        page.wait_for_selector("#generate")
+        page.evaluate("() => { window.print = () =>"
+                      " window.dispatchEvent(new Event('afterprint')); window.print(); }")
+        page.wait_for_timeout(100)
+        assert not errors, f"afterprint on an empty queue threw: {errors}"
+
+
+class TestQueueActionStyling:
+    """Clear and delete are the two controls that destroy work."""
+
+    def _queued(self, page, base_url):
+        page.goto(f"{base_url}/stickers")
+        page.wait_for_selector("#generate")
+        page.evaluate("() => localStorage.removeItem('sm_sticker_print_queue')")
+        page.reload()
+        page.wait_for_selector("#generate")
+        page.fill("#lr", "LR-1")
+        page.fill("#receiver", "CHENNAI")
+        page.fill("#qty", "4")
+        page.click("#generate")
+
+    def test_clear_is_a_solid_red_button_named_clear(self, page, base_url):
+        self._queued(page, base_url)
+        button = page.locator("#queue-clear")
+        assert button.inner_text().strip() == "Clear", \
+            f"the button says {button.inner_text().strip()!r}"
+
+        style = page.evaluate("""() => {
+          const cs = getComputedStyle(document.getElementById('queue-clear'));
+          return {bg: cs.backgroundColor, color: cs.color};
+        }""")
+        assert style["bg"] == "rgb(220, 53, 69)", f"background is {style['bg']}"
+        assert style["color"] == "rgb(255, 255, 255)", f"text is {style['color']}"
+
+    def test_the_delete_cross_is_red_before_it_is_hovered(self, page, base_url):
+        """Hover-only red hides which control throws the row away."""
+        self._queued(page, base_url)
+        colour = page.evaluate(
+            "() => getComputedStyle(document.querySelector('.queue-remove')).color")
+        assert colour == "rgb(220, 53, 69)", f"the cross is {colour}"
+
+    @pytest.mark.parametrize("scheme", ["light", "dark"])
+    def test_the_clear_button_is_legible_in_either_theme(self, page, base_url, scheme):
+        """It carries its own colours, so it does not follow the theme tokens."""
+        page.emulate_media(color_scheme=scheme)
+        self._queued(page, base_url)
+        got = page.evaluate(CONTRAST_AGAINST, ["#queue-clear", "#queue-clear"])
+        assert got >= 4.5, f"Clear is {got:.2f}:1 in {scheme}"
+
+
+class TestDeployedChangesReachTheBrowser:
+    """A deploy that the office cannot see has not happened.
+
+    The stylesheet is requested with the file's modification time on the end,
+    so a new stylesheet is a new URL. That only works if the browser re-reads
+    the PAGE and sees the new stamp. Flask sends no cache headers of its own,
+    so a browser was free to hold the page, keep quoting the old stamp, and
+    answer it from the stylesheet it had cached for a week -- showing the old
+    design while the server was provably serving the new one.
+    """
+
+    def test_pages_are_never_cached(self, page, base_url):
+        response = page.goto(f"{base_url}/stickers")
+        cache = (response.header_value("cache-control") or "").lower()
+        assert "no-store" in cache, f"the page may be cached: {cache!r}"
+
+    def test_the_stylesheet_is_asked_for_by_version(self, page, base_url):
+        """The stamp is what makes a changed file a different URL."""
+        page.goto(f"{base_url}/stickers")
+        href = page.evaluate(
+            "() => document.querySelector('link[rel=stylesheet]').getAttribute('href')")
+        assert "v=" in href, f"no cache-busting stamp on the stylesheet: {href!r}"
+
+    def test_the_stamp_changes_when_the_file_does(self, page, base_url, tmp_path):
+        """A stamp that never moves is decoration, not cache-busting."""
+        import os
+        import re
+
+        page.goto(f"{base_url}/stickers")
+        first = page.evaluate(
+            "() => document.querySelector('link[rel=stylesheet]').getAttribute('href')")
+        stamp = re.search(r"v=(\d+)", first).group(1)
+
+        css = Path(__file__).resolve().parents[2] / "static" / "css" / "style.css"
+        original = css.stat().st_mtime
+        try:
+            os.utime(css, (original + 60, original + 60))
+            page.goto(f"{base_url}/stickers")
+            second = page.evaluate(
+                "() => document.querySelector('link[rel=stylesheet]').getAttribute('href')")
+            assert re.search(r"v=(\d+)", second).group(1) != stamp, \
+                "the stylesheet URL did not change when the file did"
+        finally:
+            os.utime(css, (original, original))

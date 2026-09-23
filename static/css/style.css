@@ -2309,21 +2309,35 @@ table.people-table th { padding: 10px 12px !important; }
   position: absolute;
   left: var(--sticker-left);
   width: 110mm;
-  /* Arial Black, at its OWN weight. It is already a black face, so asking
-     for bold on top of it gets no heavier letters -- the browser synthesises
-     the weight by smearing each glyph sideways, which on a 29pt label read
-     across a warehouse looks thickened and muddy rather than bolder.
-     font-weight 400 is what makes Arial Black print as drawn.
+  /* Arial Black, named at the weight the face actually carries.
 
-     The fallbacks are other black faces by name, because a stack that ends
-     at a normal-weight sans would print these three values noticeably
-     lighter than the sheet expects. Arial Black ships with Windows, which is
-     what the office prints from; this Linux box has none of them, so the
-     preview here renders in a substitute and only a real print shows the
-     true letterforms. */
+     900, not 400. Arial Black IS a 900 face: asking for 900 matches it
+     exactly, so nothing is synthesised and nothing is guessed. Asking for
+     400 leaves the browser matching a weight the family does not have,
+     which is how the office machines ended up not showing the change at all.
+     This is not bold put back on top -- font-synthesis below forbids the
+     browser from faking weight anywhere in this stack.
+
+     "Arial Bold" is deliberately NOT in the list. It is not a real family;
+     Windows style-linking resolves it to Arial's bold face, which at a
+     glance is the same bold sans that was here before, so a failure to find
+     Arial Black would look exactly like nothing having changed -- which is
+     precisely what was reported. The remaining fallbacks are real black
+     families, so if one is used the letters are still black-weight.
+
+     font-synthesis: none means a machine with none of these prints in a
+     visibly lighter sans instead of a convincing look-alike. A wrong font
+     you can see is better than a wrong font you cannot. */
   font-family: "Arial Black", "Arial Bold", "Archivo Black", "Helvetica Black",
-               "Segoe UI Black", sans-serif;
+               Impact, sans-serif;
   font-weight: 400;
+  /* Nothing in this stack may be thickened by the browser. Arial Black is
+     already black; a synthesised weight on top smears each glyph sideways,
+     and it is also how a MISSING font disguises itself as a present one. */
+  font-synthesis: none;
+  font-synthesis-weight: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   line-height: 1.1;
   text-align: center;
   white-space: nowrap;
@@ -2501,6 +2515,24 @@ body.is-test-print .sticker-stamp { display: block; }
      each line, which is where they belong. */
   .sticker-card div { overflow: hidden; }
 
+  /* Restated for paper, by the name of the value rather than its position.
+     A print stylesheet is a separate cascade in every engine, and this is
+     the one place where being wrong is expensive: it is stationery that has
+     already been bought and fed through the printer. !important because
+     nothing later has any business overriding the courier's typeface.
+     Sizes are deliberately absent -- they stay exactly as set for screen. */
+  .sticker-card .awb-text,
+  .sticker-card .origin-text,
+  .sticker-card .dest-text {
+    font-family: "Arial Black", "Arial Bold", "Archivo Black", "Helvetica Black",
+                 Impact, sans-serif !important;
+    font-weight: 400 !important;
+    font-synthesis: none !important;
+    font-synthesis-weight: none !important;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
   .sticker-card::before { content: none; }
 }
 
@@ -2641,9 +2673,40 @@ table.list.sticker-queue-table { table-layout: auto; }
 .icon-button:focus-visible { border-color: var(--line); }
 
 .queue-edit:hover { color: var(--ink); }
-/* Deleting is the one that cannot be undone, so it is the one that colours. */
-.queue-remove { font-size: 17px; }
-.queue-remove:hover { background: var(--danger-bg); color: var(--danger); }
+
+/* Deleting is the one that cannot be undone, so it is the one that colours.
+   Red at rest, not only on hover: on a list of consignments about to be
+   printed, the control that throws one away should be readable as such
+   before the mouse is anywhere near it. */
+.queue-remove {
+  font-size: 16px;
+  font-weight: 700;
+  color: #dc3545;
+  cursor: pointer;
+}
+/* A light red chip, round, at the size the button already is -- padding here
+   would resize the button and shift the column under the pointer. */
+.sticker-queue-table .queue-remove:hover {
+  background: #f8d7da;
+  border-radius: 50%;
+  color: #b02a37;
+}
+
+/* The Clear button. Solid rather than quiet: it empties the whole batch, and
+   it sits beside controls that only add, so it should not look like one of
+   them. */
+.danger-solid {
+  background-color: #dc3545;
+  color: #ffffff;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-weight: 500;
+  font-size: 13px;
+  cursor: pointer;
+}
+.danger-solid:hover { background-color: #bb2d3b; color: #ffffff; }
+.danger-solid:disabled { opacity: 0.55; cursor: default; }
 
 /* Two icons, not two words, so the column narrows — but not below what two
    26px buttons and the cell's own padding need, or the table overflows its

@@ -242,7 +242,7 @@
   <div class="card sticker-queue no-print" id="sticker-queue" hidden>
     <div class="sticker-queue-head">
       <h2>Queued</h2>
-      <button type="button" id="queue-clear" class="quiet">Clear Queue</button>
+      <button type="button" id="queue-clear" class="danger-solid">Clear</button>
     </div>
     <div class="table-wrap">
       <table class="list sticker-queue-table">
@@ -269,7 +269,7 @@
   <div class="no-print empty" id="sticker-empty">
     <div class="empty-icon">🏷️</div>
     <div class="empty-title">No stickers yet</div>
-    <div class="empty-sub">Fill in the LR number and how many boxes, then press Generate.</div>
+    <div class="empty-sub">Fill in the LR number and how many boxes, then press Add.</div>
   </div>
 
   <script>
@@ -654,8 +654,19 @@
 
       function saveQueue() {
         try {
-          window.localStorage.setItem(QUEUE_STORE, JSON.stringify(queue));
+          // An empty queue removes the key rather than storing "[]", so a
+          // browser that has finished a batch carries nothing at all.
+          if (!queue.length) { window.localStorage.removeItem(QUEUE_STORE); }
+          else { window.localStorage.setItem(QUEUE_STORE, JSON.stringify(queue)); }
         } catch (e) { /* private window, or full; the queue still prints */ }
+      }
+
+      function emptyQueue() {
+        queue = [];
+        saveQueue();
+        stopEditing(true);
+        renderQueue();
+        renderSheet();
       }
 
       let queue = loadQueue();
@@ -841,9 +852,13 @@
           // drop into the blanks already printed on the SM Express sheet,
           // beside its own "AWB No:", "ORIGIN:" and "DESTINATION:". Printing
           // those words again would double them up on the label.
-          card.appendChild(textLine("sticker-lr", label.awb));
-          card.appendChild(textLine("sticker-from", label.origin));
-          card.appendChild(textLine("sticker-to", label.destination));
+          // Two class names each: the positional one the layout uses, and a
+          // name that says what the value IS. The second is what the
+          // typography rule targets, so a rule about the courier's AWB line
+          // does not read as a rule about whichever line happens to be first.
+          card.appendChild(textLine("sticker-lr awb-text", label.awb));
+          card.appendChild(textLine("sticker-from origin-text", label.origin));
+          card.appendChild(textLine("sticker-to dest-text", label.destination));
           page.appendChild(card);
         });
 
@@ -1037,10 +1052,7 @@
               `Remove all ${queue.length} consignment(s) — ${labels} sticker(s)?`)) {
           return;
         }
-        queue = [];
-        saveQueue();
-        stopEditing(true);
-        renderSheet();
+        emptyQueue();
       });
 
       // A long destination has to stay inside its blank row. The lines are
@@ -1220,7 +1232,27 @@
         addToQueue();
       });
 
-      printBtn.addEventListener("click", function () { window.print(); });
+      // Set only by a real print of the queue. The alignment test page also
+      // calls window.print(), and wiping somebody's batch because they
+      // checked the printer would be the opposite of helpful.
+      let clearAfterPrint = false;
+
+      printBtn.addEventListener("click", function () {
+        clearAfterPrint = queue.length > 0;
+        window.print();
+      });
+
+      // afterprint rather than a timer: it fires when the print dialog is
+      // done, however long the person spent choosing a tray.
+      //
+      // NOTE: the event fires on Cancel too -- no browser distinguishes a
+      // cancelled print from a completed one -- so backing out of the dialog
+      // empties the queue as though it had printed.
+      window.addEventListener("afterprint", function () {
+        if (!clearAfterPrint) return;
+        clearAfterPrint = false;
+        emptyQueue();
+      });
 
       // Whatever was already queued when the page was opened or refreshed.
       renderQueue();

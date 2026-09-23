@@ -6828,10 +6828,32 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
     # the wrong job on the next Save.
     check("deleting the row being corrected abandons the edit",
           "if (editingIndex !== null && editingIndex >= index)" in template)
+    # Clearing by hand and clearing after a print must not drift apart, so
+    # both go through one emptyQueue(). These check the handler delegates and
+    # that the thing it delegates to actually empties everything.
     clear_handler = template[template.index('getElementById("queue-clear")'):
                              template.index("function fitLongNames")]
-    check("and so does clearing the queue",
-          "queue = [];" in clear_handler and "stopEditing(true);" in clear_handler)
+    check("and so does clearing the queue", "emptyQueue();" in clear_handler)
+    empty_fn = template[template.index("function emptyQueue()"):
+                        template.index("let queue = loadQueue();")]
+    check("emptying drops the rows, the stored copy and any edit in progress",
+          "queue = [];" in empty_fn and "saveQueue();" in empty_fn
+          and "stopEditing(true);" in empty_fn)
+    check("and redraws both the table and the sheet",
+          "renderQueue();" in empty_fn and "renderSheet();" in empty_fn)
+
+    # Printing is the third way the queue empties, and the one nobody asks
+    # for twice: labels that have left the printer must not still be queued.
+    check("a finished print empties the queue",
+          'window.addEventListener("afterprint"' in template
+          and "emptyQueue();" in template[template.index('"afterprint"'):])
+    check("but only a print of the queue, not the alignment test page",
+          "let clearAfterPrint = false;" in template
+          and "clearAfterPrint = queue.length > 0;" in template)
+    # An empty queue removes the key outright, so a browser that has finished
+    # a batch is carrying nothing at all.
+    check("an emptied queue removes the stored key rather than storing []",
+          "window.localStorage.removeItem(QUEUE_STORE);" in template)
 
     # The cap must not count a row against itself, or raising a job from 2 to
     # 3 near the ceiling would be refused for boxes it is about to give back.
@@ -6874,7 +6896,7 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
     for what, start, end in (
             ("removing a row", "function renderQueue()", "function allLabels()"),
             ("adding one", "function addToQueue()", 'getElementById("queue-clear")'),
-            ("clearing the lot", 'getElementById("queue-clear")', "function fitLongNames")):
+            ("clearing the lot", "function emptyQueue()", "let queue = loadQueue();")):
         block = template[template.index(start):template.index(end)]
         check(f"{what} writes the queue back", "saveQueue();" in block)
 

@@ -118,6 +118,22 @@ def create_app(db_path=None, storage_dir=None):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "same-origin")
+
+        # HTML is never cached. The stylesheet is asked for with the file's
+        # modification time on the end, which is what makes a new stylesheet
+        # a new URL — but only if the browser re-reads the PAGE to see the
+        # new stamp. Flask sends no cache headers of its own, so a browser is
+        # free to hold the page, keep quoting yesterday's stamp, and answer
+        # it from the copy of the stylesheet it cached for a week.
+        #
+        # The result is a machine that shows the old design after a deploy
+        # while the server is provably serving the new one, which is exactly
+        # what happened to the office after the sticker typeface changed.
+        # Pages are small and dynamic; the static files they point at are
+        # still cached for a week, so this costs a request, not a round of
+        # re-downloads.
+        if response.mimetype == "text/html":
+            response.headers.setdefault("Cache-Control", "no-store, private")
         return response
 
     @app.before_request
