@@ -1773,28 +1773,55 @@ class TestActionButtonStates:
         page.click("#generate")
         page.mouse.move(0, 0)
 
-    def test_both_buttons_are_sized_for_a_warehouse_not_a_form(self, page, base_url):
+    def test_add_is_sized_for_a_warehouse_not_a_form(self, page, base_url):
         self._open(page, base_url)
-        for selector in ("#generate", "#print-stickers"):
-            style = self._style(page, selector)
-            assert style["size"] == "15px", f"{selector} is {style['size']}"
-            height = page.locator(selector).bounding_box()["height"]
-            assert height >= 40, f"{selector} is only {height:.0f}px tall"
+        style = self._style(page, "#generate")
+        assert style["size"] == "15px", f"Add is {style['size']}"
+        height = page.locator("#generate").bounding_box()["height"]
+        assert height >= 40, f"Add is only {height:.0f}px tall"
 
         # Not an assertion about `display`: these are flex items, and CSS
         # blockifies a flex item's inline-flex to flex, so the computed value
-        # is "flex" however it was written. What the spec actually asks for
-        # is that the row lines up, so measure that.
-        boxes = {s: page.locator(s).bounding_box()
-                 for s in ("#generate", "#print-stickers", "#sticker-count")}
-        centres = {s: b["y"] + b["height"] / 2 for s, b in boxes.items()}
-        assert abs(centres["#generate"] - centres["#print-stickers"]) < 1, \
-            f"the two buttons do not share a centre line: {centres}"
-        assert abs(centres["#generate"] - centres["#sticker-count"]) < 2, \
-            f"the count does not sit on the buttons' centre line: {centres}"
-        assert abs(boxes["#generate"]["height"]
-                   - boxes["#print-stickers"]["height"]) < 1, \
-            "the two buttons are different heights"
+        # is "flex" however it was written. What matters is that the row
+        # lines up, so measure that.
+        self._queue_one(page)
+        add = page.locator("#generate").bounding_box()
+        count = page.locator("#sticker-count").bounding_box()
+        assert abs((add["y"] + add["height"] / 2)
+                   - (count["y"] + count["height"] / 2)) < 2, \
+            "the count does not sit on Add's centre line"
+
+    def test_the_top_row_is_only_for_building_the_batch(self, page, base_url):
+        """Print moved to the queue card; nothing that finishes a batch is here."""
+        self._open(page, base_url)
+        self._queue_one(page)
+        in_top_row = page.evaluate(
+            "() => [...document.querySelectorAll('.sticker-actions button')]"
+            "        .filter((b) => !b.hidden).map((b) => b.id)")
+        assert in_top_row == ["generate"], f"top row holds {in_top_row}"
+
+    def test_clear_and_print_are_a_matched_pair_on_the_queue(self, page, base_url):
+        """Same box, same line, side by side, in the card they act on."""
+        self._open(page, base_url)
+        self._queue_one(page)
+        page.wait_for_timeout(self.SETTLE)
+
+        both = page.evaluate("""() => ['#queue-clear', '#print-stickers'].map((s) => {
+          const e = document.querySelector(s); const cs = getComputedStyle(e);
+          const r = e.getBoundingClientRect();
+          return {inHeader: !!e.closest('.sticker-queue-head .queued-header-actions'),
+                  w: Math.round(r.width), h: Math.round(r.height), top: Math.round(r.top),
+                  left: r.left, pad: cs.padding, size: cs.fontSize, radius: cs.borderRadius};
+        })""")
+        clear, prnt = both
+        assert clear["inHeader"] and prnt["inHeader"], \
+            "Clear and Print are not both in the Queued header"
+        for key in ("w", "h", "top", "pad", "size", "radius"):
+            assert clear[key] == prnt[key], \
+                f"the pair differs on {key}: Clear {clear[key]} vs Print {prnt[key]}"
+        assert clear["size"] == "14px" and clear["pad"] == "6px 18px", clear
+        assert clear["w"] >= 80, f"the buttons are only {clear['w']}px wide"
+        assert clear["left"] < prnt["left"], "Print should sit to the right of Clear"
 
     def test_add_is_the_solid_dark_one(self, page, base_url):
         self._open(page, base_url)
@@ -1808,7 +1835,7 @@ class TestActionButtonStates:
         style = self._style(page, "#print-stickers")
         assert style["disabled"] is True, "Print is clickable with an empty queue"
         assert style["active"] is False, "Print claims to be ready with nothing queued"
-        assert style["bg"] == "rgb(241, 245, 249)", f"Print is {style['bg']}"
+        assert style["bg"] == "rgb(226, 232, 240)", f"Print is {style['bg']}"
         assert style["cursor"] == "not-allowed", f"cursor is {style['cursor']}"
 
     def test_print_turns_green_once_something_is_queued(self, page, base_url):

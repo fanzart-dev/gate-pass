@@ -2644,12 +2644,11 @@ table.list.sticker-queue-table { table-layout: auto; }
 .sticker-fields { gap: 12px 16px; }
 .sticker-actions { margin-top: 14px; gap: 12px; }
 
-/* --- the two buttons that do the work ---------------------------------- */
+/* --- Add ---------------------------------------------------------------- */
 /* Bigger than the site's default button. This row is used with one hand,
    often standing at the printer, dozens of times a morning -- it is not a
    settings form. */
-.sticker-actions #generate,
-.sticker-actions #print-stickers {
+.sticker-actions #generate {
   display: inline-flex;
   align-items: center;
   gap: 12px;
@@ -2671,33 +2670,6 @@ table.list.sticker-queue-table { table-layout: auto; }
   border-color: #1e293b;
   transform: translateY(-1px);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-/* Nothing queued: it says so by looking unavailable, and the cursor says it
-   again on the way to the click. */
-.sticker-actions #print-stickers {
-  background-color: #f1f5f9;
-  color: #94a3b8;
-  border: 1px solid #cbd5e1;
-  cursor: not-allowed;
-}
-
-/* Something queued. Green because it is the one button on this page that
-   commits paper -- and because the difference between "ready" and "nothing
-   to print" should be answerable across the room, not by reading the
-   button. The class is set with the disabled attribute in one place, so
-   they cannot disagree. */
-.sticker-actions #print-stickers.btn-print-active {
-  background-color: #16a34a !important;
-  color: #ffffff !important;
-  border: 1px solid #15803d !important;
-  font-weight: 700 !important;
-  box-shadow: 0 2px 6px rgba(22, 163, 74, 0.3);
-  cursor: pointer;
-}
-.sticker-actions #print-stickers.btn-print-active:hover {
-  background-color: #15803d !important;
-  transform: translateY(-1px);
 }
 
 /* #0f172a is very nearly the dark theme's own card colour -- 1.05:1 against
@@ -2728,21 +2700,75 @@ table.list.sticker-queue-table { table-layout: auto; }
   border-color: var(--ink-2);
 }
 
+/* --- Clear and Print: the queue card's pair ----------------------------- */
+/* The two actions that finish a batch, so they are sized as one: same
+   height, padding, type and corners, and a common minimum width so "Clear"
+   and "Print" -- five letters each, but not the same five -- do not end up
+   a few pixels apart. Colour is the only thing that tells them apart. */
+.queued-header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.queued-header-actions .btn-clear,
+.queued-header-actions .btn-print {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 6px;
+  min-width: 80px;
+  text-align: center;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+
+.queued-header-actions .btn-clear {
+  background-color: #dc3545;
+  color: #ffffff;
+}
+.queued-header-actions .btn-clear:hover { background-color: #bb2d3b; }
+
+/* Nothing queued. The card is hidden then, so this is rarely seen -- but a
+   disabled button must still look disabled if it ever is. */
+.queued-header-actions .btn-print {
+  background-color: #e2e8f0;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+/* Something queued. Green because it is the one button on this page that
+   commits paper. The class is set with the disabled attribute in one place,
+   setPrintReady(), so the two cannot disagree. */
+.queued-header-actions .btn-print.btn-print-active {
+  background-color: #16a34a;
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 2px 4px rgba(22, 163, 74, 0.2);
+  cursor: pointer;
+}
+.queued-header-actions .btn-print.btn-print-active:hover {
+  background-color: #15803d;
+}
+
 /* Somebody who has asked not to be moved is not moved. */
 @media (prefers-reduced-motion: reduce) {
   .sticker-actions #generate,
-  .sticker-actions #print-stickers {
+  .queued-header-actions .btn-clear,
+  .queued-header-actions .btn-print {
     transition: none;
   }
-  .sticker-actions #generate:hover,
-  .sticker-actions #print-stickers.btn-print-active:hover {
+  .sticker-actions #generate:hover {
     transform: none;
   }
 }
 .sticker-queue { margin-top: 12px; padding: 14px 18px; }
 .sticker-queue-table td, .sticker-queue-table th { padding-top: 7px; padding-bottom: 7px; }
 
-/* The live count sits against Print, because it answers "how much paper is
+/* The live count sits against Add, because it answers "how much paper is
    this about to use" and that is asked with a hand on that button. */
 .sticker-count {
   margin-left: 2px;
@@ -2787,22 +2813,6 @@ table.list.sticker-queue-table { table-layout: auto; }
   border-radius: 50%;
   color: #b02a37;
 }
-
-/* The Clear button. Solid rather than quiet: it empties the whole batch, and
-   it sits beside controls that only add, so it should not look like one of
-   them. */
-.danger-solid {
-  background-color: #dc3545;
-  color: #ffffff;
-  border: none;
-  border-radius: 4px;
-  padding: 4px 12px;
-  font-weight: 500;
-  font-size: 13px;
-  cursor: pointer;
-}
-.danger-solid:hover { background-color: #bb2d3b; color: #ffffff; }
-.danger-solid:disabled { opacity: 0.55; cursor: default; }
 
 /* Two icons, not two words, so the column narrows — but not below what two
    26px buttons and the cell's own padding need, or the table overflows its
