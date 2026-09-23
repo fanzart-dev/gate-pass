@@ -1729,3 +1729,161 @@ class TestDeployedChangesReachTheBrowser:
                 "the stylesheet URL did not change when the file did"
         finally:
             os.utime(css, (original, original))
+
+
+class TestActionButtonStates:
+    """Add and Print are used standing at a printer, with one hand.
+
+    They are sized for that, and Print says what it will do before it is
+    read: grey when there is nothing queued, green when there is.
+    """
+
+    # These buttons carry `transition: all .2s`, and getComputedStyle during a
+    # transition returns the value mid-animation. Reading a colour straight
+    # after the click that changes it returns the OLD one -- which looks
+    # exactly like the rule not applying. Every colour read here waits first.
+    SETTLE = 400
+
+    def _open(self, page, base_url):
+        page.goto(f"{base_url}/stickers")
+        page.wait_for_selector("#generate")
+        page.evaluate("() => localStorage.removeItem('sm_sticker_print_queue')")
+        page.reload()
+        page.wait_for_selector("#generate")
+        # Off the buttons, or whichever one the pointer lands on reports its
+        # hover colour instead of its resting one.
+        page.mouse.move(0, 0)
+        page.wait_for_timeout(self.SETTLE)
+
+    def _style(self, page, selector):
+        page.wait_for_timeout(self.SETTLE)
+        return page.evaluate(
+            f"""() => {{
+              const e = document.querySelector('{selector}');
+              const cs = getComputedStyle(e);
+              return {{bg: cs.backgroundColor, color: cs.color, weight: cs.fontWeight,
+                       size: cs.fontSize, cursor: cs.cursor, display: cs.display,
+                       disabled: e.disabled, active: e.classList.contains('btn-print-active')}};
+            }}""")
+
+    def _queue_one(self, page):
+        page.fill("#lr", "71703457")
+        page.fill("#receiver", "CHENNAI")
+        page.fill("#qty", "4")
+        page.click("#generate")
+        page.mouse.move(0, 0)
+
+    def test_both_buttons_are_sized_for_a_warehouse_not_a_form(self, page, base_url):
+        self._open(page, base_url)
+        for selector in ("#generate", "#print-stickers"):
+            style = self._style(page, selector)
+            assert style["size"] == "15px", f"{selector} is {style['size']}"
+            height = page.locator(selector).bounding_box()["height"]
+            assert height >= 40, f"{selector} is only {height:.0f}px tall"
+
+        # Not an assertion about `display`: these are flex items, and CSS
+        # blockifies a flex item's inline-flex to flex, so the computed value
+        # is "flex" however it was written. What the spec actually asks for
+        # is that the row lines up, so measure that.
+        boxes = {s: page.locator(s).bounding_box()
+                 for s in ("#generate", "#print-stickers", "#sticker-count")}
+        centres = {s: b["y"] + b["height"] / 2 for s, b in boxes.items()}
+        assert abs(centres["#generate"] - centres["#print-stickers"]) < 1, \
+            f"the two buttons do not share a centre line: {centres}"
+        assert abs(centres["#generate"] - centres["#sticker-count"]) < 2, \
+            f"the count does not sit on the buttons' centre line: {centres}"
+        assert abs(boxes["#generate"]["height"]
+                   - boxes["#print-stickers"]["height"]) < 1, \
+            "the two buttons are different heights"
+
+    def test_add_is_the_solid_dark_one(self, page, base_url):
+        self._open(page, base_url)
+        style = self._style(page, "#generate")
+        assert style["bg"] == "rgb(15, 23, 42)", f"Add is {style['bg']}"
+        assert style["color"] == "rgb(255, 255, 255)", f"Add's label is {style['color']}"
+        assert style["weight"] == "600", f"Add is weight {style['weight']}"
+
+    def test_print_is_grey_and_unclickable_with_nothing_queued(self, page, base_url):
+        self._open(page, base_url)
+        style = self._style(page, "#print-stickers")
+        assert style["disabled"] is True, "Print is clickable with an empty queue"
+        assert style["active"] is False, "Print claims to be ready with nothing queued"
+        assert style["bg"] == "rgb(241, 245, 249)", f"Print is {style['bg']}"
+        assert style["cursor"] == "not-allowed", f"cursor is {style['cursor']}"
+
+    def test_print_turns_green_once_something_is_queued(self, page, base_url):
+        self._open(page, base_url)
+        self._queue_one(page)
+
+        style = self._style(page, "#print-stickers")
+        assert style["disabled"] is False, "Print is still disabled with a job queued"
+        assert style["active"] is True, "the active class was not applied"
+        assert style["bg"] == "rgb(22, 163, 74)", f"Print is {style['bg']}"
+        assert style["color"] == "rgb(255, 255, 255)", f"Print's label is {style['color']}"
+        assert style["weight"] == "700", f"Print is weight {style['weight']}"
+
+    def test_it_goes_back_to_grey_when_the_queue_empties(self, page, base_url):
+        """The attribute and the class are one fact, so they move together."""
+        self._open(page, base_url)
+        self._queue_one(page)
+        assert self._style(page, "#print-stickers")["active"] is True
+
+        page.once("dialog", lambda d: d.accept())
+        page.click("#queue-clear")
+        page.mouse.move(0, 0)
+
+        style = self._style(page, "#print-stickers")
+        assert style["active"] is False, "Print stayed green with an empty queue"
+        assert style["disabled"] is True, "Print stayed clickable with an empty queue"
+
+    def test_neither_button_reaches_the_paper(self, page, base_url):
+        """They sit inside .no-print; this is what says so on purpose."""
+        self._open(page, base_url)
+        self._queue_one(page)
+        page.emulate_media(media="print")
+        # .no-print hides the CONTAINER. A descendant of a display:none
+        # element keeps its own computed display -- reading the button's own
+        # `display` says "flex" and proves nothing. What matters is that it
+        # is inside a hidden container and has no box on the page.
+        for selector in ("#generate", "#print-stickers", "#queue-clear"):
+            result = page.evaluate(
+                f"""() => {{
+                  const el = document.querySelector('{selector}');
+                  const hider = el.closest('.no-print');
+                  return {{hidden: !!hider
+                             && getComputedStyle(hider).display === 'none',
+                           boxes: el.getClientRects().length}};
+                }}""")
+            assert result["hidden"], f"{selector} is not inside a hidden container"
+            assert result["boxes"] == 0, f"{selector} still has a box on paper"
+
+    @pytest.mark.parametrize("scheme", ["light", "dark"])
+    def test_add_still_looks_like_a_button_in_either_theme(
+            self, page, base_url, scheme):
+        """#0f172a is all but the dark theme's own card colour.
+
+        On dark it measured 1.05:1 against the card: no edges, just the white
+        word floating there. The label stayed perfectly readable, which is
+        why it is easy to miss -- it does not look broken, it looks like text.
+        """
+        page.emulate_media(color_scheme=scheme)
+        self._open(page, base_url)
+        # CONTRAST_AGAINST compares a foreground COLOUR to a background. Here
+        # both sides are backgrounds -- the button's against the card's --
+        # because the question is whether the button has an edge, not whether
+        # its label is readable. The label was always readable; that is what
+        # made this easy to miss.
+        got = page.evaluate(r"""() => {
+          const lum = (c) => {
+            const [r, g, b] = c.match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => {
+              v /= 255;
+              return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+            });
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          };
+          const a = lum(getComputedStyle(document.getElementById('generate')).backgroundColor);
+          const b = lum(getComputedStyle(document.querySelector('.sticker-form')).backgroundColor);
+          return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+        }""")
+        assert got >= 1.5, \
+            f"Add is {got:.2f}:1 against the card in {scheme} -- it has no visible edge"
