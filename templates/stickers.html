@@ -31,13 +31,13 @@
      screen for setting up a print, so most of the page must not be in it. #}
   <div class="no-print">
     <div class="page-head">
-      <h1>Box Stickers</h1>
+      <h1>SM Stickers</h1>
     </div>
 
     <p class="hint" style="margin-bottom:14px">
-      Prints onto SM Express stationery —
-     only the three values go on the page, into the blanks beside the
-      courier's own AWB No, ORIGIN and DESTINATION.Nothing is saved.
+      Prints onto SM Express stationery — only the three values go on the
+      page, into the blanks beside the courier's own AWB No, ORIGIN and
+      DESTINATION. Nothing is saved.
     </p>
 
     <form class="card sticker-form" id="sticker-form" autocomplete="off">
@@ -114,14 +114,15 @@
       </div>
 
       <div class="sticker-actions">
-        <button type="submit" class="primary" id="generate">Add to Queue</button>
+        <button type="submit" class="primary" id="generate">Add</button>
         {# Only while a queued job is being corrected. Without a way out, the
            only escape from an edit is to save it or reload the page. #}
         <button type="button" id="queue-cancel-edit" class="quiet" hidden>
           Cancel edit</button>
-        <button type="button" id="print-stickers" disabled>
-          Print All Queued Stickers</button>
-        <span class="hint" id="sticker-count"></span>
+        <button type="button" id="print-stickers" disabled>Print</button>
+        {# Beside Print, because it is the answer to "how much paper is this
+           about to use" and that is asked with a hand on that button. #}
+        <span class="hint sticker-count" id="sticker-count"></span>
       </div>
 
       {# Set once, when this printer is first lined up against a real sheet,
@@ -626,6 +627,30 @@
         return queue.reduce((sum, job) => sum + job.qty, 0);
       }
 
+      // Built with createElementNS rather than innerHTML. Nothing in this
+      // block sets markup — every other thing it writes is a value somebody
+      // typed — and an icon is not worth making that rule conditional.
+      function pencilIcon() {
+        const NS = "http://www.w3.org/2000/svg";
+        const svg = document.createElementNS(NS, "svg");
+        svg.setAttribute("viewBox", "0 0 16 16");
+        svg.setAttribute("width", "14");
+        svg.setAttribute("height", "14");
+        svg.setAttribute("aria-hidden", "true");
+        svg.setAttribute("fill", "none");
+        // currentColor, so the icon follows the theme like everything else —
+        // which a pencil emoji would not, besides being a different glyph on
+        // every machine and a blank box on some Linux desktops.
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "1.6");
+        svg.setAttribute("stroke-linecap", "round");
+        svg.setAttribute("stroke-linejoin", "round");
+        const path = document.createElementNS(NS, "path");
+        path.setAttribute("d", "M11.5 2.5l2 2L6 12l-2.5.5.5-2.5z");
+        svg.appendChild(path);
+        return svg;
+      }
+
       function renderQueue() {
         queueCard.hidden = queue.length === 0;
         queueRows.textContent = "";
@@ -651,19 +676,27 @@
           const actions = document.createElement("td");
           actions.className = "q-act";
 
+          // An inline SVG rather than a pencil emoji: the emoji is a
+          // different glyph on every machine, is not a colour this page
+          // chose, and on some Linux desktops is a blank box. The path
+          // inherits currentColor, so it follows the theme like everything
+          // else here.
           const edit = document.createElement("button");
           edit.type = "button";
-          edit.className = "link-button queue-edit";
-          edit.textContent = "Edit";
-          edit.title = `Correct ${job.lr || "this job"}`;
+          edit.className = "icon-button queue-edit";
+          edit.appendChild(pencilIcon());
+          edit.title = "Edit";
+          edit.setAttribute("aria-label", `Edit ${job.lr || "this job"}`);
           edit.addEventListener("click", function () { startEditing(index); });
           actions.appendChild(edit);
 
           const remove = document.createElement("button");
           remove.type = "button";
-          remove.className = "link-button queue-remove";
-          remove.textContent = "Delete";
-          remove.title = `Remove ${job.lr || "this job"} from the queue`;
+          remove.className = "icon-button queue-remove";
+          remove.textContent = "\u00d7";
+          remove.title = "Delete";
+          remove.setAttribute("aria-label",
+                              `Delete ${job.lr || "this job"} from the queue`);
           remove.addEventListener("click", function () {
             queue.splice(index, 1);
             saveQueue();
@@ -803,7 +836,7 @@
 
       function stopEditing(clearForm) {
         editingIndex = null;
-        addButton.textContent = "Add to Queue";
+        addButton.textContent = "Add";
         cancelEdit.hidden = true;
         if (clearForm) {
           document.getElementById("lr").value = "";

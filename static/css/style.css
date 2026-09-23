@@ -2436,11 +2436,15 @@ body.is-test-print .sticker-stamp { display: block; }
 }
 .sticker-queue-head h2 { margin: 0; font-size: 16px; }
 
-.sticker-queue-table { table-layout: auto; }
+/* `table.list` sets table-layout: fixed and outranks a lone class, so the
+   override needs the element name too — the drafts table does the same.
+   Auto here because the destination is the only column that can be long,
+   and it should give way rather than force a horizontal scrollbar. */
+table.list.sticker-queue-table { table-layout: auto; }
 .sticker-queue-table .q-num { width: 40px; }
 .sticker-queue-table .q-qty { width: 70px; text-align: right; }
 /* Two buttons live here now, and 80px clipped Delete to "Delet". */
-.sticker-queue-table .q-act { width: 130px; text-align: right; }
+.sticker-queue-table .q-act { text-align: right; }
 .sticker-queue-table td, .sticker-queue-table th { white-space: nowrap; }
 
 /* The destination is the one column that can be long, so it is the one that
@@ -2507,3 +2511,49 @@ body.is-test-print .sticker-stamp { display: block; }
   box-shadow: inset 3px 0 0 var(--blue);
 }
 .queue-edit { margin-right: 10px; }
+
+/* --- sticker workspace polish ----------------------------------------- */
+/* The form, the buttons and the queue are one task, so they are pulled
+   together rather than sitting as three cards with a card's worth of air
+   between them. This page is used dozens of times a day. */
+.sticker-form { padding: 16px 18px; }
+.sticker-fields { gap: 12px 16px; }
+.sticker-actions { margin-top: 14px; }
+.sticker-queue { margin-top: 12px; padding: 14px 18px; }
+.sticker-queue-table td, .sticker-queue-table th { padding-top: 7px; padding-bottom: 7px; }
+
+/* The live count sits against Print, because it answers "how much paper is
+   this about to use" and that is asked with a hand on that button. */
+.sticker-count {
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Compact, square, quiet until pointed at — a row of these should read as a
+   column of marks, not as a second set of buttons competing with Add. */
+.icon-button {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: transparent;
+  background: none;
+  color: var(--label);
+  border-radius: var(--radius-sm);
+  line-height: 1;
+}
+.icon-button + .icon-button { margin-left: 2px; }
+.icon-button:hover { background: var(--head-bg); border-color: transparent; }
+.icon-button:focus-visible { border-color: var(--line); }
+
+.queue-edit:hover { color: var(--ink); }
+/* Deleting is the one that cannot be undone, so it is the one that colours. */
+.queue-remove { font-size: 17px; }
+.queue-remove:hover { background: var(--danger-bg); color: var(--danger); }
+
+/* Two icons, not two words, so the column narrows — but not below what two
+   26px buttons and the cell's own padding need, or the table overflows its
+   wrapper by a few pixels and a scrollbar appears under a table that fits. */
+.sticker-queue-table .q-act { width: 88px; }
