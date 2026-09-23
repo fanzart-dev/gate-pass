@@ -40,7 +40,20 @@
       DESTINATION. Nothing is saved.
     </p>
 
-    <form class="card sticker-form" id="sticker-form" autocomplete="off">
+    {# novalidate: min="1" on the box count made Chrome refuse to fire submit
+       at all for a 0, so our own handler never ran and the only feedback was
+       a native bubble that Firefox, Chrome and Brave each word differently and
+       that vanishes on the next click. One validator, one wording, one place
+       on the page. The min/max attributes stay for the spinner and for
+       assistive tech; the ceiling is enforced in addToQueue either way. #}
+    <form class="card sticker-form" id="sticker-form" autocomplete="off" novalidate>
+      {# Above the fields, so it is read before the eye reaches the button it
+         is complaining about. role=alert so a screen reader is told without
+         having to go looking. Not a browser alert(): this page is used
+         dozens of times a day, and a modal that must be dismissed before the
+         offending box can even be seen is a poor trade for a line of text. #}
+      <p class="sticker-problem" id="sticker-problem" role="alert" hidden></p>
+
       <div class="sticker-fields">
         <div>
           <label for="lr">LR Number</label>
@@ -481,6 +494,10 @@
           li.addEventListener("mousedown", function (event) {
             event.preventDefault();
             receiver.value = name;
+            // Setting .value in code fires neither input nor change, so the
+            // red would stay on a box that has just been filled from the
+            // list somebody was told to use.
+            clearMark(receiver);
             closeMenu();
             receiver.focus();
           });
@@ -836,6 +853,7 @@
 
       function stopEditing(clearForm) {
         editingIndex = null;
+        clearProblem();
         addButton.textContent = "Add";
         cancelEdit.hidden = true;
         if (clearForm) {
@@ -851,16 +869,102 @@
         document.getElementById("lr").focus();
       });
 
+      // ---- saying what is wrong -------------------------------------------
+      // A blank field used to fail silently: Add did nothing, the queue did
+      // not grow, and the only clue was a cursor jumping to the box. Worse
+      // for a missing LR, which was accepted — the labels printed with an
+      // empty AWB line and nobody noticed until the boxes were at the gate.
+      const problem = document.getElementById("sticker-problem");
+      const lrInput = document.getElementById("lr");
+      const senderInput = document.getElementById("sender");
+
+      const REQUIRED = [
+        { box: () => lrInput, name: "LR Number" },
+        { box: () => senderInput, name: "Sender" },
+        { box: () => receiver, name: "Receiver" },
+        { box: () => qtyInput, name: "Number of Boxes" },
+      ];
+
+      function clearProblem() {
+        problem.hidden = true;
+        problem.textContent = "";
+        REQUIRED.forEach((f) => f.box().classList.remove("is-missing"));
+      }
+
+      function showProblem(message, boxes) {
+        problem.textContent = message;
+        problem.hidden = false;
+        REQUIRED.forEach((f) => f.box().classList.remove("is-missing"));
+        boxes.forEach((b) => b.classList.add("is-missing"));
+        if (boxes.length) boxes[0].focus();
+      }
+
+      // Cleared as soon as the field is typed in, so the red does not sit
+      // there accusing somebody who has already fixed it.
+      //
+      // `input` alone: it fires on every keystroke, which is exactly when
+      // the complaint stops being true. `change` would only add a second
+      // firing on the way out of the box, which is not typing and tells us
+      // nothing `input` has not already said.
+      function clearMark(box) {
+        box.classList.remove("is-missing");
+        // The banner goes once nothing is still marked, rather than on the
+        // first keystroke — two missing fields should not lose the message
+        // when only one of them is filled.
+        if (!REQUIRED.some((other) => other.box().classList.contains("is-missing"))) {
+          problem.hidden = true;
+          problem.textContent = "";
+        }
+      }
+
+      REQUIRED.forEach(function (f) {
+        const box = f.box();
+        box.addEventListener("input", function () { clearMark(box); });
+      });
+
       function addToQueue() {
-        const lr = document.getElementById("lr").value.trim();
-        const sender = document.getElementById("sender").value.trim();
+        const lr = lrInput.value.trim();
+        const sender = senderInput.value.trim();
         const to = receiver.value.trim();
         let quantity = parseInt(qtyInput.value, 10);
 
-        if (!Number.isFinite(quantity) || quantity < 1) {
-          qtyInput.focus();
+        // Everything that is missing, not merely the first — sending someone
+        // back four times for four blank boxes is four round trips.
+        const missing = REQUIRED.filter(function (f) {
+          const box = f.box();
+          return box === qtyInput
+            ? !(Number.isFinite(parseInt(box.value, 10)) && parseInt(box.value, 10) > 0)
+            : !box.value.trim();
+        });
+        if (missing.length) {
+          showProblem(
+            "Please fill in all required fields (LR Number, Sender, Receiver "
+            + "and Number of Boxes) before adding to the queue. Missing: "
+            + missing.map((f) => f.name).join(", ") + ".",
+            missing.map((f) => f.box()));
           return;
         }
+
+        // One consignment, one LR. The same number twice in a queue means a
+        // second set of labels for boxes that already have them, and at the
+        // far end two deliveries claiming to be the same one.
+        //
+        // The row being corrected is skipped, or saving it unchanged would
+        // report the job as a duplicate of itself.
+        const clash = queue.findIndex(function (job, index) {
+          return index !== editingIndex
+            && job.lr.trim().toLowerCase() === lr.toLowerCase();
+        });
+        if (clash !== -1) {
+          showProblem(
+            `Duplicate LR Number. A consignment with LR Number "${queue[clash].lr}" `
+            + "is already in the queue, as row " + (clash + 1)
+            + ". Duplicate entries are not allowed.",
+            [lrInput]);
+          return;
+        }
+
+        clearProblem();
         // Capped on the TOTAL, not per job: the browser has to build every
         // card in the queue, and ten jobs of a hundred is the same weight as
         // one job of a thousand. What the row being corrected already holds
