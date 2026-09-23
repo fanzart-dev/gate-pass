@@ -610,6 +610,15 @@
       });
 
       // --- building the sheet -------------------------------------------
+      // The disabled attribute and the green class are two halves of one
+      // fact: whether there is anything to print. Set in two places they
+      // drift, and a grey button that still prints -- or a green one that
+      // does nothing -- is worse than either state on its own.
+      function setPrintReady(ready) {
+        printBtn.disabled = !ready;
+        printBtn.classList.toggle("btn-print-active", ready);
+      }
+
       function textLine(className, text) {
         const line = document.createElement("div");
         line.className = className;
@@ -811,7 +820,7 @@
         if (!labels.length) {
           sheet.hidden = true;
           empty.hidden = false;
-          printBtn.disabled = true;
+          setPrintReady(false);
           countHint.textContent = "";
           return;
         }
@@ -864,7 +873,7 @@
 
         sheet.hidden = false;
         empty.hidden = true;
-        printBtn.disabled = false;
+        setPrintReady(true);
 
         const pages = Math.ceil(labels.length / PER_PAGE);
         countHint.textContent =
