@@ -2309,7 +2309,21 @@ table.people-table th { padding: 10px 12px !important; }
   position: absolute;
   left: var(--sticker-left);
   width: 110mm;
-  font-weight: 700;
+  /* Arial Black, at its OWN weight. It is already a black face, so asking
+     for bold on top of it gets no heavier letters -- the browser synthesises
+     the weight by smearing each glyph sideways, which on a 29pt label read
+     across a warehouse looks thickened and muddy rather than bolder.
+     font-weight 400 is what makes Arial Black print as drawn.
+
+     The fallbacks are other black faces by name, because a stack that ends
+     at a normal-weight sans would print these three values noticeably
+     lighter than the sheet expects. Arial Black ships with Windows, which is
+     what the office prints from; this Linux box has none of them, so the
+     preview here renders in a substitute and only a real print shows the
+     true letterforms. */
+  font-family: "Arial Black", "Arial Bold", "Archivo Black", "Helvetica Black",
+               "Segoe UI Black", sans-serif;
+  font-weight: 400;
   line-height: 1.1;
   text-align: center;
   white-space: nowrap;

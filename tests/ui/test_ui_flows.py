@@ -1449,3 +1449,62 @@ class TestReceiverList:
             shadow = page.evaluate(
                 f"() => getComputedStyle(document.querySelector('{selector}')).boxShadow")
             assert shadow and shadow != "none", f"{selector} has no shadow in {scheme}"
+
+
+class TestStickerTypeface:
+    """The three values print in Arial Black at its own weight.
+
+    Arial Black is already a black face. Asking for bold on top of it gets
+    no heavier letters: the browser synthesises the weight by smearing each
+    glyph, which at 29pt reads as muddy rather than bolder. The sizes are
+    off the courier's own document and must not drift with the typeface.
+    """
+
+    def _card(self, page, base_url):
+        page.goto(f"{base_url}/stickers")
+        page.wait_for_selector("#generate")
+        page.evaluate("() => localStorage.removeItem('sm_sticker_print_queue')")
+        page.reload()
+        page.wait_for_selector("#generate")
+        page.fill("#lr", "71703457")
+        page.fill("#receiver", "CHENNAI")
+        page.fill("#qty", "3")
+        page.click("#generate")
+        page.wait_for_selector(".sticker-card")
+
+    @pytest.mark.parametrize(
+        "selector,pt", [(".sticker-lr", 29), (".sticker-from", 29), (".sticker-to", 25)])
+    def test_each_line_is_arial_black_at_its_own_weight(
+            self, page, base_url, selector, pt):
+        self._card(page, base_url)
+        page.emulate_media(media="print")
+        got = page.evaluate(
+            f"""() => {{
+              const cs = getComputedStyle(document.querySelector('{selector}'));
+              return {{family: cs.fontFamily, weight: cs.fontWeight, size: cs.fontSize}};
+            }}""")
+
+        assert got["family"].lower().startswith('"arial black"'), \
+            f"{selector} asks for {got['family']!r} first"
+        # 400, not 700: see the class docstring. Normal weight is what makes
+        # Arial Black print as drawn instead of synthetically thickened.
+        assert got["weight"] == "400", \
+            f"{selector} is weight {got['weight']}, which re-synthesises the bold"
+        # pt -> px at the CSS 96dpi reference, which is what the document's
+        # measurements were taken in.
+        expected = pt * 96 / 72
+        assert abs(float(got["size"].rstrip("px")) - expected) < 0.1, \
+            f"{selector} is {got['size']}, expected {expected:.2f}px ({pt}pt)"
+
+    def test_the_ghost_labels_beside_the_values_stay_bold(self, page, base_url):
+        """Only the DATA changed.
+
+        The grey "AWB No: / ORIGIN: / DESTINATION:" drawn on screen stands in
+        for what the courier has already printed on the sheet. It is a guide,
+        not a value, and it never reaches paper -- so it keeps its own weight.
+        """
+        self._card(page, base_url)
+        weight = page.evaluate(
+            "() => getComputedStyle(document.querySelector('.sticker-card'), '::before')"
+            "        .fontWeight")
+        assert weight == "700", f"the ghost labels went to {weight}"
