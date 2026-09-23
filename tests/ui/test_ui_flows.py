@@ -1332,3 +1332,120 @@ class TestStickerQueueValidation:
         state = self._state(page)
         assert state["hidden"], f"the complaint outlived the edit: {state['text']!r}"
         assert state["marked"] == [], f"still marked: {state['marked']}"
+
+
+class TestReceiverList:
+    """The pick list and the manage panel both hang off the receiver field.
+
+    Both float over the page. The manage panel used to sit in the flow, so
+    opening it pushed Add, Print and the whole queue a few hundred pixels
+    down -- on a page whose value is that the buttons are where you left
+    them, twenty times a morning.
+    """
+
+    def _open(self, page, base_url):
+        page.goto(f"{base_url}/stickers")
+        page.wait_for_selector("#generate")
+
+    def test_opening_the_manage_panel_moves_nothing(self, page, base_url):
+        self._open(page, base_url)
+        before = page.locator("#generate").bounding_box()
+
+        page.click("#receiver-manage")
+        page.wait_for_selector("#receiver-list:not([hidden])")
+        after = page.locator("#generate").bounding_box()
+
+        assert abs(after["y"] - before["y"]) < 1, (
+            f"Add moved {after['y'] - before['y']:.0f}px when the panel opened")
+
+    def test_the_panel_floats_over_the_form_rather_than_stretching_it(
+            self, page, base_url):
+        """If it is in the flow it makes the card taller; a popover does not."""
+        self._open(page, base_url)
+        height = "() => document.querySelector('.sticker-form').getBoundingClientRect().height"
+        before = page.evaluate(height)
+
+        page.click("#receiver-manage")
+        page.wait_for_selector("#receiver-list:not([hidden])")
+        assert abs(page.evaluate(height) - before) < 1, "the form card grew"
+
+        # And it really is on top of what it covers, not behind it.
+        assert page.evaluate("""() => {
+          const p = document.getElementById('receiver-list').getBoundingClientRect();
+          return document.elementFromPoint(p.x + p.width / 2, p.y + p.height - 8)
+                 .closest('#receiver-list') !== null;
+        }"""), "something is drawn over the manage panel"
+
+    def test_the_name_fits_the_box_it_is_typed_into(self, page, base_url):
+        """The caret belongs inside the field.
+
+        Beside it, the caret and the Manage button took 68px out of a 254px
+        column and the longest real receiver showed as "CHENNAI (SUM...".
+        """
+        self._open(page, base_url)
+        page.fill("#receiver", "CHENNAI (SUMANGALI)")
+        overflow = page.evaluate(
+            "() => { const b = document.getElementById('receiver');"
+            "        return b.scrollWidth - b.clientWidth; }")
+        assert overflow <= 0, f"the receiver name is clipped by {overflow}px"
+
+    def test_only_one_of_the_two_is_ever_open(self, page, base_url):
+        """They sit in the same place, so the second swallows the first's clicks."""
+        self._open(page, base_url)
+        page.click("#receiver-manage")
+        page.wait_for_selector("#receiver-list:not([hidden])")
+
+        page.click("#receiver")
+        page.wait_for_selector(".receiver-menu li")
+        assert page.locator("#receiver-list").is_hidden(), \
+            "the manage panel stayed open under the pick list"
+
+        page.click("#receiver-manage")
+        page.wait_for_selector("#receiver-list:not([hidden])")
+        assert page.locator("#receiver-menu").is_hidden(), \
+            "the pick list stayed open under the manage panel"
+
+    def test_the_close_button_shuts_the_panel(self, page, base_url):
+        self._open(page, base_url)
+        page.click("#receiver-manage")
+        page.wait_for_selector("#receiver-list:not([hidden])")
+
+        page.click("#receiver-close")
+        assert page.locator("#receiver-list").is_hidden(), "the panel stayed open"
+
+    def test_a_name_can_still_be_added_and_removed(self, page, base_url):
+        """The looks changed; the list did not."""
+        self._open(page, base_url)
+        page.click("#receiver-manage")
+        page.wait_for_selector("#receiver-list:not([hidden])")
+
+        page.fill("#receiver-new", "COIMBATORE")
+        page.click("#receiver-add")
+        names = page.locator("#receiver-items li span").all_inner_texts()
+        assert "COIMBATORE" in names, f"not added: {names}"
+
+        row = page.locator("#receiver-items li",
+                           has=page.locator("span", has_text="COIMBATORE"))
+        row.locator(".receiver-remove").click()
+        names = page.locator("#receiver-items li span").all_inner_texts()
+        assert "COIMBATORE" not in names, f"not removed: {names}"
+
+    @pytest.mark.parametrize("scheme", ["light", "dark"])
+    def test_both_panels_read_as_lifted_off_the_page(self, page, base_url, scheme):
+        """A popover with no shadow is a rectangle of text over more text.
+
+        The pick list carried a hardcoded 12%-black shadow, which on the dark
+        theme's near-black card was not visible at all.
+        """
+        page.emulate_media(color_scheme=scheme)
+        self._open(page, base_url)
+
+        page.click("#receiver-manage")
+        page.wait_for_selector("#receiver-list:not([hidden])")
+        for selector in ("#receiver-list", "#receiver-menu"):
+            if selector == "#receiver-menu":
+                page.click("#receiver")
+                page.wait_for_selector(".receiver-menu li")
+            shadow = page.evaluate(
+                f"() => getComputedStyle(document.querySelector('{selector}')).boxShadow")
+            assert shadow and shadow != "none", f"{selector} has no shadow in {scheme}"

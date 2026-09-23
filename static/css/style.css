@@ -37,11 +37,17 @@
   --radius-sm: 6px;
   --shadow: 0 1px 3px 0 rgba(0, 0, 0, .05);
   --shadow-lift: 0 4px 6px -1px rgba(0, 0, 0, .07), 0 2px 4px -2px rgba(0, 0, 0, .05);
+  /* Menus and panels that float over the form. Separate from --shadow-lift
+     because a popover has to read as ABOVE the page, not merely raised, and
+     because it needs a much heavier value in dark mode where a 12%-black
+     shadow on a near-black background is not there at all. */
+  --pop-shadow: 0 8px 24px rgba(15, 23, 42, .14), 0 2px 6px rgba(15, 23, 42, .08);
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --pop-shadow: 0 10px 30px rgba(0, 0, 0, .55), 0 2px 8px rgba(0, 0, 0, .4);
     --ink: #f1f5f9;
     --ink-2: #cbd5e1;
     --muted: #64748b;
@@ -2055,24 +2061,71 @@ table.people-table th { padding: 10px 12px !important; }
    once when the printer is first lined up and then left alone. */
 /* The receiver box and its Manage button share a line, so the button reads
    as belonging to that field rather than to the form. */
+/* The text box and its caret are one control; the gear is a separate tool
+   beside it. */
 .receiver-field { display: flex; gap: 6px; align-items: stretch; }
-.receiver-field input { flex: 1 1 auto; min-width: 0; }
-.receiver-field button { flex: 0 0 auto; padding: 0 11px; font-size: 13px; }
+.receiver-input { position: relative; flex: 1 1 auto; min-width: 0; }
+.receiver-input input { width: 100%; padding-right: 30px; }
 
+/* Qualified by the field: .icon-button sizes itself for a table cell (26px)
+   and is declared further down the sheet, so an unqualified rule here lost
+   and the gear sat as a 26px button against a 42px input. */
+.receiver-field .receiver-manage {
+  flex: 0 0 auto;
+  width: 38px;
+  height: auto;          /* stretched by the row, so it tracks the input */
+  color: var(--label);
+}
+.receiver-field .receiver-manage:hover { color: var(--ink); }
+.receiver-field .receiver-manage[aria-expanded="true"] {
+  border-color: var(--line);
+  background: var(--head-bg);
+  color: var(--ink);
+}
+
+/* --- the manage panel -------------------------------------------------- */
+/* Anchored under the field, not in the flow: see the note in the template.
+   Same card, border, radius and shadow as the pick list, because they are
+   two views of one list and should look like it. */
 .receiver-list {
-  margin-top: 8px;
-  padding: 10px 12px;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 31;
+  padding: 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: var(--head-bg);
+  background: var(--card);
+  box-shadow: var(--pop-shadow);
+}
+
+.receiver-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--label);
+}
+.receiver-list-head .icon-button {
+  width: 24px;
+  height: 24px;
+  font-size: 17px;
+  line-height: 1;
 }
 
 .receiver-list ul {
   list-style: none;
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   padding: 0;
-  /* Long lists scroll inside the panel rather than pushing the form down the
-     page every time somebody opens it. */
+  /* Long lists scroll inside the panel rather than growing it off-screen. */
   max-height: 168px;
   overflow-y: auto;
 }
@@ -2081,24 +2134,37 @@ table.people-table th { padding: 10px 12px !important; }
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 0;
+  /* Each name is a row with its own hover, so it is obvious which one the
+     delete button belongs to. Unpadded rows with a distant x made it a
+     guess. */
+  padding: 5px 6px;
+  border-radius: var(--radius-sm);
   font-size: 13.5px;
 }
+.receiver-list li:hover { background: var(--head-bg); }
 .receiver-list li span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .receiver-list .receiver-empty { color: var(--muted); }
+.receiver-list .receiver-empty:hover { background: none; }
 
 .receiver-remove {
   flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   line-height: 1;
-  font-size: 15px;
+  font-size: 16px;
   border-radius: 50%;
   border-color: transparent;
   background: none;
   color: var(--muted);
+  /* Dimmed rather than hidden. Removing a name is what this panel is FOR, so
+     a list with no visible affordance until the mouse happens to cross a row
+     is hiding the feature; five crosses at full strength beside five names
+     read as five errors. Dim, then solid on the row you are pointing at. */
+  opacity: 0.5;
 }
+.receiver-list li:hover .receiver-remove,
+.receiver-remove:focus-visible { opacity: 1; }
 .receiver-remove:hover {
   background: var(--danger-bg);
   border-color: transparent;
@@ -2108,7 +2174,7 @@ table.people-table th { padding: 10px 12px !important; }
 .receiver-add { display: flex; gap: 6px; }
 .receiver-add input { flex: 1 1 auto; min-width: 0; }
 .receiver-add button { flex: 0 0 auto; white-space: nowrap; }
-.receiver-list .hint { margin: 8px 0 0; font-size: 12.5px; }
+.receiver-list .hint { margin: 8px 0 0; font-size: 12px; }
 
 .sticker-align {
   display: flex;
@@ -2463,15 +2529,26 @@ table.list.sticker-queue-table { table-layout: auto; }
 /* The field is the positioning context for the menu, which hangs under it. */
 .receiver-field { position: relative; }
 
+/* Inside the box, against its right edge, like a select's own arrow. The
+   input reserves padding-right for it so a long name never runs underneath. */
 .receiver-caret {
-  flex: 0 0 auto;
-  width: 30px;
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 28px;
   padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: none;
   font-size: 12px;
   line-height: 1;
   color: var(--label);
 }
-.receiver-caret:hover { color: var(--ink); }
+.receiver-caret:hover { background: var(--head-bg); color: var(--ink); }
 
 .receiver-menu {
   position: absolute;
@@ -2485,7 +2562,7 @@ table.list.sticker-queue-table { table-layout: auto; }
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+  box-shadow: var(--pop-shadow);
   /* A long list scrolls inside the menu rather than running off the page. */
   max-height: 220px;
   overflow-y: auto;
@@ -2498,6 +2575,7 @@ table.list.sticker-queue-table { table-layout: auto; }
   cursor: pointer;
   overflow-wrap: anywhere;
 }
+.receiver-menu li + li { margin-top: 1px; }
 .receiver-menu li:hover,
 .receiver-menu li.is-active { background: var(--head-bg); }
 

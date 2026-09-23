@@ -90,32 +90,57 @@
              but not a double quote, so in a double-quoted attribute the
              JSON's own quotes close it and the list arrives as rubbish — the
              menu came up empty and silently. #}
+          {# The caret sits INSIDE the box, the way a real select's does.
+             Beside it, it was a second control competing with the field and
+             it cost the input 30px of an already narrow column, which is why
+             "CHENNAI (SUMANGALI)" showed as "CHENNAI (SUM...". #}
           <div class="receiver-field"
                data-receiver-defaults='{{ receiver_presets|list|tojson }}'>
-            <input type="text" id="receiver" name="receiver" value="{{ receiver }}"
-                   placeholder="CHENNAI (SUMANGALI)" autocomplete="off"
-                   role="combobox" aria-expanded="false"
-                   aria-controls="receiver-menu" aria-autocomplete="list">
-            <button type="button" id="receiver-toggle" class="receiver-caret"
-                    aria-label="Show saved receivers" tabindex="-1">&#9662;</button>
-            <button type="button" id="receiver-manage" class="quiet"
-                    aria-expanded="false" aria-controls="receiver-list"
-                    title="Add or remove saved receivers">Manage</button>
-            <ul class="receiver-menu" id="receiver-menu" role="listbox" hidden></ul>
-          </div>
-
-
-          <div class="receiver-list" id="receiver-list" hidden>
-            <ul id="receiver-items"></ul>
-            <div class="receiver-add">
-              <input type="text" id="receiver-new" placeholder="Add a receiver"
-                     autocomplete="off">
-              <button type="button" id="receiver-add" class="quiet">+ Add</button>
+            <div class="receiver-input">
+              <input type="text" id="receiver" name="receiver" value="{{ receiver }}"
+                     placeholder="CHENNAI (SUMANGALI)" autocomplete="off"
+                     role="combobox" aria-expanded="false"
+                     aria-controls="receiver-menu" aria-autocomplete="list">
+              <button type="button" id="receiver-toggle" class="receiver-caret"
+                      aria-label="Show saved receivers" tabindex="-1">&#9662;</button>
             </div>
-            <p class="hint">
-              Saved in this browser only — nothing here is sent to the server
-              or shared with another machine.
-            </p>
+            {# An icon, like the edit and delete buttons on the queue rows
+               below. The word "Manage" beside a field of its own width read
+               as part of the form rather than as a tool for the list. #}
+            <button type="button" id="receiver-manage"
+                    class="icon-button receiver-manage"
+                    aria-expanded="false" aria-controls="receiver-list"
+                    title="Manage saved receivers"
+                    aria-label="Manage saved receivers">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"
+                   fill="none" stroke="currentColor" stroke-width="1.7"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+            </button>
+            <ul class="receiver-menu" id="receiver-menu" role="listbox" hidden></ul>
+
+            {# Inside the field, so it hangs under it as a panel instead of
+               sitting in the flow. In the flow it pushed Add, Print and the
+               whole queue a couple of hundred pixels down the page every
+               time it was opened, on a page whose whole point is that the
+               buttons are where you left them. #}
+            <div class="receiver-list" id="receiver-list" role="dialog"
+                 aria-label="Saved receivers" hidden>
+              <div class="receiver-list-head">
+                <span>Saved receivers</span>
+                <button type="button" id="receiver-close" class="icon-button"
+                        title="Close" aria-label="Close">&#215;</button>
+              </div>
+              <ul id="receiver-items"></ul>
+              <div class="receiver-add">
+                <input type="text" id="receiver-new" placeholder="Add a receiver"
+                       autocomplete="off">
+                <button type="button" id="receiver-add">Add</button>
+              </div>
+              <p class="hint">Saved in this browser only, not on the server.</p>
+            </div>
           </div>
         </div>
         <div>
@@ -460,6 +485,12 @@
         managePanel.hidden = true;
         manageButton.setAttribute("aria-expanded", "false");
       }
+
+      document.getElementById("receiver-close")
+        .addEventListener("click", function () {
+          closeManage();
+          manageButton.focus();   // not left on a button that has vanished
+        });
 
       function visibleNames() {
         const typed = receiver.value.trim().toLowerCase();
