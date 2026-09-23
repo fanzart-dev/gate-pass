@@ -2557,3 +2557,35 @@ table.list.sticker-queue-table { table-layout: auto; }
    26px buttons and the cell's own padding need, or the table overflows its
    wrapper by a few pixels and a scrollbar appears under a table that fits. */
 .sticker-queue-table .q-act { width: 88px; }
+
+/* --- sticker form validation ------------------------------------------ */
+/* Above the fields and styled as a problem, not as another hint: the page is
+   already full of grey explanatory text, and a complaint that looks like the
+   rest of it does not get read. */
+.sticker-problem {
+  margin: 0 0 14px;
+  padding: 10px 13px;
+  border: 1px solid var(--danger);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+/* The offending boxes. Border AND a ring, because a 1px border change alone
+   is easy to miss on a form of four identical fields. */
+.sticker-form .is-missing,
+.sticker-form .is-missing:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-bg);
+}
+
+/* The focus outline is drawn over the red border, so the one box we send the
+   cursor to -- the first thing that is wrong -- was the only one that did not
+   look wrong. Keep the ring, because it still has to be findable; recolour it,
+   so being focused does not cancel being empty. */
+.sticker-form .is-missing:focus {
+  outline-color: var(--danger);
+}

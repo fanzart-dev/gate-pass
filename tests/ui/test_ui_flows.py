@@ -1145,3 +1145,190 @@ class TestReviewDocumentPanel:
         assert not page.evaluate(
             "() => document.documentElement.scrollWidth > window.innerWidth + 1"), \
             "the page scrolls sideways at 900px"
+
+
+class TestStickerQueueValidation:
+    """Nothing incomplete, and nothing twice, gets into the print queue.
+
+    A sticker is printed onto pre-printed stationery that the office buys by
+    the sheet. A job queued with no LR number prints a blank where the
+    consignment number belongs, and the sheet is spoilt; two jobs sharing an
+    LR number print two sets of labels for one consignment, and the wrong set
+    goes on a box. Both are caught before the queue, not at the printer.
+    """
+
+    def _open(self, page, base_url):
+        page.goto(f"{base_url}/stickers")
+        page.wait_for_selector("#generate")
+        page.evaluate("() => localStorage.removeItem('sm_sticker_print_queue')")
+        page.reload()
+        page.wait_for_selector("#generate")
+
+    def _fill(self, page, lr, receiver, qty):
+        page.fill("#lr", lr)
+        page.fill("#receiver", receiver)
+        page.fill("#qty", qty)
+
+    def _state(self, page):
+        return page.evaluate("""() => ({
+          hidden: document.getElementById('sticker-problem').hidden,
+          text: document.getElementById('sticker-problem').textContent.trim(),
+          marked: [...document.querySelectorAll('.sticker-form .is-missing')].map((e) => e.id),
+          rows: document.querySelectorAll('.sticker-queue-table tbody tr').length,
+        })""")
+
+    def test_every_empty_field_is_named_at_once(self, page, base_url):
+        """Four blank boxes should be four complaints, not four round trips."""
+        self._open(page, base_url)
+        self._fill(page, "", "", "")
+        page.click("#generate")
+
+        state = self._state(page)
+        assert not state["hidden"], "an empty form was queued without a word"
+        assert state["rows"] == 0, "an empty job reached the queue"
+        assert state["marked"] == ["lr", "receiver", "qty"], \
+            f"wrong boxes marked: {state['marked']}"
+        for field in ("LR Number", "Receiver", "Number of Boxes"):
+            assert field in state["text"], f"{field!r} missing from {state['text']!r}"
+
+    @pytest.mark.parametrize("qty", ["0", "-3"])
+    def test_a_job_of_no_boxes_is_refused(self, page, base_url, qty):
+        """Clicked, not dispatched -- the button is what the office uses.
+
+        min="1" on the input made Chrome swallow the submit event outright,
+        so the handler never ran and a 0 produced a native bubble in one
+        browser and nothing in another. The form is novalidate now, which
+        this test is here to keep true: driving it by hand would pass even
+        with the attribute back.
+        """
+        self._open(page, base_url)
+        self._fill(page, "LR-1", "CHENNAI", qty)
+        page.click("#generate")
+
+        state = self._state(page)
+        assert not state["hidden"], f"a job of {qty} boxes was queued silently"
+        assert state["rows"] == 0, f"a job of {qty} boxes reached the queue"
+        assert state["marked"] == ["qty"], f"wrong boxes marked: {state['marked']}"
+        assert "Number of Boxes" in state["text"]
+
+    def test_typing_takes_the_red_off_that_box_alone(self, page, base_url):
+        """The warning goes when it stops being true, not on the first key.
+
+        Filling one of three empty boxes must take the red off that box and
+        leave the message up, because two boxes are still empty. Clearing the
+        lot on the first keystroke would send somebody to the printer with
+        two blanks still on the form.
+        """
+        self._open(page, base_url)
+        self._fill(page, "", "", "")
+        page.click("#generate")
+        assert len(self._state(page)["marked"]) == 3
+
+        page.fill("#lr", "LR-9")
+        state = self._state(page)
+        assert state["marked"] == ["receiver", "qty"], \
+            f"filling one box changed the wrong marks: {state['marked']}"
+        assert not state["hidden"], "the message went while two boxes were still empty"
+
+        self._fill(page, "LR-9", "CHENNAI", "4")
+        state = self._state(page)
+        assert state["marked"] == [], f"still marked: {state['marked']}"
+        assert state["hidden"], "the message stayed after everything was filled"
+
+    def test_choosing_a_receiver_from_the_list_clears_its_red(self, page, base_url):
+        """Setting .value in code fires no event, so this needs its own clearing."""
+        self._open(page, base_url)
+        self._fill(page, "LR-1", "", "2")
+        page.click("#generate")
+        assert "receiver" in self._state(page)["marked"]
+
+        page.click("#receiver")
+        page.wait_for_selector(".receiver-menu li")
+        page.click(".receiver-menu li")
+        assert "receiver" not in self._state(page)["marked"], \
+            "the box stayed red after being filled from the list"
+
+    def test_the_same_lr_number_cannot_be_queued_twice(self, page, base_url):
+        """Case and stray spaces do not make it a different consignment."""
+        self._open(page, base_url)
+        self._fill(page, "LR-1", "CHENNAI", "4")
+        page.click("#generate")
+        assert self._state(page)["rows"] == 1
+
+        self._fill(page, "  lr-1  ", "MYSURU", "2")
+        page.click("#generate")
+
+        state = self._state(page)
+        assert state["rows"] == 1, "the duplicate was queued anyway"
+        assert not state["hidden"], "the duplicate was dropped without a word"
+        assert state["marked"] == ["lr"], f"wrong boxes marked: {state['marked']}"
+        assert "row 1" in state["text"], \
+            f"the clashing row is not named: {state['text']!r}"
+
+    def test_editing_a_row_does_not_clash_with_itself(self, page, base_url):
+        """Correcting the box count must not be refused for the LR it already has."""
+        self._open(page, base_url)
+        self._fill(page, "LR-1", "CHENNAI", "4")
+        page.click("#generate")
+        self._fill(page, "LR-2", "MYSURU", "2")
+        page.click("#generate")
+        assert self._state(page)["rows"] == 2
+
+        page.click(".sticker-queue-table tbody tr:nth-child(1) .queue-edit")
+        page.fill("#qty", "9")
+        page.click("#generate")
+
+        state = self._state(page)
+        assert state["hidden"], f"editing a row clashed with itself: {state['text']!r}"
+        assert state["rows"] == 2, "editing changed the number of rows"
+        assert page.locator(
+            ".sticker-queue-table tbody tr:nth-child(1) .q-qty").inner_text().strip() == "9", \
+            "the corrected box count was not saved"
+
+    def test_editing_a_row_onto_another_rows_lr_is_refused(self, page, base_url):
+        self._open(page, base_url)
+        self._fill(page, "LR-1", "CHENNAI", "4")
+        page.click("#generate")
+        self._fill(page, "LR-2", "MYSURU", "2")
+        page.click("#generate")
+
+        page.click(".sticker-queue-table tbody tr:nth-child(1) .queue-edit")
+        page.fill("#lr", "LR-2")
+        page.click("#generate")
+
+        state = self._state(page)
+        assert not state["hidden"], "two rows were allowed to share an LR number"
+        assert state["marked"] == ["lr"], f"wrong boxes marked: {state['marked']}"
+
+    @pytest.mark.parametrize("scheme", ["light", "dark"])
+    def test_the_complaint_is_legible_in_either_theme(self, page, base_url, scheme):
+        """A warning nobody can read is not a warning.
+
+        The register once shipped a label at 3.96:1 that had to be found by
+        somebody squinting at it. The danger colour is one of the few that
+        gets used on a tinted panel rather than the card, so it is worth
+        pinning in both themes.
+        """
+        page.emulate_media(color_scheme=scheme)
+        self._open(page, base_url)
+        self._fill(page, "", "", "")
+        page.click("#generate")
+
+        got = page.evaluate(CONTRAST_AGAINST, [".sticker-problem", ".sticker-problem"])
+        assert got >= 4.5, f"the warning is {got:.2f}:1 in {scheme}"
+
+    def test_cancelling_an_edit_takes_the_complaint_with_it(self, page, base_url):
+        """The next person to use the form should not inherit the last one's red."""
+        self._open(page, base_url)
+        self._fill(page, "LR-1", "CHENNAI", "4")
+        page.click("#generate")
+
+        page.click(".sticker-queue-table tbody tr:nth-child(1) .queue-edit")
+        page.fill("#lr", "")
+        page.click("#generate")
+        assert not self._state(page)["hidden"]
+
+        page.click("#queue-cancel-edit")
+        state = self._state(page)
+        assert state["hidden"], f"the complaint outlived the edit: {state['text']!r}"
+        assert state["marked"] == [], f"still marked: {state['marked']}"
