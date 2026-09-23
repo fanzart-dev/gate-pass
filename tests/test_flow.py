@@ -6645,7 +6645,7 @@ def test_the_sticker_page_works_without_the_calibration_bar(tmpdir):
     staff = flask_app.test_client()
     sign_in(staff, "ops")
     page = markup_only(staff.get("/print-stickers").get_data(as_text=True))
-    check("someone who may print gets the page", "Add to Queue" in page)
+    check("someone who may print gets the page", ">Add</button>" in page)
     check("and the Print button", 'id="print-stickers"' in page)
     check("but not the calibration bar", 'class="sticker-align"' not in page)
     for control in ("align-left", "align-top", "align-gap", "align-pitch",
@@ -6695,7 +6695,7 @@ def test_the_sticker_page_is_behind_a_permission_of_its_own(tmpdir):
     # With it, the page opens but the calibration bar does not follow.
     db.set_user_permissions(conn, ops_id, {"can_print_stickers": True})
     page = markup_only(staff.get("/print-stickers").get_data(as_text=True))
-    check("with it the page opens", "Add to Queue" in page)
+    check("with it the page opens", ">Add</button>" in page)
     check("but not the calibration bar", 'class="sticker-align"' not in page)
     nav = markup_only(staff.get("/register").get_data(as_text=True))
     check("and the link appears", "/stickers" in nav)
@@ -6768,13 +6768,41 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
     page = markup_only(client.get("/print-stickers").get_data(as_text=True))
     template = (ROOT / "templates" / "stickers.html").read_text()
 
-    check("adding is what the form does now", "Add to Queue" in page)
-    check("and printing takes the whole queue", "Print All Queued Stickers" in page)
+    check("adding is what the form does now", ">Add</button>" in page)
+    check("and printing takes the whole queue",
+          'id="print-stickers"' in page and ">Print</button>" in page)
     check("there is a queue table", 'id="queue-rows"' in page)
+
+    # The count belongs against Print: it answers "how much paper is this
+    # about to use", which is asked with a hand on that button.
+    check("the live count sits with the print button",
+          page.index('id="print-stickers"') < page.index('id="sticker-count"'))
     for column in ("#", "LR Number", "Sender", "Receiver", "Boxes"):
         check(f"with a {column} column", f">{column}<" in page)
     check("each row can be removed", "queue-remove" in template)
     check("and corrected", "queue-edit" in template)
+
+    # Icons, not words. Two of these per row in a table read as a column of
+    # marks; "Edit  Delete" on every row reads as a second set of buttons
+    # competing with the one that matters.
+    check("the row actions are icons", "icon-button queue-edit" in template
+          and "icon-button queue-remove" in template)
+    check("with a tooltip each, since an icon says nothing on its own",
+          'edit.title = "Edit";' in template and 'remove.title = "Delete";' in template)
+    check("and a fuller label for a screen reader",
+          'edit.setAttribute("aria-label"' in template
+          and 'remove.setAttribute("aria-label"' in template)
+
+    # An SVG, not a pencil emoji: the emoji is a different glyph on every
+    # machine, is not a colour this page chose, and is a blank box on some
+    # Linux desktops.
+    check("the pencil is drawn, not typed", "function pencilIcon()" in template)
+    check("in the page's own colour", 'svg.setAttribute("stroke", "currentColor");' in template)
+    # And built as elements, because nothing in this block sets markup.
+    icon = template[template.index("function pencilIcon()"):
+                    template.index("function renderQueue()")]
+    check("built without innerHTML", "innerHTML" not in icon
+          and "createElementNS" in icon)
     check("and the lot can be cleared", 'id="queue-clear"' in page)
 
     # Correcting a queued job. A typo in an LR number is otherwise a delete
@@ -6785,7 +6813,7 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
           "if (index === editingIndex) tr.className = \"is-editing\";" in template)
     check("the button changes to match",
           'addButton.textContent = "Save Changes";' in template
-          and 'addButton.textContent = "Add to Queue";' in template)
+          and 'addButton.textContent = "Add";' in template)
     check("and there is a way out that does not save",
           'id="queue-cancel-edit"' in page and "function stopEditing" in template)
 
