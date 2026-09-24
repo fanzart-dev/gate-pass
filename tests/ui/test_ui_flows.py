@@ -2162,7 +2162,7 @@ class TestStickerPageMockup:
 
 
 class TestUploadTruckProgress:
-    """A truck rides the front of the upload progress bar.
+    """A drawn truck, in a round pin, rides the front of the upload progress bar.
 
     Each invoice's server response is held here and released one at a time,
     so the bar can be inspected at every step -- locally a batch finishes
@@ -2193,13 +2193,15 @@ class TestUploadTruckProgress:
         return page.evaluate("""() => {
           const track = document.getElementById('progress-track');
           const fill = document.getElementById('progress-bar').getBoundingClientRect();
-          const truck = document.querySelector('.truck-icon');
-          const t = truck.getBoundingClientRect();
+          const pin = document.querySelector('.truck-indicator-wrapper');
+          const t = pin.getBoundingClientRect();
           return {edge: fill.right, truck: t.left + t.width / 2,
                   driving: track.classList.contains('is-driving'),
-                  anim: getComputedStyle(truck).animationName,
+                  anim: getComputedStyle(pin.querySelector('.truck-svg')).animationName,
                   valuenow: track.getAttribute('aria-valuenow'),
-                  hidden: truck.getAttribute('aria-hidden')};
+                  hidden: pin.getAttribute('aria-hidden'),
+                  svg: !!pin.querySelector('svg.truck-svg'),
+                  text: pin.textContent.trim()};
         }""")
 
     def test_the_truck_rides_the_front_of_the_fill_all_the_way(self, page, base_url):
@@ -2231,6 +2233,16 @@ class TestUploadTruckProgress:
                 break
             page.wait_for_timeout(50)
         assert seen and seen[-1] is False, f"the truck never parked: {seen}"
+
+    def test_the_truck_is_drawn_not_an_emoji(self, page, base_url):
+        """An emoji is a different picture in a different colour on every PC."""
+        self._start(page, base_url)
+        s = self._state(page)
+        assert s["svg"], "the pin holds no drawn truck"
+        assert s["text"] == "", f"there is still text in the pin: {s['text']!r}"
+        colour = page.evaluate(
+            "() => getComputedStyle(document.querySelector('.truck-indicator-wrapper')).color")
+        assert colour == "rgb(37, 99, 235)", f"the truck is {colour}, not the brand blue"
 
     def test_the_truck_is_decoration_to_a_screen_reader(self, page, base_url):
         self._start(page, base_url)
