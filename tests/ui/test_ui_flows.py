@@ -2159,3 +2159,87 @@ class TestStickerPageMockup:
         assert page.evaluate(
             "() => getComputedStyle(document.querySelector('.queue-remove')).color") \
             == "rgb(220, 53, 69)", "the trash is not red"
+
+
+class TestUploadTruckProgress:
+    """A truck rides the front of the upload progress bar.
+
+    Each invoice's server response is held here and released one at a time,
+    so the bar can be inspected at every step -- locally a batch finishes
+    faster than anything could look at it.
+    """
+
+    def _start(self, page, base_url, count=3):
+        files = [_fake_pdf(f"truck{i}.pdf") for i in range(count)]
+        held = []
+        page.route("**/upload/one", lambda route: held.append(route))
+        page.goto(f"{base_url}/upload")
+        page.wait_for_selector("#invoice", state="attached")
+        page.set_input_files("#invoice", files)
+        page.click("#submit-btn")
+        for _ in range(100):
+            if len(held) == count:
+                break
+            page.wait_for_timeout(50)
+        assert len(held) == count, f"only {len(held)} of {count} uploads started"
+        return held
+
+    def _answer(self, route, n):
+        route.fulfill(status=200, content_type="application/json",
+                      body='{"ok": true, "draft_id": %d, "problem": ""}' % (1000 + n))
+
+    def _state(self, page):
+        page.wait_for_timeout(500)      # past the 0.3s slide
+        return page.evaluate("""() => {
+          const track = document.getElementById('progress-track');
+          const fill = document.getElementById('progress-bar').getBoundingClientRect();
+          const truck = document.querySelector('.truck-icon');
+          const t = truck.getBoundingClientRect();
+          return {edge: fill.right, truck: t.left + t.width / 2,
+                  driving: track.classList.contains('is-driving'),
+                  anim: getComputedStyle(truck).animationName,
+                  valuenow: track.getAttribute('aria-valuenow'),
+                  hidden: truck.getAttribute('aria-hidden')};
+        }""")
+
+    def test_the_truck_rides_the_front_of_the_fill_all_the_way(self, page, base_url):
+        held = self._start(page, base_url)
+        for step, expected in enumerate(("0", "33", "67")):
+            s = self._state(page)
+            assert abs(s["truck"] - s["edge"]) <= 2, \
+                f"at {expected}% the truck is {s['truck'] - s['edge']:.0f}px off the fill's edge"
+            assert s["valuenow"] == expected, s
+            assert s["driving"] and s["anim"] == "driving-bounce", \
+                f"the truck is not bouncing while reading: {s}"
+            self._answer(held[step], step)
+
+    def test_it_parks_when_the_batch_is_done(self, page, base_url):
+        """Bouncing at 100% would read as "not done yet"."""
+        seen = []
+        page.expose_function("recordDriving", lambda v: seen.append(v))
+        held = self._start(page, base_url)
+        page.evaluate("""() => new MutationObserver(() => window.recordDriving(
+            document.getElementById('progress-track').classList.contains('is-driving')))
+            .observe(document.getElementById('progress-track'),
+                     {attributes: true, attributeFilter: ['class']})""")
+        for i, route in enumerate(held):
+            self._answer(route, i)
+        # The page moves on to the next screen once the batch is done, so the
+        # recorded class changes are the evidence, not the page itself.
+        for _ in range(100):
+            if False in seen:
+                break
+            page.wait_for_timeout(50)
+        assert seen and seen[-1] is False, f"the truck never parked: {seen}"
+
+    def test_the_truck_is_decoration_to_a_screen_reader(self, page, base_url):
+        self._start(page, base_url)
+        s = self._state(page)
+        assert s["hidden"] == "true"
+        assert page.get_attribute("#progress-track", "role") == "progressbar"
+
+    def test_no_bounce_for_anyone_who_asked_for_less_motion(self, page, base_url):
+        """It still moves along the bar -- that is information -- but does not bounce."""
+        page.emulate_media(reduced_motion="reduce")
+        self._start(page, base_url)
+        assert self._state(page)["anim"] == "none"
