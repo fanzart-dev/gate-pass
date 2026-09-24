@@ -227,6 +227,10 @@
         <button type="button" id="align-test" class="quiet">Print test page</button>
         <button type="button" id="align-reset" class="quiet">Reset</button>
       </div>
+      {# Which typeface THIS browser is printing in. The label text is only
+         as good as the font the PC actually has, and "is it Arial Black?"
+         is otherwise answered by squinting at a sheet. #}
+      <p class="hint sticker-font-status" id="sticker-font-status"></p>
       {% endif %}
     </form>
   </div>
@@ -621,6 +625,17 @@
       // fact: whether there is anything to print. Set in two places they
       // drift, and a grey button that still prints -- or a green one that
       // does nothing -- is worse than either state on its own.
+      // Resolves once the sticker face is ready, from whichever source it
+      // came. The bundled fallback is fetched on first use, and printing
+      // before it arrives would put the generic sans on paper -- the exact
+      // failure the face exists to prevent. Never rejects: a browser without
+      // the Font Loading API still prints, as it always did.
+      function stickerFontReady() {
+        if (!document.fonts || !document.fonts.load) return Promise.resolve();
+        return document.fonts.load('400 29pt "SM Sticker"', "0123456789 ABCXYZ()")
+          .then(function () {}, function () {});
+      }
+
       function setPrintReady(ready) {
         printBtn.disabled = !ready;
         printBtn.classList.toggle("btn-print-active", ready);
@@ -1222,15 +1237,18 @@
         const pages = [...sheet.querySelectorAll(".sticker-page")];
         pages.slice(1).forEach(function (pg) { pg.dataset.hidden = "1"; pg.hidden = true; });
         document.body.classList.add("is-test-print");
-        window.print();
-        document.body.classList.remove("is-test-print");
-        pages.forEach(function (pg) {
-          if (pg.dataset.hidden) { pg.hidden = false; delete pg.dataset.hidden; }
+        stickerFontReady().then(function () {
+          if (!sheet.hidden) fitLongNames();
+          window.print();
+          document.body.classList.remove("is-test-print");
+          pages.forEach(function (pg) {
+            if (pg.dataset.hidden) { pg.hidden = false; delete pg.dataset.hidden; }
+          });
+          if (borrowed) {
+            queue.pop();
+            renderSheet();
+          }
         });
-        if (borrowed) {
-          queue.pop();
-          renderSheet();
-        }
       });
 
       const resetButton = document.getElementById("align-reset");
@@ -1255,8 +1273,28 @@
 
       printBtn.addEventListener("click", function () {
         clearAfterPrint = queue.length > 0;
-        window.print();
+        stickerFontReady().then(function () {
+          if (!sheet.hidden) fitLongNames();
+          window.print();
+        });
       });
+
+      // Say which face this PC is using. A probe with ONLY the local names
+      // loads if the machine lets the page use its Arial Black, and fails
+      // if not -- in which case the bundled Archivo Black is what prints.
+      const fontStatus = document.getElementById("sticker-font-status");
+      if (fontStatus && window.FontFace) {
+        new FontFace("SM Sticker probe", 'local("Arial Black"), local("Arial-Black")')
+          .load()
+          .then(function () {
+            fontStatus.textContent = "Sticker font: Arial Black (installed on this PC).";
+            fontStatus.dataset.face = "arial-black";
+          }, function () {
+            fontStatus.textContent = "Sticker font: Archivo Black (bundled) — this browser "
+              + "cannot use an installed Arial Black.";
+            fontStatus.dataset.face = "bundled";
+          });
+      }
 
       // afterprint rather than a timer: it fires when the print dialog is
       // done, however long the person spent choosing a tray.
@@ -1282,10 +1320,14 @@
       }
 
       // The cards are sized in millimetres, so a window resize cannot change
-      // whether they fit. Re-running after the web fonts land can: a line that
-      // fitted in the fallback face may not fit in the real one.
-      if (document.fonts && document.fonts.ready) {
-        document.fonts.ready.then(function () {
+      // whether they fit. A font arriving can: a line measured in the
+      // fallback face "fits", and then the real, wider face lands and it does
+      // not. document.fonts.ready alone was not enough -- it resolved at page
+      // load, before any sticker existed to ask for the font, so the face
+      // was only fetched later and nothing measured again. loadingdone fires
+      // every time a load finishes, however late.
+      if (document.fonts && document.fonts.addEventListener) {
+        document.fonts.addEventListener("loadingdone", function () {
           if (!sheet.hidden) fitLongNames();
         });
       }

@@ -2,6 +2,43 @@
    The printed pass has its own tuned geometry in print.css; nothing here
    touches it. */
 
+/* --- the sticker typeface ---------------------------------------------- */
+/* The three printed values are in Arial Black. This declares it as a face
+   of our own instead of naming it in font-family, because naming it did
+   not work.
+
+   font-family: "Arial Black" asks each browser to find a FAMILY called
+   that. Windows files Arial Black as the Black member of the Arial family,
+   and Chromium browsers on Windows -- Brave and Chrome in the office -- did
+   not reliably resolve the name. When that lookup misses, the browser just
+   moves to the next name in the list, silently; the office saw a bold sans
+   that looked like nothing had changed.
+
+   local() is a different lookup: by the font's own FULL name ("Arial
+   Black") or PostScript name ("Arial-Black"), which names that one file no
+   matter how the OS groups its families. A Windows PC uses its own licensed
+   copy, as before.
+
+   Where local() finds nothing -- Linux, macOS without it, a browser whose
+   privacy settings hide installed fonts -- the page falls back to Archivo
+   Black, served from this server. It is a black grotesque close to Arial
+   Black and is under the SIL Open Font Licence, which lets it be shipped in
+   a public repository; Arial Black itself is Monotype's and may not be.
+   Either way the label prints in a genuinely black face, never a lighter
+   look-alike.
+
+   font-display: block, because this is printed. A page that prints while
+   the font is still arriving must not put the fallback on paper; the print
+   buttons also wait on document.fonts before calling window.print(). */
+@font-face {
+  font-family: "SM Sticker";
+  src: local("Arial Black"), local("Arial-Black"),
+       url("../fonts/ArchivoBlack-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
 /* Slate, not beige. The warm off-white read as washed out under the office
    strip lights, which is where this is actually used — the greys below are
    neutral so the ink keeps its contrast under that light rather than going
@@ -2309,31 +2346,20 @@ table.people-table th { padding: 10px 12px !important; }
   position: absolute;
   left: var(--sticker-left);
   width: 110mm;
-  /* Arial Black, named at the weight the face actually carries.
+  /* "SM Sticker" is the @font-face at the top of this sheet: Arial Black
+     by its full font name, or the bundled Archivo Black. Never a family-name
+     lookup -- see the note on the @font-face for why that failed on the
+     office's Windows machines.
 
-     900, not 400. Arial Black IS a 900 face: asking for 900 matches it
-     exactly, so nothing is synthesised and nothing is guessed. Asking for
-     400 leaves the browser matching a weight the family does not have,
-     which is how the office machines ended up not showing the change at all.
-     This is not bold put back on top -- font-synthesis below forbids the
-     browser from faking weight anywhere in this stack.
-
-     "Arial Bold" is deliberately NOT in the list. It is not a real family;
-     Windows style-linking resolves it to Arial's bold face, which at a
-     glance is the same bold sans that was here before, so a failure to find
-     Arial Black would look exactly like nothing having changed -- which is
-     precisely what was reported. The remaining fallbacks are real black
-     families, so if one is used the letters are still black-weight.
-
-     font-synthesis: none means a machine with none of these prints in a
-     visibly lighter sans instead of a convincing look-alike. A wrong font
-     you can see is better than a wrong font you cannot. */
-  font-family: "Arial Black", "Arial Bold", "Archivo Black", "Helvetica Black",
-               Impact, sans-serif;
+     Nothing else in the stack but the generic sans. There is deliberately
+     no "Arial Bold": it is what the office got the last time the lookup
+     failed, and it looks enough like the old design that the failure read
+     as "the change never shipped". */
+  font-family: "SM Sticker", sans-serif;
   font-weight: 400;
-  /* Nothing in this stack may be thickened by the browser. Arial Black is
-     already black; a synthesised weight on top smears each glyph sideways,
-     and it is also how a MISSING font disguises itself as a present one. */
+  /* The face is declared at 400, so this is an exact match and nothing is
+     synthesised. A faked weight smears the glyphs, and it is also how a
+     missing font disguises itself as a present one. */
   font-synthesis: none;
   font-synthesis-weight: none;
   -webkit-font-smoothing: antialiased;
@@ -2524,8 +2550,7 @@ body.is-test-print .sticker-stamp { display: block; }
   .sticker-card .awb-text,
   .sticker-card .origin-text,
   .sticker-card .dest-text {
-    font-family: "Arial Black", "Arial Bold", "Archivo Black", "Helvetica Black",
-                 Impact, sans-serif !important;
+    font-family: "SM Sticker", sans-serif !important;
     font-weight: 400 !important;
     font-synthesis: none !important;
     font-synthesis-weight: none !important;

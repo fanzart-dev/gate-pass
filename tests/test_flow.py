@@ -6282,8 +6282,17 @@ def test_the_sticker_sheet_is_built_for_paper():
     # file and passed on the ghost labels' 700 further down, long after the
     # values themselves had moved to Arial Black at 400.
     values_rule = values[:values.index("}")]
-    check("in Arial Black, which is heavy enough to read against yellow",
-          'font-family: "Arial Black"' in values_rule)
+    check("in the sticker face, which is heavy enough to read against yellow",
+          'font-family: "SM Sticker", sans-serif;' in values_rule)
+    face = (ROOT / "static" / "css" / "style.css").read_text()
+    face = face[face.index("@font-face {"):]
+    face = face[:face.index("}")]
+    check("that face is installed Arial Black by name, else the bundled file",
+          'src: local("Arial Black"), local("Arial-Black"),' in face
+          and 'url("../fonts/ArchivoBlack-Regular.ttf")' in face)
+    check("and the bundled file and its licence actually ship",
+          (ROOT / "static" / "fonts" / "ArchivoBlack-Regular.ttf").is_file()
+          and (ROOT / "static" / "fonts" / "OFL-ArchivoBlack.txt").is_file())
     check("at its own weight, not re-bolded on top", "font-weight: 400;" in values_rule)
     # Each rule read on its own. Slicing from one selector to the end of the
     # file sees the NEXT rule's size too, so changing just one of these went
