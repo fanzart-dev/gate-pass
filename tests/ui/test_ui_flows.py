@@ -1709,7 +1709,7 @@ class TestQueueActionStyling:
         """Secondary and destructive: tinted at rest, solid red on intent."""
         self._queued(page, base_url)
         button = page.locator("#queue-clear")
-        assert button.inner_text().strip() == "Clear", \
+        assert button.inner_text().strip() == "Clear All", \
             f"the button says {button.inner_text().strip()!r}"
 
         read = """() => {
@@ -1720,7 +1720,7 @@ class TestQueueActionStyling:
         page.wait_for_timeout(400)     # past the transition; see SETTLE below
         rest = page.evaluate(read)
         assert rest["bg"] == "rgb(254, 242, 242)", f"at rest Clear is {rest['bg']}"
-        assert rest["color"] == "rgb(220, 38, 38)", f"at rest its label is {rest['color']}"
+        assert rest["color"] == "rgb(239, 68, 68)", f"at rest its label is {rest['color']}"
 
         button.hover()
         page.wait_for_timeout(400)
@@ -1743,10 +1743,10 @@ class TestQueueActionStyling:
         ghost is a 12% red tint over the card, so its background has to be
         composited, not read as if it were opaque red.
 
-        The light-theme floor is 4.4, not 4.5, on purpose. #dc2626 on #fef2f2
-        is the colour pair that was chosen, and it measures 4.41:1 -- 0.09
-        under the AA line for 13px text. #b91c1c would clear it. This pins the
-        known value so it cannot quietly get worse.
+        The light-theme floor is 3.4, not 4.5, on purpose. #ef4444 on #fef2f2
+        is the colour pair that was asked for, and it measures 3.44:1 -- under
+        the AA line for 13px text. #b91c1c would clear it comfortably. This
+        pins the known value so it cannot quietly get worse.
         """
         page.emulate_media(color_scheme=scheme)
         self._queued(page, base_url)
@@ -1765,7 +1765,7 @@ class TestQueueActionStyling:
           const x = lum(rgba(btn.color)), y = lum(bg);
           return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
         }""")
-        floor = 4.4 if scheme == "light" else 4.5
+        floor = 3.4 if scheme == "light" else 4.5
         assert got >= floor, f"Clear is {got:.2f}:1 in {scheme}"
 
 
@@ -1903,7 +1903,7 @@ class TestActionButtonStates:
         for key in ("w", "h", "top", "pad", "size", "radius"):
             assert clear[key] == prnt[key], \
                 f"the pair differs on {key}: Clear {clear[key]} vs Print {prnt[key]}"
-        assert clear["size"] == "13px" and clear["pad"] == "6px 18px", clear
+        assert clear["size"] == "13px" and clear["pad"] == "8px 16px", clear
         assert clear["w"] >= 80, f"the buttons are only {clear['w']}px wide"
         assert clear["left"] < prnt["left"], "Print should sit to the right of Clear"
 
@@ -2040,3 +2040,122 @@ class TestActionButtonStates:
         }""")
         assert got >= 1.5, \
             f"Add is {got:.2f}:1 against the card in {scheme} -- it has no visible edge"
+
+
+class TestStickerPageMockup:
+    """The layout from the design mockups: nav icons, required marks, the
+    Queued Stickers header, icon actions -- and the details that make them
+    work rather than merely appear."""
+
+    def _open(self, page, base_url, width=1280):
+        page.set_viewport_size({"width": width, "height": 900})
+        page.goto(f"{base_url}/stickers")
+        page.wait_for_selector("#generate")
+        page.evaluate("() => localStorage.removeItem('sm_sticker_print_queue')")
+        page.reload()
+        page.wait_for_selector("#generate")
+
+    def _queue(self, page, jobs=(("74563", "CHENNAI (SUMANGALI)", "4"),
+                                 ("82345678", "HYDERABAD", "12"))):
+        for lr, receiver, qty in jobs:
+            page.fill("#lr", lr)
+            page.fill("#receiver", receiver)
+            page.fill("#qty", qty)
+            page.click("#generate")
+
+    def test_every_nav_link_carries_an_icon_where_there_is_room(self, page, base_url):
+        self._open(page, base_url, width=1280)
+        links = page.evaluate("""() => [...document.querySelectorAll('.topbar nav > a')].map((a) => ({
+            text: a.querySelector('span') && a.querySelector('span').textContent.trim(),
+            icon: !!a.querySelector('svg.icon'),
+            shown: a.querySelector('svg.icon')
+                   && getComputedStyle(a.querySelector('svg.icon')).display !== 'none'}))""")
+        assert links, "no nav links"
+        missing = [l["text"] for l in links if not (l["icon"] and l["shown"])]
+        assert not missing, f"nav links without a visible icon: {missing}"
+
+    def test_the_nav_never_pushes_the_page_sideways(self, page, base_url):
+        """The icons cost ~160px; below 1100px they yield rather than overflow."""
+        for width in (1280, 1100, 1024, 900):
+            self._open(page, base_url, width=width)
+            over = page.evaluate(
+                "() => document.documentElement.scrollWidth - window.innerWidth")
+            assert over <= 1, f"the page scrolls sideways by {over}px at {width}px"
+
+    def test_the_four_required_fields_are_marked(self, page, base_url):
+        self._open(page, base_url)
+        for field in ("lr", "sender", "receiver", "qty"):
+            got = page.evaluate(f"""() => {{
+              const mark = document.querySelector('label[for="{field}"] .req');
+              return {{mark: mark && mark.textContent,
+                       colour: mark && getComputedStyle(mark).color,
+                       required: document.getElementById('{field}').getAttribute('aria-required')}};
+            }}""")
+            assert got["mark"] == "*", f"{field} has no asterisk"
+            assert got["colour"] == "rgb(239, 68, 68)", f"{field}'s asterisk is {got['colour']}"
+            # The star is decoration; this is what a screen reader hears.
+            assert got["required"] == "true", f"{field} is not aria-required"
+
+    def test_the_three_fields_have_no_placeholder(self, page, base_url):
+        self._open(page, base_url)
+        for field in ("lr", "receiver", "qty"):
+            assert page.get_attribute(f"#{field}", "placeholder") is None, \
+                f"#{field} still has a placeholder"
+
+    def test_add_keeps_its_plus_through_an_edit(self, page, base_url):
+        """Edit mode renames the button. It must rename the WORD only."""
+        self._open(page, base_url)
+        self._queue(page)
+        add = page.locator("#generate")
+        assert add.locator("svg.icon-plus").count() == 1
+        assert add.inner_text().strip() == "Add"
+
+        page.click(".sticker-queue-table tbody tr:nth-child(1) .queue-edit")
+        assert add.inner_text().strip() == "Save Changes"
+        assert add.locator("svg.icon-plus").count() == 1, "editing wiped the plus icon"
+
+        page.click("#queue-cancel-edit")
+        assert add.inner_text().strip() == "Add"
+        assert add.locator("svg.icon-plus").count() == 1, "cancelling wiped the plus icon"
+
+    def test_the_header_names_the_batch_and_its_size(self, page, base_url):
+        self._open(page, base_url)
+        self._queue(page)
+        assert page.inner_text(".sticker-queue-head h2").strip() == "Queued Stickers"
+        assert page.locator(".queued-title svg.icon-list").count() == 1
+        # 4 + 12 boxes = 16 stickers, three to a sheet = 6 sheets.
+        assert page.inner_text("#queue-badge").strip() == "16 stickers, 6 sheets"
+
+        style = page.evaluate("""() => { const cs = getComputedStyle(document.getElementById('queue-badge'));
+          return {bg: cs.backgroundColor, color: cs.color, radius: cs.borderRadius}; }""")
+        assert style["bg"] == "rgb(239, 246, 255)" and style["color"] == "rgb(37, 99, 235)", style
+
+    def test_the_badge_takes_no_space_when_nothing_is_queued(self, page, base_url):
+        self._open(page, base_url)
+        self._queue(page, jobs=(("1", "X", "1"),))
+        page.once("dialog", lambda d: d.accept())
+        page.click("#queue-clear")
+        assert page.evaluate(
+            "() => getComputedStyle(document.getElementById('queue-badge')).display") == "none"
+
+    def test_clear_all_and_print_all_carry_their_icons(self, page, base_url):
+        self._open(page, base_url)
+        self._queue(page)
+        for selector, word, icon in (("#queue-clear", "Clear All", "icon-trash-2"),
+                                     ("#print-stickers", "Print All", "icon-printer")):
+            button = page.locator(selector)
+            assert button.inner_text().strip() == word, button.inner_text()
+            assert button.locator(f"svg.{icon}").count() == 1, f"{word} has no {icon}"
+
+    def test_rows_have_a_pencil_and_a_red_trash_under_actions(self, page, base_url):
+        self._open(page, base_url)
+        self._queue(page)
+        assert page.inner_text(".sticker-queue-table thead th.q-act").strip().upper() == "ACTIONS"
+        row = page.locator(".sticker-queue-table tbody tr").first
+        assert row.locator(".queue-edit svg.icon-pencil").count() == 1
+        trash = row.locator(".queue-remove")
+        assert trash.locator("svg.icon-trash-2").count() == 1
+        assert trash.inner_text().strip() == "", "the old x character is still there"
+        assert page.evaluate(
+            "() => getComputedStyle(document.querySelector('.queue-remove')).color") \
+            == "rgb(220, 53, 69)", "the trash is not red"

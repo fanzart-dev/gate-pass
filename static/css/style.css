@@ -217,6 +217,9 @@ body {
 }
 
 .topbar nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   padding: 7px 13px;
   border-radius: 999px;
   font-size: 14px;
@@ -227,6 +230,15 @@ body {
 }
 
 .topbar nav a:hover { background: var(--line-soft); color: var(--ink); }
+/* The icon takes the link's colour, so it turns white in the active pill
+   with the word, and follows the theme without a rule of its own. */
+.topbar nav a .icon { flex: 0 0 auto; }
+/* The icons cost the nav about 160px. Below 1100px that pushed every page
+   into a sideways scroll, so there the words carry on alone -- exactly the
+   nav it was before the icons -- and the icons return where there is room. */
+@media (max-width: 1100px) {
+  .topbar nav a .icon { display: none; }
+}
 
 /* The active tab is a solid slate pill. Tried a bottom-border accent first;
    with the nav on a white bar it reads as an underlined link rather than as
@@ -2695,8 +2707,13 @@ table.list.sticker-queue-table { table-layout: auto; }
    rather than sitting on the card shouting, and neither button outranks the
    other until somebody reaches for it. Same padding, type, corners and
    minimum width, so they stay identical boxes. */
+/* Equal columns, each as wide as the wider button. With icons and longer
+   words ("Clear All", "Print All") a shared min-width stopped evening them
+   out -- they came out 3px apart -- so the width is shared, not guessed. */
 .queued-header-actions {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: 10px;
   align-items: center;
 }
@@ -2705,11 +2722,12 @@ table.list.sticker-queue-table { table-layout: auto; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 18px;
+  gap: 8px;
+  padding: 8px 16px;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.3px;
-  border-radius: 6px;
+  border-radius: 8px;
   min-width: 80px;
   text-align: center;
   cursor: pointer;
@@ -2720,7 +2738,7 @@ table.list.sticker-queue-table { table-layout: auto; }
 
 .queued-header-actions .btn-clear {
   background: #fef2f2;
-  color: #dc2626;
+  color: #ef4444;
   border: 1px solid #fecaca;
 }
 .queued-header-actions .btn-clear:hover {
@@ -2816,7 +2834,7 @@ table.list.sticker-queue-table { table-layout: auto; }
 .sticker-queue-table thead th {
   background-color: #f8fafc;
   color: #64748b;
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: 600;
@@ -2960,3 +2978,58 @@ table.list.sticker-queue-table { table-layout: auto; }
 .sticker-form .is-missing:focus {
   outline-color: var(--danger);
 }
+
+/* --- Queued Stickers header, required marks, Add, row dividers --------- */
+/* A red asterisk on the four fields the queue refuses without. Hidden from
+   screen readers: each input carries aria-required, which says it properly. */
+.sticker-form label .req {
+  color: #ef4444;
+  margin-left: 2px;
+  font-weight: bold;
+}
+
+/* The plus sits 8px from the word; the button's own gap was set for spacing
+   buttons apart, and at 12px the icon read as a separate control. */
+.sticker-actions #generate { gap: 8px; }
+
+.queued-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.queued-title .icon { color: #2563eb; flex: 0 0 auto; }
+
+/* The size of the batch, as a pill beside its title. Empty -- nothing
+   queued -- it takes no space rather than showing an empty lozenge. */
+.queue-badge {
+  background: #eff6ff;
+  color: #2563eb;
+  border-radius: 9999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.queue-badge:empty { display: none; }
+
+/* Thin, quiet dividers between queued rows. */
+.sticker-queue-table tbody td { border-bottom: 1px solid #f1f5f9; }
+.sticker-queue-table tbody tr:last-child td { border-bottom: 0; }
+
+/* The row delete is a red trash can, drawn at the same size as the pencil. */
+.sticker-queue-table .queue-remove .icon,
+.sticker-queue-table .queue-edit .icon { width: 16px; height: 16px; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .queue-badge {
+    background: rgba(37, 99, 235, 0.18); color: #93c5fd;
+  }
+  :root:not([data-theme="light"]) .queued-title .icon { color: #60a5fa; }
+  :root:not([data-theme="light"]) .sticker-queue-table tbody td {
+    border-bottom-color: var(--line-soft);
+  }
+}
+:root[data-theme="dark"] .queue-badge { background: rgba(37, 99, 235, 0.18); color: #93c5fd; }
+:root[data-theme="dark"] .queued-title .icon { color: #60a5fa; }
+:root[data-theme="dark"] .sticker-queue-table tbody td { border-bottom-color: var(--line-soft); }

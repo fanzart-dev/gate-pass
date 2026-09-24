@@ -6778,9 +6778,15 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
     page = markup_only(client.get("/print-stickers").get_data(as_text=True))
     template = (ROOT / "templates" / "stickers.html").read_text()
 
-    check("adding is what the form does now", ">Add</button>" in page)
-    check("and printing takes the whole queue",
-          'id="print-stickers"' in page and ">Print</button>" in page)
+    # Read from the Add button itself. ">Add</button>" anywhere on the page
+    # was also satisfied by the Manage panel's own Add, so it proved nothing.
+    add_button = page[page.index('id="generate"'):]
+    add_button = add_button[:add_button.index("</button>")]
+    check("adding is what the form does now", '<span class="btn-label">Add</span>' in add_button)
+    check("with a plus drawn beside the word", 'class="icon icon-plus"' in add_button)
+    print_button = page[page.index('id="print-stickers"'):]
+    print_button = print_button[:print_button.index("</button>")]
+    check("and printing takes the whole queue", "<span>Print All</span>" in print_button)
     check("there is a queue table", 'id="queue-rows"' in page)
 
     # The top row builds the batch; the queue card finishes it. The count
@@ -6814,12 +6820,17 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
     # machine, is not a colour this page chose, and is a blank box on some
     # Linux desktops.
     check("the pencil is drawn, not typed", "function pencilIcon()" in template)
-    check("in the page's own colour", 'svg.setAttribute("stroke", "currentColor");' in template)
-    # And built as elements, because nothing in this block sets markup.
-    icon = template[template.index("function pencilIcon()"):
-                    template.index("function renderQueue()")]
-    check("built without innerHTML", "innerHTML" not in icon
-          and "createElementNS" in icon)
+    # The row icons are rendered once by the template, from the shared icon
+    # set, and cloned per row -- so they match the rest of the page and take
+    # its colour through currentColor.
+    icons = (ROOT / "templates" / "_icons.html").read_text()
+    check("in the page's own colour", 'stroke="currentColor"' in icons)
+    check("from the shared icon set", '<template id="icon-pencil">{{ icon("pencil") }}' in template
+          and '<template id="icon-trash">{{ icon("trash-2") }}' in template)
+    helpers = template[template.index("function templateIcon(id)"):
+                       template.index("function renderQueue()")]
+    check("cloned, never built from markup", "innerHTML" not in helpers
+          and "cloneNode(true)" in helpers)
     check("and the lot can be cleared", 'id="queue-clear"' in page)
 
     # Correcting a queued job. A typo in an LR number is otherwise a delete
@@ -6828,9 +6839,12 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
           "function startEditing(index)" in template)
     check("and says which row is being corrected",
           "if (index === editingIndex) tr.className = \"is-editing\";" in template)
+    # The WORD changes, in its own span. Setting the button's textContent
+    # would take the plus icon with it the first time a row was edited.
     check("the button changes to match",
-          'addButton.textContent = "Save Changes";' in template
-          and 'addButton.textContent = "Add";' in template)
+          'addLabel.textContent = "Save Changes";' in template
+          and 'addLabel.textContent = "Add";' in template
+          and "addButton.textContent" not in template)
     check("and there is a way out that does not save",
           'id="queue-cancel-edit"' in page and "function stopEditing" in template)
 
