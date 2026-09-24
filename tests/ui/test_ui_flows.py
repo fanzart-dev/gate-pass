@@ -1855,7 +1855,7 @@ class TestActionButtonStates:
         for key in ("w", "h", "top", "pad", "size", "radius"):
             assert clear[key] == prnt[key], \
                 f"the pair differs on {key}: Clear {clear[key]} vs Print {prnt[key]}"
-        assert clear["size"] == "13px" and clear["pad"] == "7px 18px", clear
+        assert clear["size"] == "13px" and clear["pad"] == "6px 18px", clear
         assert clear["w"] >= 80, f"the buttons are only {clear['w']}px wide"
         assert clear["left"] < prnt["left"], "Print should sit to the right of Clear"
 
@@ -1874,32 +1874,58 @@ class TestActionButtonStates:
         assert style["bg"] == "rgb(226, 232, 240)", f"Print is {style['bg']}"
         assert style["cursor"] == "not-allowed", f"cursor is {style['cursor']}"
 
-    def test_print_turns_solid_once_something_is_queued(self, page, base_url):
+    def test_print_is_a_green_ghost_that_fills_under_the_pointer(self, page, base_url):
+        """Clear's pattern in Print's colour: tinted at rest, solid on intent."""
         self._open(page, base_url)
         self._queue_one(page)
 
         style = self._style(page, "#print-stickers")
         assert style["disabled"] is False, "Print is still disabled with a job queued"
         assert style["active"] is True, "the active class was not applied"
-        assert style["bg"] == "rgb(30, 41, 59)", f"Print is {style['bg']}"
-        assert style["color"] == "rgb(255, 255, 255)", f"Print's label is {style['color']}"
+        assert style["bg"] == "rgb(240, 253, 244)", f"at rest Print is {style['bg']}"
+        assert style["color"] == "rgb(22, 163, 74)", f"at rest its label is {style['color']}"
         assert style["weight"] == "600", f"Print is weight {style['weight']}"
 
-    def test_print_does_not_vanish_into_the_dark_card(self, page, base_url):
-        """#1e293b is 1.16:1 against the dark card -- inverted there instead."""
-        page.emulate_media(color_scheme="dark")
+        before = page.locator("#print-stickers").bounding_box()["y"]
+        page.hover("#print-stickers")
+        hover = self._style(page, "#print-stickers")
+        assert hover["bg"] == "rgb(22, 163, 74)", f"under the pointer Print is {hover['bg']}"
+        assert hover["color"] == "rgb(255, 255, 255)", hover
+        after = page.locator("#print-stickers").bounding_box()["y"]
+        assert after < before, "Print does not lift under the pointer"
+
+    @pytest.mark.parametrize("scheme", ["light", "dark"])
+    def test_the_print_label_is_legible_on_its_tint(self, page, base_url, scheme):
+        """Measured against what is behind the label, tint composited over card.
+
+        Replaces the old dark-card check: a ghost's background is meant to
+        be close to the card, so what can vanish now is the label, not the
+        box.
+
+        The light floor is 3.1, not 4.5, on purpose. #16a34a on #f0fdf4 is the
+        pair that was chosen and it measures 3.15:1 -- well under AA for 13px
+        text, and fainter than Clear beside it. #15803d on the same tint is
+        4.79:1. This pins the known value so it cannot quietly get worse.
+        """
+        page.emulate_media(color_scheme=scheme)
         self._open(page, base_url)
         self._queue_one(page)
         page.wait_for_timeout(self.SETTLE)
         got = page.evaluate(r"""() => {
-          const lum = (c) => c.match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => {
-              v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); })
+          const rgba = (c) => { const v = c.match(/[\d.]+/g).map(Number);
+                                return [v[0], v[1], v[2], v.length > 3 ? v[3] : 1]; };
+          const lum = ([r, g, b]) => [r, g, b].map((v) => { v /= 255;
+              return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); })
             .reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0);
-          const a = lum(getComputedStyle(document.getElementById('print-stickers')).backgroundColor);
-          const b = lum(getComputedStyle(document.querySelector('.sticker-queue')).backgroundColor);
-          return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+          const btn = getComputedStyle(document.getElementById('print-stickers'));
+          const [r, g, b, a] = rgba(btn.backgroundColor);
+          const card = rgba(getComputedStyle(document.querySelector('.sticker-queue')).backgroundColor);
+          const bg = [0, 1, 2].map((i) => [r, g, b][i] * a + card[i] * (1 - a));
+          const x = lum(rgba(btn.color)), y = lum(bg);
+          return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
         }""")
-        assert got >= 3, f"Print is {got:.2f}:1 against the dark card"
+        floor = 3.1 if scheme == "light" else 4.5
+        assert got >= floor, f"Print's label is {got:.2f}:1 in {scheme}"
 
     def test_it_goes_back_to_grey_when_the_queue_empties(self, page, base_url):
         """The attribute and the class are one fact, so they move together."""

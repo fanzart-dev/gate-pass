@@ -2701,15 +2701,12 @@ table.list.sticker-queue-table { table-layout: auto; }
 }
 
 /* --- Clear and Print: the queue card's pair ----------------------------- */
-/* The two actions that finish a batch, so they are sized as one: same
-   height, padding, type and corners, and a common minimum width so "Clear"
-   and "Print" do not end up a few pixels apart.
-
-   Print is the call to action, so it is solid; Clear is destructive but
-   secondary, so it is a ghost that only turns solid red when the pointer is
-   on it -- the colour arrives at the moment of intent rather than sitting
-   on the card shouting. Both carry a 1px border (Print's in its own colour)
-   so the ghost's outline does not make Clear 2px taller than Print. */
+/* The two actions that finish a batch, so they are one design in two
+   colours: both ghosts -- a tint, a thin border, coloured text -- that fill
+   solid only under the pointer. The colour arrives at the moment of intent
+   rather than sitting on the card shouting, and neither button outranks the
+   other until somebody reaches for it. Same padding, type, corners and
+   minimum width, so they stay identical boxes. */
 .queued-header-actions {
   display: flex;
   gap: 10px;
@@ -2720,7 +2717,7 @@ table.list.sticker-queue-table { table-layout: auto; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 7px 18px;
+  padding: 6px 18px;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.3px;
@@ -2755,35 +2752,39 @@ table.list.sticker-queue-table { table-layout: auto; }
   cursor: not-allowed;
 }
 
-/* Something queued: solid dark slate. The class is set with the disabled
+/* Something queued: a green ghost, filling solid green under the pointer --
+   Clear's pattern in Print's colour. The class is set with the disabled
    attribute in one place, setPrintReady(), so the two cannot disagree. */
 .queued-header-actions .btn-print.btn-print-active {
-  background: #1e293b;
-  color: #ffffff;
-  border-color: #1e293b;
+  background: #f0fdf4;
+  color: #16a34a;
+  border-color: #bbf7d0;
   cursor: pointer;
 }
 .queued-header-actions .btn-print.btn-print-active:hover {
-  background: #0f172a;
-  border-color: #0f172a;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.25);
+  background: #16a34a;
+  color: #ffffff;
+  border-color: #16a34a;
+  box-shadow: 0 4px 10px rgba(22, 163, 74, 0.25);
   transform: translateY(-1px);
 }
 .queued-header-actions .btn-print.btn-print-active:active {
-  background: #020617;
+  background: #15803d;
+  border-color: #15803d;
   transform: translateY(0);
 }
 
-/* On dark, #1e293b is 1.16:1 against the card -- the same vanishing act the
-   Add button did, so the same answer: inverted, as the site's other primary
-   buttons are. The ghost Clear keeps its idea -- tinted, not solid -- in a
-   red that reads on a dark card rather than a pale pink slab. */
+/* On dark, the pale tints (#fef2f2, #f0fdf4) would be two glaring slabs on
+   a dark card. Both ghosts keep their idea -- tinted, not solid -- as a
+   translucent wash of their colour, with a lighter text shade that reads on
+   it, and fill solid on hover as in light. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .queued-header-actions .btn-print.btn-print-active {
-    background: var(--ink); color: var(--card); border-color: var(--ink);
+    background: rgba(22, 163, 74, 0.12); color: #4ade80;
+    border-color: rgba(74, 222, 128, 0.35);
   }
   :root:not([data-theme="light"]) .queued-header-actions .btn-print.btn-print-active:hover {
-    background: var(--ink-2); border-color: var(--ink-2);
+    background: #16a34a; color: #ffffff; border-color: #16a34a;
   }
   :root:not([data-theme="light"]) .queued-header-actions .btn-clear {
     background: rgba(220, 38, 38, 0.12); color: #f87171;
@@ -2797,10 +2798,11 @@ table.list.sticker-queue-table { table-layout: auto; }
   }
 }
 :root[data-theme="dark"] .queued-header-actions .btn-print.btn-print-active {
-  background: var(--ink); color: var(--card); border-color: var(--ink);
+  background: rgba(22, 163, 74, 0.12); color: #4ade80;
+  border-color: rgba(74, 222, 128, 0.35);
 }
 :root[data-theme="dark"] .queued-header-actions .btn-print.btn-print-active:hover {
-  background: var(--ink-2); border-color: var(--ink-2);
+  background: #16a34a; color: #ffffff; border-color: #16a34a;
 }
 :root[data-theme="dark"] .queued-header-actions .btn-clear {
   background: rgba(220, 38, 38, 0.12); color: #f87171;
