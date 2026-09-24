@@ -27,6 +27,7 @@
 {% endblock %}
 
 {% block content %}
+  {% from "_icons.html" import icon %}
   {# Everything above the sheet. .no-print is doing real work here: this is a
      screen for setting up a print, so most of the page must not be in it. #}
   <div class="no-print">
@@ -56,18 +57,18 @@
 
       <div class="sticker-fields">
         <div>
-          <label for="lr">LR Number</label>
+          <label for="lr">LR Number<span class="req" aria-hidden="true">*</span></label>
           {# inputmode numeric rather than type=number: an LR can carry a
              leading zero, and a number input would drop it. #}
           <input type="text" id="lr" name="lr" value="{{ lr }}"
-                 inputmode="numeric" placeholder="71703457">
+                 inputmode="numeric" aria-required="true">
         </div>
         <div>
-          <label for="sender">Sender</label>
-          <input type="text" id="sender" name="sender" value="{{ sender }}">
+          <label for="sender">Sender<span class="req" aria-hidden="true">*</span></label>
+          <input type="text" id="sender" name="sender" value="{{ sender }}" aria-required="true">
         </div>
         <div>
-          <label for="receiver">Receiver</label>
+          <label for="receiver">Receiver<span class="req" aria-hidden="true">*</span></label>
           {# An input with a datalist, not a select: the list is a starting
              point, and a destination nobody has sent to before must be
              typeable without anybody editing a list first. A select would
@@ -98,7 +99,7 @@
                data-receiver-defaults='{{ receiver_presets|list|tojson }}'>
             <div class="receiver-input">
               <input type="text" id="receiver" name="receiver" value="{{ receiver }}"
-                     placeholder="CHENNAI (SUMANGALI)" autocomplete="off"
+                     aria-required="true" autocomplete="off"
                      role="combobox" aria-expanded="false"
                      aria-controls="receiver-menu" aria-autocomplete="list">
               <button type="button" id="receiver-toggle" class="receiver-caret"
@@ -144,15 +145,15 @@
           </div>
         </div>
         <div>
-          <label for="qty">Number of boxes</label>
+          <label for="qty">Number of boxes<span class="req" aria-hidden="true">*</span></label>
           <input type="number" id="qty" name="qty" min="1" max="{{ max_stickers }}"
                  value="{{ quantity if quantity is not none else '' }}"
-                 placeholder="27">
+                 aria-required="true">
         </div>
       </div>
 
       <div class="sticker-actions">
-        <button type="submit" class="primary" id="generate">Add</button>
+        <button type="submit" class="primary btn-add" id="generate">{{ icon("plus") }}<span class="btn-label">Add</span></button>
         {# Only while a queued job is being corrected. Without a way out, the
            only escape from an edit is to save it or reload the page. #}
         <button type="button" id="queue-cancel-edit" class="quiet" hidden>
@@ -245,10 +246,16 @@
        hidden while the queue is empty, so Print is only ever on screen when
        there is something to print. #}
     <div class="sticker-queue-head">
-      <h2>Queued</h2>
+      <div class="queued-title">
+        {{ icon("list", 20) }}
+        <h2>Queued Stickers</h2>
+        {# How much paper the batch is. It replaces the line under the table:
+           the same fact, where the eye already is. #}
+        <span class="queue-badge" id="queue-badge"></span>
+      </div>
       <div class="queued-header-actions no-print">
-        <button type="button" id="queue-clear" class="btn-clear">Clear</button>
-        <button type="button" id="print-stickers" class="btn-print" disabled>Print</button>
+        <button type="button" id="queue-clear" class="btn-clear">{{ icon("trash-2") }}<span>Clear All</span></button>
+        <button type="button" id="print-stickers" class="btn-print" disabled>{{ icon("printer") }}<span>Print All</span></button>
       </div>
     </div>
     <div class="table-wrap">
@@ -260,13 +267,16 @@
             <th>Sender</th>
             <th>Receiver</th>
             <th class="q-qty">Boxes</th>
-            <th class="q-act"></th>
+            <th class="q-act">Actions</th>
           </tr>
         </thead>
         <tbody id="queue-rows"></tbody>
       </table>
     </div>
-    <p class="hint" id="queue-summary"></p>
+    {# The row delete icon, rendered once here from the same icon set as the
+       rest of the page and cloned by the script for each row. #}
+    <template id="icon-trash">{{ icon("trash-2") }}</template>
+    <template id="icon-pencil">{{ icon("pencil") }}</template>
   </div>
 
   {# Filled by the script below. Left empty on load on purpose: an empty sheet
@@ -696,7 +706,7 @@
 
       const queueCard = document.getElementById("sticker-queue");
       const queueRows = document.getElementById("queue-rows");
-      const queueSummary = document.getElementById("queue-summary");
+      const queueBadge = document.getElementById("queue-badge");
 
       function totalStickers() {
         return queue.reduce((sum, job) => sum + job.qty, 0);
@@ -705,26 +715,13 @@
       // Built with createElementNS rather than innerHTML. Nothing in this
       // block sets markup — every other thing it writes is a value somebody
       // typed — and an icon is not worth making that rule conditional.
-      function pencilIcon() {
-        const NS = "http://www.w3.org/2000/svg";
-        const svg = document.createElementNS(NS, "svg");
-        svg.setAttribute("viewBox", "0 0 16 16");
-        svg.setAttribute("width", "14");
-        svg.setAttribute("height", "14");
-        svg.setAttribute("aria-hidden", "true");
-        svg.setAttribute("fill", "none");
-        // currentColor, so the icon follows the theme like everything else —
-        // which a pencil emoji would not, besides being a different glyph on
-        // every machine and a blank box on some Linux desktops.
-        svg.setAttribute("stroke", "currentColor");
-        svg.setAttribute("stroke-width", "1.6");
-        svg.setAttribute("stroke-linecap", "round");
-        svg.setAttribute("stroke-linejoin", "round");
-        const path = document.createElementNS(NS, "path");
-        path.setAttribute("d", "M11.5 2.5l2 2L6 12l-2.5.5.5-2.5z");
-        svg.appendChild(path);
-        return svg;
+      // The row icons come from the same set as the rest of the page,
+      // rendered once by the template and cloned per row, so the pencil and
+      // the trash can match -- and follow the theme through currentColor.
+      function templateIcon(id) {
+        return document.getElementById(id).content.firstElementChild.cloneNode(true);
       }
+      function pencilIcon() { return templateIcon("icon-pencil"); }
 
       function renderQueue() {
         queueCard.hidden = queue.length === 0;
@@ -768,7 +765,7 @@
           const remove = document.createElement("button");
           remove.type = "button";
           remove.className = "icon-button queue-remove";
-          remove.textContent = "\u00d7";
+          remove.appendChild(templateIcon("icon-trash"));
           remove.title = "Delete";
           remove.setAttribute("aria-label",
                               `Delete ${job.lr || "this job"} from the queue`);
@@ -792,9 +789,8 @@
 
         const labels = totalStickers();
         const pages = Math.ceil(labels / PER_PAGE);
-        queueSummary.textContent = queue.length
-          ? `${queue.length} consignment${queue.length === 1 ? "" : "s"}, `
-            + `${labels} sticker${labels === 1 ? "" : "s"}, `
+        queueBadge.textContent = queue.length
+          ? `${labels} sticker${labels === 1 ? "" : "s"}, `
             + `${pages} sheet${pages === 1 ? "" : "s"}`
           : "";
       }
@@ -896,6 +892,9 @@
       }
 
       const addButton = document.getElementById("generate");
+      // The word only. Setting the button's own textContent would take the
+      // plus icon with it the first time a row was edited.
+      const addLabel = addButton.querySelector(".btn-label");
       const cancelEdit = document.getElementById("queue-cancel-edit");
 
       function startEditing(index) {
@@ -906,7 +905,7 @@
         document.getElementById("sender").value = job.sender;
         receiver.value = job.receiver;
         qtyInput.value = job.qty;
-        addButton.textContent = "Save Changes";
+        addLabel.textContent = "Save Changes";
         cancelEdit.hidden = false;
         renderQueue();
         document.getElementById("lr").focus();
@@ -916,7 +915,7 @@
       function stopEditing(clearForm) {
         editingIndex = null;
         clearProblem();
-        addButton.textContent = "Add";
+        addLabel.textContent = "Add";
         cancelEdit.hidden = true;
         if (clearForm) {
           document.getElementById("lr").value = "";

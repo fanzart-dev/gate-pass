@@ -24,30 +24,31 @@
       </span>
       <span class="brand-sub">gate pass</span>
     </a>
+    {% from "_icons.html" import icon %}
     <nav>
-      <a href="{{ url_for('upload') }}" {% if active == 'upload' %}class="active"{% endif %}>New Gate Pass</a>
+      <a href="{{ url_for('upload') }}" {% if active == 'upload' %}class="active"{% endif %}>{{ icon("file-text") }}<span>New Gate Pass</span></a>
       {# Drafts is optional. Without the permission an upload goes straight to a
          printed pass, so there is no draft list to show. #}
       {% if can('can_review_drafts') %}
-        <a href="{{ url_for('drafts') }}" {% if active == 'drafts' %}class="active"{% endif %}>Drafts</a>
+        <a href="{{ url_for('drafts') }}" {% if active == 'drafts' %}class="active"{% endif %}>{{ icon("file-edit") }}<span>Drafts</span></a>
       {% endif %}
-      <a href="{{ url_for('register') }}" {% if active == 'register' %}class="active"{% endif %}>Register</a>
+      <a href="{{ url_for('register') }}" {% if active == 'register' %}class="active"{% endif %}>{{ icon("monitor") }}<span>Register</span></a>
       {# Hidden without the permission, and the route enforces the same thing
          — hiding a link is a courtesy, not the control. #}
       {% if can('can_print_stickers') %}
-        <a href="{{ url_for('print_stickers') }}" {% if active == 'stickers' %}class="active"{% endif %}>Stickers</a>
+        <a href="{{ url_for('print_stickers') }}" {% if active == 'stickers' %}class="active"{% endif %}>{{ icon("printer") }}<span>Stickers</span></a>
       {% endif %}
       {# Each link follows its own permission; the routes enforce the same thing,
          so hiding a link is a courtesy rather than the control. #}
       {% if can('can_export_reports') %}
-        <a href="{{ url_for('reports') }}" {% if active == 'reports' %}class="active"{% endif %}>Reports</a>
+        <a href="{{ url_for('reports') }}" {% if active == 'reports' %}class="active"{% endif %}>{{ icon("bar-chart-2") }}<span>Reports</span></a>
       {% endif %}
       {% if can('can_access_settings') %}
-        <a href="{{ url_for('settings') }}" {% if active == 'settings' %}class="active"{% endif %}>Settings</a>
+        <a href="{{ url_for('settings') }}" {% if active == 'settings' %}class="active"{% endif %}>{{ icon("settings") }}<span>Settings</span></a>
       {% endif %}
       {% if can('can_manage_people') %}
         <a href="{{ url_for('people') }}" {% if active == 'people' %}class="active"{% endif %}>
-          User{% if pending_count %}<span class="count-badge">{{ pending_count }}</span>{% endif %}
+          {{ icon("user") }}<span>User</span>{% if pending_count %}<span class="count-badge">{{ pending_count }}</span>{% endif %}
         </a>
       {% endif %}
       {% if current_user %}
