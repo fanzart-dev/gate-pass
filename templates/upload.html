@@ -41,13 +41,26 @@
     </div>
 
     <div class="progress-wrap" id="progress-wrap" hidden>
-      {# The truck rides the front edge of the fill, so where it is IS how far
-         the batch has got. aria-hidden: the text and percentage below say the
-         same thing in words, and role=progressbar says it to a screen reader. #}
+      {# The truck pin rides the front edge of the fill, so where it is IS how
+         far the batch has got. aria-hidden: the text and percentage below say
+         the same thing in words, and role=progressbar says it to a screen
+         reader. #}
       <div class="progress-track" id="progress-track" role="progressbar"
            aria-label="Reading invoices" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
         <div class="progress-bar progress-fill" id="progress-bar">
-          <span class="truck-icon" aria-hidden="true">🚚</span>
+          {# A drawn truck in a round pin, not the emoji: the emoji is a
+             different picture in a different colour on every PC. The pin is
+             centred on the fill's front edge and moves with it. #}
+          <span class="truck-indicator-wrapper" aria-hidden="true">
+            <svg class="truck-svg" viewBox="0 0 24 24" width="20" height="20" fill="none"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                 stroke-linejoin="round" focusable="false">
+              <rect x="1" y="3" width="15" height="13" rx="2" ry="2"></rect>
+              <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon>
+              <circle class="truck-wheel" cx="5.5" cy="18.5" r="2.5"></circle>
+              <circle class="truck-wheel" cx="18.5" cy="18.5" r="2.5"></circle>
+            </svg>
+          </span>
         </div>
       </div>
       <div class="progress-labels">
