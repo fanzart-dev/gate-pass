@@ -6845,6 +6845,14 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
           'addLabel.textContent = "Save Changes";' in template
           and 'addLabel.textContent = "Add";' in template
           and "addButton.textContent" not in template)
+    # Digits only: filtered as typed or pasted, and refused at Add for an LR
+    # that arrives by link, where nothing was typed to filter.
+    lr_input = page[page.index('id="lr"'):]
+    lr_input = lr_input[:lr_input.index(">")]
+    check("the LR box says digits only", 'pattern="[0-9]*"' in lr_input
+          and 'inputmode="numeric"' in lr_input)
+    check("non-digits are dropped as they are typed", 'lrInput.value = digits;' in template)
+    check("and an LR with anything else is refused at Add", '/^\\d+$/.test(lr)' in template)
     check("and there is a way out that does not save",
           'id="queue-cancel-edit"' in page and "function stopEditing" in template)
 
