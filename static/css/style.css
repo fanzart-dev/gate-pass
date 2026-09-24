@@ -2,43 +2,6 @@
    The printed pass has its own tuned geometry in print.css; nothing here
    touches it. */
 
-/* --- the sticker typeface ---------------------------------------------- */
-/* The three printed values are in Arial Black. This declares it as a face
-   of our own instead of naming it in font-family, because naming it did
-   not work.
-
-   font-family: "Arial Black" asks each browser to find a FAMILY called
-   that. Windows files Arial Black as the Black member of the Arial family,
-   and Chromium browsers on Windows -- Brave and Chrome in the office -- did
-   not reliably resolve the name. When that lookup misses, the browser just
-   moves to the next name in the list, silently; the office saw a bold sans
-   that looked like nothing had changed.
-
-   local() is a different lookup: by the font's own FULL name ("Arial
-   Black") or PostScript name ("Arial-Black"), which names that one file no
-   matter how the OS groups its families. A Windows PC uses its own licensed
-   copy, as before.
-
-   Where local() finds nothing -- Linux, macOS without it, a browser whose
-   privacy settings hide installed fonts -- the page falls back to Archivo
-   Black, served from this server. It is a black grotesque close to Arial
-   Black and is under the SIL Open Font Licence, which lets it be shipped in
-   a public repository; Arial Black itself is Monotype's and may not be.
-   Either way the label prints in a genuinely black face, never a lighter
-   look-alike.
-
-   font-display: block, because this is printed. A page that prints while
-   the font is still arriving must not put the fallback on paper; the print
-   buttons also wait on document.fonts before calling window.print(). */
-@font-face {
-  font-family: "SM Sticker";
-  src: local("Arial Black"), local("Arial-Black"),
-       url("../fonts/ArchivoBlack-Regular.ttf") format("truetype");
-  font-weight: 400;
-  font-style: normal;
-  font-display: block;
-}
-
 /* Slate, not beige. The warm off-white read as washed out under the office
    strip lights, which is where this is actually used — the greys below are
    neutral so the ink keeps its contrast under that light rather than going
@@ -2346,20 +2309,20 @@ table.people-table th { padding: 10px 12px !important; }
   position: absolute;
   left: var(--sticker-left);
   width: 110mm;
-  /* "SM Sticker" is the @font-face at the top of this sheet: Arial Black
-     by its full font name, or the bundled Archivo Black. Never a family-name
-     lookup -- see the note on the @font-face for why that failed on the
-     office's Windows machines.
+  /* Regular Arial, at normal weight -- NOT bold, NOT Arial Black. Arial
+     Black is heavier than bold by design (it is the "black" weight of
+     Arial), so it cannot be un-bolded; the requirement is that the values
+     are not bold, whatever the face.
 
-     Nothing else in the stack but the generic sans. There is deliberately
-     no "Arial Bold": it is what the office got the last time the lookup
-     failed, and it looks enough like the old design that the failure read
-     as "the change never shipped". */
-  font-family: "SM Sticker", sans-serif;
+     Plain "Arial" is also the one family name every Windows browser
+     resolves reliably. "Arial Black" was not: Windows files it inside the
+     Arial family and Brave/Chrome silently printed the next name instead.
+     Liberation Sans is Arial's metric twin on Linux -- the same advance
+     widths -- so a sheet laid out on a Linux box fits exactly as it will on
+     a Windows one. */
+  font-family: Arial, "Liberation Sans", Helvetica, sans-serif;
   font-weight: 400;
-  /* The face is declared at 400, so this is an exact match and nothing is
-     synthesised. A faked weight smears the glyphs, and it is also how a
-     missing font disguises itself as a present one. */
+  /* Nothing here may be thickened by the browser, whatever face it picks. */
   font-synthesis: none;
   font-synthesis-weight: none;
   -webkit-font-smoothing: antialiased;
@@ -2550,7 +2513,7 @@ body.is-test-print .sticker-stamp { display: block; }
   .sticker-card .awb-text,
   .sticker-card .origin-text,
   .sticker-card .dest-text {
-    font-family: "SM Sticker", sans-serif !important;
+    font-family: Arial, "Liberation Sans", Helvetica, sans-serif !important;
     font-weight: 400 !important;
     font-synthesis: none !important;
     font-synthesis-weight: none !important;
