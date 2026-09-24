@@ -58,10 +58,13 @@
       <div class="sticker-fields">
         <div>
           <label for="lr">LR Number<span class="req" aria-hidden="true">*</span></label>
-          {# inputmode numeric rather than type=number: an LR can carry a
-             leading zero, and a number input would drop it. #}
+          {# Digits only. inputmode numeric rather than type=number: an LR can
+             carry a leading zero, and a number input would drop it. The
+             script strips anything else as it is typed or pasted, and Add
+             refuses an LR with anything else in it -- which covers one
+             arriving pre-filled in a link, where nothing was typed. #}
           <input type="text" id="lr" name="lr" value="{{ lr }}"
-                 inputmode="numeric" aria-required="true">
+                 inputmode="numeric" pattern="[0-9]*" aria-required="true">
         </div>
         <div>
           <label for="sender">Sender<span class="req" aria-hidden="true">*</span></label>
@@ -939,6 +942,21 @@
       const lrInput = document.getElementById("lr");
       const senderInput = document.getElementById("sender");
 
+      // Digits only, enforced as the box changes -- typing, pasting, dropping,
+      // autofill all arrive as an input event. Anything else is dropped where
+      // it lands, and the cursor stays where the person left it rather than
+      // jumping to the end, so a mistyped letter in the middle of a number
+      // simply does not appear. A pasted "7170 3457" becomes 71703457.
+      lrInput.addEventListener("input", function () {
+        const value = lrInput.value;
+        const digits = value.replace(/\D+/g, "");
+        if (digits === value) return;
+        const caret = lrInput.selectionStart === null ? value.length : lrInput.selectionStart;
+        const before = value.slice(0, caret).replace(/\D+/g, "").length;
+        lrInput.value = digits;
+        lrInput.setSelectionRange(before, before);
+      });
+
       const REQUIRED = [
         { box: () => lrInput, name: "LR Number" },
         { box: () => senderInput, name: "Sender" },
@@ -1003,6 +1021,18 @@
             + "and Number of Boxes) before adding to the queue. Missing: "
             + missing.map((f) => f.name).join(", ") + ".",
             missing.map((f) => f.box()));
+          return;
+        }
+
+        // An LR can still reach here with letters in it: from a link that
+        // carried it pre-filled, where nothing was typed to filter, or from a
+        // queue saved before the box took digits only. Refused, not quietly
+        // stripped -- "LR12345" and "12345" may be different consignments,
+        // and only the person holding the paperwork knows which.
+        if (!/^\d+$/.test(lr)) {
+          showProblem(
+            `LR Number can contain digits only. "${lr}" has other characters in it.`,
+            [lrInput]);
           return;
         }
 

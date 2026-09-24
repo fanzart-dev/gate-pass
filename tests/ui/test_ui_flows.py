@@ -2255,3 +2255,63 @@ class TestUploadTruckProgress:
         page.emulate_media(reduced_motion="reduce")
         self._start(page, base_url)
         assert self._state(page)["anim"] == "none"
+
+
+class TestLrNumberDigitsOnly:
+    """The LR Number box takes digits and nothing else.
+
+    Typed with real key presses, because the filter runs on the input event
+    and a test that set the value directly would bypass it.
+    """
+
+    def _open(self, page, base_url, query=""):
+        page.goto(f"{base_url}/stickers{query}")
+        page.wait_for_selector("#generate")
+        page.evaluate("() => localStorage.removeItem('sm_sticker_print_queue')")
+        if not query:
+            page.reload()
+            page.wait_for_selector("#generate")
+
+    @pytest.mark.parametrize("typed,kept", [
+        ("lhkj", ""), ("12ab34", "1234"), ("7170-3457", "71703457"), ("00123", "00123"),
+    ])
+    def test_only_digits_survive_typing(self, page, base_url, typed, kept):
+        """Leading zeros included: an LR is an identifier, not a quantity."""
+        self._open(page, base_url)
+        page.locator("#lr").press_sequentially(typed)
+        assert page.input_value("#lr") == kept
+
+    def test_a_letter_mid_number_leaves_the_cursor_where_it_was(self, page, base_url):
+        self._open(page, base_url)
+        lr = page.locator("#lr")
+        lr.press_sequentially("1234")
+        lr.press("ArrowLeft")
+        lr.press("ArrowLeft")
+        lr.press_sequentially("x")
+        assert lr.input_value() == "1234"
+        assert page.evaluate("() => document.getElementById('lr').selectionStart") == 2, \
+            "the cursor jumped when the letter was dropped"
+        lr.press_sequentially("5")
+        assert lr.input_value() == "12534", "typing on after a dropped letter went astray"
+
+    def test_a_paste_keeps_just_the_digits(self, page, base_url):
+        self._open(page, base_url)
+        page.focus("#lr")
+        page.evaluate("""() => { const e = document.getElementById('lr');
+          e.setRangeText('LR-7170 3457', 0, e.value.length, 'end');
+          e.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertFromPaste'})); }""")
+        assert page.input_value("#lr") == "71703457"
+
+    def test_an_lr_with_letters_from_a_link_is_refused_not_queued(self, page, base_url):
+        """Nothing was typed, so nothing was filtered -- Add is the backstop."""
+        self._open(page, base_url, "?lr=LR5566&receiver=MUMBAI&qty=2")
+        page.wait_for_timeout(300)
+        assert page.locator(".sticker-queue-table tbody tr").count() == 0, \
+            "a non-numeric LR from a link was queued"
+        page.click("#generate")
+        assert page.is_visible("#sticker-problem")
+        assert "digits only" in page.inner_text("#sticker-problem")
+        assert page.evaluate(
+            "() => document.getElementById('lr').classList.contains('is-missing')"), \
+            "the LR box is not marked"
+        assert page.locator(".sticker-queue-table tbody tr").count() == 0
