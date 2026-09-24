@@ -41,8 +41,14 @@
     </div>
 
     <div class="progress-wrap" id="progress-wrap" hidden>
-      <div class="progress-track">
-        <div class="progress-bar" id="progress-bar"></div>
+      {# The truck rides the front edge of the fill, so where it is IS how far
+         the batch has got. aria-hidden: the text and percentage below say the
+         same thing in words, and role=progressbar says it to a screen reader. #}
+      <div class="progress-track" id="progress-track" role="progressbar"
+           aria-label="Reading invoices" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="progress-bar progress-fill" id="progress-bar">
+          <span class="truck-icon" aria-hidden="true">🚚</span>
+        </div>
       </div>
       <div class="progress-labels">
         <span id="progress-text">Starting…</span>
@@ -68,6 +74,7 @@
     const progressBar = document.getElementById("progress-bar");
     const progressText = document.getElementById("progress-text");
     const progressPercent = document.getElementById("progress-percent");
+    const progressTrack = document.getElementById("progress-track");
 
     // Kept separately from the input so files dropped in more than one go add up
     // instead of replacing each other.
@@ -153,6 +160,7 @@
       const pct = total === 0 ? 0 : Math.round((done / total) * 100);
       progressBar.style.width = pct + "%";
       progressPercent.textContent = pct + "%";
+      progressTrack.setAttribute("aria-valuenow", String(pct));
       progressText.textContent = `Reading invoice ${Math.min(done + 1, total)} of ${total}`;
     }
 
@@ -188,6 +196,7 @@
 
       submitBtn.disabled = true;
       progressWrap.hidden = false;
+      progressTrack.classList.add("is-driving");
       setProgress(0, chosen.length);
 
       // Several at a time, not one after another. Each file is its own
@@ -235,6 +244,9 @@
         Array.from({ length: Math.min(CONCURRENT_UPLOADS, chosen.length) }, uploadNext));
       const draftIds = draftIdByIndex.filter((id) => id !== null);
 
+      // Parked: the engine bounce is for work in progress, and a truck still
+      // bouncing at 100% reads as "not done yet".
+      progressTrack.classList.remove("is-driving");
       progressText.textContent = failures
         ? `Finished — ${failures} could not be read`
         : "Finished";
