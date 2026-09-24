@@ -1452,16 +1452,13 @@ class TestReceiverList:
 
 
 class TestStickerTypeface:
-    """The three values print in the "SM Sticker" face, unthickened.
+    """The three values print in regular Arial, at normal weight -- not bold.
 
-    That face is Arial Black found by its full font name, or the bundled
-    Archivo Black. Naming "Arial Black" as a FAMILY is what failed on the
-    office's Windows PCs: the lookup missed, the browser moved silently to
-    the next name, and a bold sans came out that looked like nothing had
-    changed. Weight 400 matches the face exactly, so nothing is synthesised.
-
-    The sizes come off the courier's own document and must not drift with
-    the typeface.
+    Not Arial Black either: Arial Black is heavier than bold by design, so
+    it cannot be un-bolded, and "not bold, whatever the face" is the rule.
+    Plain "Arial" is also the family name every Windows browser resolves
+    reliably ("Arial Black" was not). Liberation Sans is its metric twin on
+    Linux, so a sheet laid out here fits exactly as it will on Windows.
     """
 
     def _card(self, page, base_url):
@@ -1478,7 +1475,7 @@ class TestStickerTypeface:
 
     @pytest.mark.parametrize(
         "selector,pt", [(".sticker-lr", 29), (".sticker-from", 29), (".sticker-to", 25)])
-    def test_each_line_is_arial_black_at_its_own_weight(
+    def test_each_line_is_regular_arial_at_normal_weight(
             self, page, base_url, selector, pt):
         self._card(page, base_url)
         page.emulate_media(media="print")
@@ -1490,10 +1487,10 @@ class TestStickerTypeface:
                                   : (cs.fontSynthesis || 'unset')}};
             }}""")
 
-        assert got["family"].lower().startswith('"sm sticker"'), \
+        assert got["family"].lower().startswith("arial,"), \
             f"{selector} asks for {got['family']!r} first"
         assert got["weight"] == "400", \
-            f"{selector} is weight {got['weight']}; Arial Black must not be re-bolded"
+            f"{selector} is weight {got['weight']} -- it must not be bold"
         # Nothing in this stack may be faked: a synthesised weight is how a
         # missing font disguises itself as a present one.
         assert got["synthesis"] in ("none", "weight style small-caps"), got["synthesis"]
@@ -1517,10 +1514,16 @@ class TestStickerTypeface:
         got = page.evaluate(
             f"""() => {{
               const cs = getComputedStyle(document.querySelector('{selector}'));
-              return {{family: cs.fontFamily, weight: cs.fontWeight}};
+              return {{family: cs.fontFamily, weight: cs.fontWeight,
+                       synthesis: cs.fontSynthesisWeight}};
             }}""")
-        assert got["family"].lower().startswith('"sm sticker"'), \
+        assert got["family"].lower().startswith("arial,"), \
             f"{selector} asks for {got['family']!r} first on screen"
+        # The browser may never fake a bold weight here, whatever face it
+        # lands on -- the print rules say the same, but screen is its own
+        # cascade and the preview is what people check before printing.
+        assert got["synthesis"] == "none", \
+            f"{selector} lets the browser synthesise weight: {got['synthesis']!r}"
         assert got["weight"] == "400", f"{selector} is weight {got['weight']} on screen"
 
     @pytest.mark.parametrize(
@@ -1539,68 +1542,38 @@ class TestStickerTypeface:
               const cs = getComputedStyle(document.querySelector('{selector}'));
               return {{family: cs.fontFamily, weight: cs.fontWeight}};
             }}""")
-        assert got["family"].lower().startswith('"sm sticker"'), \
+        assert got["family"].lower().startswith("arial,"), \
             f"{selector} asks for {got['family']!r} first on paper"
         assert got["weight"] == "400", \
             f"{selector} prints at weight {got['weight']}"
 
-    def test_no_family_name_fallback_can_impersonate_it(self, page, base_url):
-        """Nothing in the stack but the face and the generic sans.
-
-        "Arial Bold" was second in the list, and when the Arial Black lookup
-        missed on Windows that is what printed -- close enough to the old
-        design that the fix looked like it had never shipped.
-        """
+    def test_nothing_heavier_than_regular_is_in_the_stack(self, page, base_url):
+        """No "Arial Black", no "Arial Bold": either would print bold."""
         self._card(page, base_url)
         family = page.evaluate(
-            "() => getComputedStyle(document.querySelector('.dest-text')).fontFamily")
-        assert family.replace(" ", "").lower() == '"smsticker",sans-serif', family
+            "() => getComputedStyle(document.querySelector('.dest-text')).fontFamily").lower()
+        for heavy in ("black", "bold", "impact"):
+            assert heavy not in family, f"{heavy!r} is in the sticker stack: {family}"
 
-    def test_the_face_finds_arial_black_by_its_own_name_first(self, page, base_url):
-        """local() by full and PostScript name, THEN the bundled file."""
-        self._card(page, base_url)
-        src = page.evaluate("""() => {
-          for (const sheet of document.styleSheets) {
-            let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
-            for (const r of rules)
-              if (r instanceof CSSFontFaceRule
-                  && r.style.getPropertyValue('font-family').includes('SM Sticker'))
-                return {src: r.style.getPropertyValue('src'),
-                        weight: r.style.getPropertyValue('font-weight'),
-                        display: r.style.getPropertyValue('font-display')};
-          }
-          return null;
-        }""")
-        assert src, "there is no @font-face for SM Sticker"
-        order = [src["src"].find(k) for k in
-                 ('local("Arial Black")', 'local("Arial-Black")', "ArchivoBlack-Regular.ttf")]
-        assert -1 not in order and order == sorted(order), \
-            f"expected installed Arial Black first, bundled file last: {src['src']}"
-        assert src["weight"] == "400", src
-        # block, not swap: a print taken while the file is still arriving
-        # must not put the fallback on paper.
-        assert src["display"] == "block", src
+    def test_the_printed_sheet_carries_a_regular_face_only(self, page, base_url, tmp_path):
+        """What reaches paper, read out of the PDF itself.
 
-    def test_the_bundled_face_is_served_and_loads(self, page, base_url):
-        """This machine has no Arial Black, so what loads here IS the bundle."""
-        self._card(page, base_url)
-        response = page.request.get(f"{base_url}/static/fonts/ArchivoBlack-Regular.ttf")
-        assert response.status == 200, response.status
-        assert response.body()[:4] == b"\x00\x01\x00\x00", "not a TrueType file"
-        page.evaluate("() => document.fonts.ready")
-        statuses = page.evaluate(
-            "() => [...document.fonts].filter((f) => f.family.includes('SM Sticker'))"
-            "        .map((f) => f.status)")
-        assert statuses == ["loaded"], statuses
-
-    def test_a_long_destination_is_fitted_in_the_real_face(self, page, base_url):
-        """Measured after the face lands, not before.
-
-        The fit used to run when the card was drawn, while the face was still
-        being fetched, so it measured the narrower fallback, decided the line
-        fitted, and then the real face made it 115mm in a 110mm blank --
-        clipped on paper. It now re-fits whenever a font finishes loading.
+        Computed styles say what was asked for; the PDF says what the engine
+        actually used. A bold face here would be named ...-Bold.
         """
+        self._card(page, base_url)
+        page.emulate_media(media="print")
+        pdf = tmp_path / "sheet.pdf"
+        page.pdf(path=str(pdf), prefer_css_page_size=True)
+        import re
+        fonts = set(re.findall(rb"/BaseFont\s*/(?:[A-Z]{6}\+)?([A-Za-z0-9-]+)", pdf.read_bytes()))
+        assert fonts, "no fonts found in the printed PDF"
+        heavy = [f for f in fonts if re.search(rb"bold|black|heavy", f, re.I)]
+        assert not heavy, f"the printed sheet uses a heavy face: {sorted(fonts)}"
+
+    def test_a_long_destination_keeps_its_full_size(self, page, base_url):
+        """Regular Arial is narrow enough that the longest real receiver fits
+        its 110mm blank at the full 25pt -- nothing is squeezed."""
         page.goto(f"{base_url}/stickers")
         page.wait_for_selector("#generate")
         page.evaluate("() => localStorage.removeItem('sm_sticker_print_queue')")
@@ -1610,67 +1583,12 @@ class TestStickerTypeface:
         page.fill("#receiver", "CHENNAI (SUMANGALI)")
         page.fill("#qty", "1")
         page.click("#generate")
-        page.evaluate("() => document.fonts.ready")
         page.wait_for_timeout(300)
         fit = page.evaluate("""() => { const e = document.querySelector('.dest-text');
           return {over: e.scrollWidth - e.clientWidth,
                   pt: parseFloat(getComputedStyle(e).fontSize) * 0.75}; }""")
-        assert fit["over"] <= 0, f"the destination still overflows by {fit['over']}px"
-        assert fit["pt"] < 25, "it fits only because nothing was measured"
-
-    def test_printing_waits_for_the_face(self, page, base_url):
-        """The dialog must not open while the face is still on its way.
-
-        Locally the file arrives in milliseconds, so a test that simply
-        clicks Print finds it loaded whether or not anything waited -- the
-        first version of this test passed with the wait deleted. Here the
-        download is held in flight: Print is clicked with the face pending,
-        the dialog must NOT open, and it must open once the face lands.
-        """
-        held = []
-        page.route("**/static/fonts/ArchivoBlack-Regular.ttf", lambda route: held.append(route))
-        page.goto(f"{base_url}/stickers")
-        page.wait_for_selector("#generate")
-        page.evaluate("() => localStorage.removeItem('sm_sticker_print_queue')")
-        page.reload()
-        page.wait_for_selector("#generate")
-        page.evaluate("""() => { window.__printed = 0; window.print = () => {
-          window.__printed += 1;
-          window.__faceAtPrint = document.fonts.check('400 29pt "SM Sticker"');
-          window.dispatchEvent(new Event('afterprint')); }; }""")
-        page.fill("#lr", "552655525")
-        page.fill("#receiver", "CHENNAI")
-        page.fill("#qty", "1")
-        page.click("#generate")
-
-        for _ in range(50):              # the card asks for the face; wait for that
-            if held:
-                break
-            page.wait_for_timeout(50)
-        assert held, "drawing a sticker never requested the face"
-
-        page.click("#print-stickers")
-        page.wait_for_timeout(500)
-        assert page.evaluate("() => window.__printed") == 0, \
-            "the print dialog opened while the face was still downloading"
-
-        held[0].continue_()
-        page.wait_for_function("() => window.__printed === 1")
-        assert page.evaluate("() => window.__faceAtPrint") is True, \
-            "the print dialog opened without the sticker face in place"
-
-    def test_the_panel_says_which_face_this_pc_is_using(self, page, base_url):
-        """So "is it Arial Black?" is answered by the PC, not by a squint."""
-        self._card(page, base_url)
-        status = page.locator("#sticker-font-status")
-        if not status.count():
-            pytest.skip("no alignment panel for this user")
-        page.wait_for_function(
-            "() => document.getElementById('sticker-font-status').dataset.face")
-        # No Arial Black on this Linux box, so the honest answer is the bundle.
-        assert page.evaluate(
-            "() => document.getElementById('sticker-font-status').dataset.face") == "bundled"
-        assert "Archivo Black" in status.inner_text()
+        assert fit["over"] <= 0, f"the destination overflows by {fit['over']}px"
+        assert abs(fit["pt"] - 25) < 0.01, f"the destination was shrunk to {fit['pt']}pt"
 
     def test_the_ghost_labels_beside_the_values_stay_bold(self, page, base_url):
         """Only the DATA changed.
