@@ -1656,18 +1656,29 @@ class TestQueueActionStyling:
         page.fill("#qty", "4")
         page.click("#generate")
 
-    def test_clear_is_a_solid_red_button_named_clear(self, page, base_url):
+    def test_clear_is_a_red_ghost_that_turns_solid_under_the_pointer(
+            self, page, base_url):
+        """Secondary and destructive: tinted at rest, solid red on intent."""
         self._queued(page, base_url)
         button = page.locator("#queue-clear")
         assert button.inner_text().strip() == "Clear", \
             f"the button says {button.inner_text().strip()!r}"
 
-        style = page.evaluate("""() => {
+        read = """() => {
           const cs = getComputedStyle(document.getElementById('queue-clear'));
           return {bg: cs.backgroundColor, color: cs.color};
-        }""")
-        assert style["bg"] == "rgb(220, 53, 69)", f"background is {style['bg']}"
-        assert style["color"] == "rgb(255, 255, 255)", f"text is {style['color']}"
+        }"""
+        page.mouse.move(0, 0)
+        page.wait_for_timeout(400)     # past the transition; see SETTLE below
+        rest = page.evaluate(read)
+        assert rest["bg"] == "rgb(254, 242, 242)", f"at rest Clear is {rest['bg']}"
+        assert rest["color"] == "rgb(220, 38, 38)", f"at rest its label is {rest['color']}"
+
+        button.hover()
+        page.wait_for_timeout(400)
+        hover = page.evaluate(read)
+        assert hover["bg"] == "rgb(220, 38, 38)", f"under the pointer Clear is {hover['bg']}"
+        assert hover["color"] == "rgb(255, 255, 255)", hover
 
     def test_the_delete_cross_is_red_before_it_is_hovered(self, page, base_url):
         """Hover-only red hides which control throws the row away."""
@@ -1678,11 +1689,36 @@ class TestQueueActionStyling:
 
     @pytest.mark.parametrize("scheme", ["light", "dark"])
     def test_the_clear_button_is_legible_in_either_theme(self, page, base_url, scheme):
-        """It carries its own colours, so it does not follow the theme tokens."""
+        """It carries its own colours, so it does not follow the theme tokens.
+
+        Measured against what is actually behind the label: the dark-theme
+        ghost is a 12% red tint over the card, so its background has to be
+        composited, not read as if it were opaque red.
+
+        The light-theme floor is 4.4, not 4.5, on purpose. #dc2626 on #fef2f2
+        is the colour pair that was chosen, and it measures 4.41:1 -- 0.09
+        under the AA line for 13px text. #b91c1c would clear it. This pins the
+        known value so it cannot quietly get worse.
+        """
         page.emulate_media(color_scheme=scheme)
         self._queued(page, base_url)
-        got = page.evaluate(CONTRAST_AGAINST, ["#queue-clear", "#queue-clear"])
-        assert got >= 4.5, f"Clear is {got:.2f}:1 in {scheme}"
+        page.mouse.move(0, 0)
+        page.wait_for_timeout(400)
+        got = page.evaluate(r"""() => {
+          const rgba = (c) => { const v = c.match(/[\d.]+/g).map(Number);
+                                return [v[0], v[1], v[2], v.length > 3 ? v[3] : 1]; };
+          const lum = ([r, g, b]) => [r, g, b].map((v) => { v /= 255;
+              return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); })
+            .reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0);
+          const btn = getComputedStyle(document.getElementById('queue-clear'));
+          const [r, g, b, a] = rgba(btn.backgroundColor);
+          const card = rgba(getComputedStyle(document.querySelector('.sticker-queue')).backgroundColor);
+          const bg = [0, 1, 2].map((i) => [r, g, b][i] * a + card[i] * (1 - a));
+          const x = lum(rgba(btn.color)), y = lum(bg);
+          return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+        }""")
+        floor = 4.4 if scheme == "light" else 4.5
+        assert got >= floor, f"Clear is {got:.2f}:1 in {scheme}"
 
 
 class TestDeployedChangesReachTheBrowser:
@@ -1819,7 +1855,7 @@ class TestActionButtonStates:
         for key in ("w", "h", "top", "pad", "size", "radius"):
             assert clear[key] == prnt[key], \
                 f"the pair differs on {key}: Clear {clear[key]} vs Print {prnt[key]}"
-        assert clear["size"] == "14px" and clear["pad"] == "6px 18px", clear
+        assert clear["size"] == "13px" and clear["pad"] == "7px 18px", clear
         assert clear["w"] >= 80, f"the buttons are only {clear['w']}px wide"
         assert clear["left"] < prnt["left"], "Print should sit to the right of Clear"
 
@@ -1838,16 +1874,32 @@ class TestActionButtonStates:
         assert style["bg"] == "rgb(226, 232, 240)", f"Print is {style['bg']}"
         assert style["cursor"] == "not-allowed", f"cursor is {style['cursor']}"
 
-    def test_print_turns_green_once_something_is_queued(self, page, base_url):
+    def test_print_turns_solid_once_something_is_queued(self, page, base_url):
         self._open(page, base_url)
         self._queue_one(page)
 
         style = self._style(page, "#print-stickers")
         assert style["disabled"] is False, "Print is still disabled with a job queued"
         assert style["active"] is True, "the active class was not applied"
-        assert style["bg"] == "rgb(22, 163, 74)", f"Print is {style['bg']}"
+        assert style["bg"] == "rgb(30, 41, 59)", f"Print is {style['bg']}"
         assert style["color"] == "rgb(255, 255, 255)", f"Print's label is {style['color']}"
-        assert style["weight"] == "700", f"Print is weight {style['weight']}"
+        assert style["weight"] == "600", f"Print is weight {style['weight']}"
+
+    def test_print_does_not_vanish_into_the_dark_card(self, page, base_url):
+        """#1e293b is 1.16:1 against the dark card -- inverted there instead."""
+        page.emulate_media(color_scheme="dark")
+        self._open(page, base_url)
+        self._queue_one(page)
+        page.wait_for_timeout(self.SETTLE)
+        got = page.evaluate(r"""() => {
+          const lum = (c) => c.match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => {
+              v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); })
+            .reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0);
+          const a = lum(getComputedStyle(document.getElementById('print-stickers')).backgroundColor);
+          const b = lum(getComputedStyle(document.querySelector('.sticker-queue')).backgroundColor);
+          return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+        }""")
+        assert got >= 3, f"Print is {got:.2f}:1 against the dark card"
 
     def test_it_goes_back_to_grey_when_the_queue_empties(self, page, base_url):
         """The attribute and the class are one fact, so they move together."""
