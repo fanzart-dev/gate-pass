@@ -2703,8 +2703,13 @@ table.list.sticker-queue-table { table-layout: auto; }
 /* --- Clear and Print: the queue card's pair ----------------------------- */
 /* The two actions that finish a batch, so they are sized as one: same
    height, padding, type and corners, and a common minimum width so "Clear"
-   and "Print" -- five letters each, but not the same five -- do not end up
-   a few pixels apart. Colour is the only thing that tells them apart. */
+   and "Print" do not end up a few pixels apart.
+
+   Print is the call to action, so it is solid; Clear is destructive but
+   secondary, so it is a ghost that only turns solid red when the pointer is
+   on it -- the colour arrives at the moment of intent rather than sitting
+   on the card shouting. Both carry a 1px border (Print's in its own colour)
+   so the ghost's outline does not make Clear 2px taller than Print. */
 .queued-header-actions {
   display: flex;
   gap: 10px;
@@ -2715,43 +2720,163 @@ table.list.sticker-queue-table { table-layout: auto; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 18px;
-  font-size: 14px;
+  padding: 7px 18px;
+  font-size: 13px;
   font-weight: 600;
+  letter-spacing: 0.3px;
   border-radius: 6px;
   min-width: 80px;
   text-align: center;
-  border: none;
   cursor: pointer;
-  transition: all 0.2s ease-in-out;
+  transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out,
+              border-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out,
+              transform 0.2s ease-in-out;
 }
 
 .queued-header-actions .btn-clear {
-  background-color: #dc3545;
-  color: #ffffff;
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
 }
-.queued-header-actions .btn-clear:hover { background-color: #bb2d3b; }
+.queued-header-actions .btn-clear:hover {
+  background: #dc2626;
+  color: #ffffff;
+  border-color: #dc2626;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.2);
+  transform: translateY(-1px);
+}
 
 /* Nothing queued. The card is hidden then, so this is rarely seen -- but a
    disabled button must still look disabled if it ever is. */
 .queued-header-actions .btn-print {
-  background-color: #e2e8f0;
+  background: #e2e8f0;
   color: #94a3b8;
+  border: 1px solid #e2e8f0;
   cursor: not-allowed;
 }
 
-/* Something queued. Green because it is the one button on this page that
-   commits paper. The class is set with the disabled attribute in one place,
-   setPrintReady(), so the two cannot disagree. */
+/* Something queued: solid dark slate. The class is set with the disabled
+   attribute in one place, setPrintReady(), so the two cannot disagree. */
 .queued-header-actions .btn-print.btn-print-active {
-  background-color: #16a34a;
+  background: #1e293b;
   color: #ffffff;
-  font-weight: 700;
-  box-shadow: 0 2px 4px rgba(22, 163, 74, 0.2);
+  border-color: #1e293b;
   cursor: pointer;
 }
 .queued-header-actions .btn-print.btn-print-active:hover {
-  background-color: #15803d;
+  background: #0f172a;
+  border-color: #0f172a;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.25);
+  transform: translateY(-1px);
+}
+.queued-header-actions .btn-print.btn-print-active:active {
+  background: #020617;
+  transform: translateY(0);
+}
+
+/* On dark, #1e293b is 1.16:1 against the card -- the same vanishing act the
+   Add button did, so the same answer: inverted, as the site's other primary
+   buttons are. The ghost Clear keeps its idea -- tinted, not solid -- in a
+   red that reads on a dark card rather than a pale pink slab. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .queued-header-actions .btn-print.btn-print-active {
+    background: var(--ink); color: var(--card); border-color: var(--ink);
+  }
+  :root:not([data-theme="light"]) .queued-header-actions .btn-print.btn-print-active:hover {
+    background: var(--ink-2); border-color: var(--ink-2);
+  }
+  :root:not([data-theme="light"]) .queued-header-actions .btn-clear {
+    background: rgba(220, 38, 38, 0.12); color: #f87171;
+    border-color: rgba(248, 113, 113, 0.35);
+  }
+  :root:not([data-theme="light"]) .queued-header-actions .btn-clear:hover {
+    background: #dc2626; color: #ffffff; border-color: #dc2626;
+  }
+  :root:not([data-theme="light"]) .queued-header-actions .btn-print {
+    background: var(--head-bg); color: var(--muted); border-color: var(--line);
+  }
+}
+:root[data-theme="dark"] .queued-header-actions .btn-print.btn-print-active {
+  background: var(--ink); color: var(--card); border-color: var(--ink);
+}
+:root[data-theme="dark"] .queued-header-actions .btn-print.btn-print-active:hover {
+  background: var(--ink-2); border-color: var(--ink-2);
+}
+:root[data-theme="dark"] .queued-header-actions .btn-clear {
+  background: rgba(220, 38, 38, 0.12); color: #f87171;
+  border-color: rgba(248, 113, 113, 0.35);
+}
+:root[data-theme="dark"] .queued-header-actions .btn-clear:hover {
+  background: #dc2626; color: #ffffff; border-color: #dc2626;
+}
+:root[data-theme="dark"] .queued-header-actions .btn-print {
+  background: var(--head-bg); color: var(--muted); border-color: var(--line);
+}
+
+/* --- the two cards and the queue table ---------------------------------- */
+/* Scoped to this page. A hairline and a soft two-layer shadow instead of a
+   plain border: the cards sit on the page rather than being drawn on it. */
+.sticker-form.card,
+.sticker-queue.card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
+}
+
+.sticker-queue-table thead th {
+  background-color: #f8fafc;
+  color: #64748b;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+/* On dark the light hex values would be a bright frame and a white header
+   bar, so the same design is drawn in the theme's own dark tokens. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sticker-form.card,
+  :root:not([data-theme="light"]) .sticker-queue.card { border-color: var(--line); }
+  :root:not([data-theme="light"]) .sticker-queue-table thead th {
+    background-color: var(--head-bg); color: var(--label);
+  }
+}
+:root[data-theme="dark"] .sticker-form.card,
+:root[data-theme="dark"] .sticker-queue.card { border-color: var(--line); }
+:root[data-theme="dark"] .sticker-queue-table thead th {
+  background-color: var(--head-bg); color: var(--label);
+}
+
+/* Row icons get a soft square chip on hover. Red only on the cross: the
+   pencil is not destructive, and turning it the same red would make
+   "correct this row" and "throw this row away" look like one action. */
+.sticker-queue-table .queue-edit,
+.sticker-queue-table .queue-remove {
+  border-radius: 4px;
+  transition: background-color 0.15s ease-in-out, color 0.15s ease-in-out;
+}
+.sticker-queue-table .queue-remove:hover {
+  background: #fee2e2;
+  color: #991b1b;
+  border-radius: 4px;
+}
+.sticker-queue-table .queue-edit:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sticker-queue-table .queue-remove:hover {
+    background: rgba(220, 38, 38, 0.18); color: #fca5a5;
+  }
+  :root:not([data-theme="light"]) .sticker-queue-table .queue-edit:hover {
+    background: var(--head-bg); color: var(--ink);
+  }
+}
+:root[data-theme="dark"] .sticker-queue-table .queue-remove:hover {
+  background: rgba(220, 38, 38, 0.18); color: #fca5a5;
+}
+:root[data-theme="dark"] .sticker-queue-table .queue-edit:hover {
+  background: var(--head-bg); color: var(--ink);
 }
 
 /* Somebody who has asked not to be moved is not moved. */
@@ -2761,7 +2886,9 @@ table.list.sticker-queue-table { table-layout: auto; }
   .queued-header-actions .btn-print {
     transition: none;
   }
-  .sticker-actions #generate:hover {
+  .sticker-actions #generate:hover,
+  .queued-header-actions .btn-clear:hover,
+  .queued-header-actions .btn-print.btn-print-active:hover {
     transform: none;
   }
 }
@@ -2805,13 +2932,6 @@ table.list.sticker-queue-table { table-layout: auto; }
   font-weight: 700;
   color: #dc3545;
   cursor: pointer;
-}
-/* A light red chip, round, at the size the button already is -- padding here
-   would resize the button and shift the column under the pointer. */
-.sticker-queue-table .queue-remove:hover {
-  background: #f8d7da;
-  border-radius: 50%;
-  color: #b02a37;
 }
 
 /* Two icons, not two words, so the column narrows — but not below what two

@@ -6278,7 +6278,13 @@ def test_the_sticker_sheet_is_built_for_paper():
     check("the values are centred, as in the document",
           "text-align: center;" in values)
     check("in a block the document's width", "width: 110mm;" in values)
-    check("bold, so it reads against yellow", "font-weight: 700;" in values)
+    # Read from the values' OWN rule. The old check sliced to the end of the
+    # file and passed on the ghost labels' 700 further down, long after the
+    # values themselves had moved to Arial Black at 400.
+    values_rule = values[:values.index("}")]
+    check("in Arial Black, which is heavy enough to read against yellow",
+          'font-family: "Arial Black"' in values_rule)
+    check("at its own weight, not re-bolded on top", "font-weight: 400;" in values_rule)
     # Each rule read on its own. Slicing from one selector to the end of the
     # file sees the NEXT rule's size too, so changing just one of these went
     # undetected — the check passed on its neighbour's declaration.
