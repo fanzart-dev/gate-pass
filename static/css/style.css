@@ -8,8 +8,9 @@
    muddy. The brass accent survives as a brand touch, but it no longer carries
    any contrast work. */
 :root {
-  --ink: #0f172a;             /* slate 900 — primary text and solid buttons */
-  --ink-2: #334155;           /* slate 700 — body text in tables            */
+  --ink: #1e293b;             /* slate 800 — primary text and headings      */
+  --ink-2: #334155;           /* slate 700 — body text, labels              */
+  --text-2: #64748b;          /* slate 500 — subtitles, hints, metadata     */
   --muted: #94a3b8;           /* slate 400 — placeholders, quiet labels     */
   --label: #475569;           /* slate 600 — table headings                 */
   --line: #e2e8f0;            /* slate 200 — card and input borders         */
@@ -22,9 +23,10 @@
   --brand-hover: #1e293b;     /* slate 800 — primary button hover           */
   --accent: #8a6a3a;          /* brass, from the Fanzart wordmark           */
   --accent-soft: #f5efe4;
-  --focus: #0f172a;           /* focus ring: slate, not brass — it has to be
-                                 obvious at a glance on a busy form         */
-  --focus-soft: rgba(15, 23, 42, .12);
+  --focus: #2563eb;           /* focus: a blue border and a soft blue ring  */
+  --focus-soft: rgba(37, 99, 235, .12);
+  --link: #2563eb;            /* royal blue — links and interactive text    */
+  --field-line: #cbd5e1;      /* slate 300 — input and outline-button edges */
   --blue: #3b82f6;            /* used only for the drop zone's active state */
   --blue-soft: #eff6ff;
   --ok: #15803d;
@@ -33,8 +35,14 @@
   --warn-bg: #fef3c7;
   --danger: #b91c1c;
   --danger-bg: #fee2e2;
-  --radius: 10px;
-  --radius-sm: 6px;
+  --radius: 12px;             /* cards                                      */
+  --radius-sm: 8px;           /* fields, buttons, inner groups              */
+  /* Soft pill badges. Their own values rather than --warn/--danger, which
+     also draw borders, stripes and solid badges elsewhere. */
+  --pill-warn-bg: #fef3c7;
+  --pill-warn: #d97706;
+  --count-bg: #fee2e2;
+  --count-fg: #dc2626;
   --shadow: 0 1px 3px 0 rgba(0, 0, 0, .05);
   --shadow-lift: 0 4px 6px -1px rgba(0, 0, 0, .07), 0 2px 4px -2px rgba(0, 0, 0, .05);
   /* Menus and panels that float over the form. Separate from --shadow-lift
@@ -50,6 +58,12 @@
     --pop-shadow: 0 10px 30px rgba(0, 0, 0, .55), 0 2px 8px rgba(0, 0, 0, .4);
     --ink: #f1f5f9;
     --ink-2: #cbd5e1;
+    --text-2: #94a3b8;
+    --link: #60a5fa;
+    --pill-warn-bg: #3a2a08;
+    --pill-warn: #fbbf24;
+    --count-bg: #3a1618;
+    --count-fg: #f87171;
     --muted: #64748b;
     --label: #94a3b8;
     --line: #334155;
@@ -62,8 +76,8 @@
     --brand-hover: #cbd5e1;
     --accent: #c9a367;
     --accent-soft: #2a2419;
-    --focus: #94a3b8;
-    --focus-soft: rgba(148, 163, 184, .2);
+    --focus: #60a5fa;
+    --focus-soft: rgba(96, 165, 250, .2);
     --blue: #60a5fa;
     --blue-soft: #17233b;
     --ok: #4ade80;
@@ -81,7 +95,9 @@ html { -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto,
+  /* Inter first; a PC without it falls to its own system face (Segoe UI on
+     Windows), which is what it used before. */
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
                Helvetica, Arial, sans-serif;
   font-size: 15px;
   line-height: 1.5;
@@ -338,7 +354,7 @@ input[type="password"]:focus {
   margin-top: 18px;
   text-align: center;
   font-size: 12.5px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .login-page code {
@@ -378,7 +394,13 @@ h1 {
   margin: 0 0 6px;
 }
 
-.hint { color: var(--muted); font-size: 13.5px; margin: 0; }
+/* Secondary text in slate 500, not the placeholder grey: a description
+   should read as text, not as an empty field. */
+.hint { color: var(--text-2); font-size: 13.5px; margin: 0; }
+
+/* No base link colour existed, so links showed the browser's own blue and
+   purple. Any component that styles its links still does. */
+a { color: var(--link); }
 
 .card {
   background: var(--card);
@@ -396,7 +418,7 @@ h1 {
   gap: 10px;
   margin-bottom: 22px;
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-2);
   flex-wrap: wrap;
 }
 
@@ -473,14 +495,14 @@ h1 {
 
 label {
   display: block;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
   /* --muted is the placeholder grey. A caption in the same grey as the hint
      inside the box it labels gives the eye nothing to hold on to. */
-  color: var(--label);
-  margin-bottom: 5px;
+  color: var(--ink-2);
+  margin-bottom: 6px;
 }
 
 input[type="text"],
@@ -491,11 +513,11 @@ input[type="number"],
 textarea,
 select {
   width: 100%;
-  padding: 9px 11px;
-  border: 1px solid #cbd5e1;
+  padding: 10px 14px;
+  border: 1px solid var(--field-line);
   border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 14.5px;
+  font-size: 14px;
   color: var(--ink);
   background: var(--card);
   transition: border-color .15s, box-shadow .15s;
@@ -507,16 +529,14 @@ input[type="date"]:focus,
 input[type="number"]:focus,
 textarea:focus,
 select:focus {
-  /* A slate ring rather than the brass one. Brass on a warm background was
-     nearly invisible; on a busy form the focused field has to be findable
-     without hunting for it. */
-  outline: 2px solid var(--focus);
-  outline-offset: -1px;
+  /* A blue border and a soft blue ring. The border carries the contrast
+     (4.8:1 against white); the ring makes it findable at a glance. */
+  outline: none;
   border-color: var(--focus);
   box-shadow: 0 0 0 3px var(--focus-soft);
 }
 
-::placeholder { color: var(--muted); opacity: 1; }
+::placeholder { color: var(--muted); opacity: 1; font-weight: 400; }
 
 /* Remarks. Starts exactly as tall as the single-line fields beside it so the
    row does not sit in a hole, and grows when there is more to say. Tighter
@@ -565,7 +585,7 @@ legend {
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .radio, .checkbox {
@@ -594,17 +614,19 @@ button, .button {
   cursor: pointer;
   font: inherit;
   font-size: 14px;
-  font-weight: 500;
-  padding: 9px 16px;
+  font-weight: 600;
+  padding: 8px 16px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
+  /* The secondary, outline button: every button that is not the one primary
+     action on its screen. */
+  border: 1px solid var(--field-line);
   background: var(--card);
-  color: var(--ink);
+  color: var(--ink-2);
   text-decoration: none;
-  transition: background .15s, border-color .15s, transform .05s;
+  transition: background .2s ease, border-color .2s ease, transform .05s;
 }
 
-button:hover, .button:hover { background: var(--head-bg); border-color: var(--muted); }
+button:hover, .button:hover { background: var(--paper); border-color: var(--muted); }
 button:active, .button:active { transform: translateY(1px); }
 
 button.primary {
@@ -612,6 +634,7 @@ button.primary {
   border-color: var(--brand);
   color: var(--card);
   font-weight: 600;
+  padding: 10px 20px;
 }
 /* A real colour change, not a transparency fade: the old opacity trick let
    the page show through and made the button look disabled on hover. */
@@ -673,7 +696,7 @@ button.link-button:hover { background: none; color: var(--danger); text-decorati
   text-align: center;
   cursor: pointer;
   transition: border-color .15s, background .15s, color .15s;
-  color: var(--muted);
+  color: var(--text-2);
   /* The drop zone IS a <label>, so it inherits the uppercase and letter
      spacing meant for short field captions. On a whole sentence that is hard
      to read and was shouting DRAG & DROP INVOICE PDFS OR CLICK TO BROWSE. */
@@ -837,7 +860,7 @@ table.items-editor input:focus {
 
 table.items-editor .sl-no {
   text-align: center;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   width: 54px;
@@ -893,7 +916,7 @@ table.items-editor input[name="cartons"]:focus { background: var(--card); }
   flex-wrap: wrap;
 }
 
-#row-count { font-size: 13px; color: var(--muted); }
+#row-count { font-size: 13px; color: var(--text-2); }
 #row-count.over-limit { color: var(--danger); font-weight: 600; }
 
 /* ------------------------------------------------------------ lists/table */
@@ -1100,7 +1123,7 @@ details.history summary {
 }
 .history-list { margin: 12px 0 0; padding-left: 20px; }
 .history-list li { margin-bottom: 8px; font-size: 13px; line-height: 1.5; }
-.history-when { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
+.history-when { color: var(--text-2); font-variant-numeric: tabular-nums; margin-right: 6px; }
 .history-detail { color: var(--ink-2); }
 
 /* --------------------------------- the review screen's document panel */
@@ -1168,7 +1191,7 @@ details.history summary {
   font-size: 12px;
   text-transform: none;
   letter-spacing: 0;
-  color: var(--muted);
+  color: var(--text-2);
   margin: 0 2px;
 }
 .document-head button:disabled { opacity: .35; cursor: default; }
@@ -1281,9 +1304,9 @@ table.list tr.cancelled .serial-cell { text-decoration: line-through; }
 
 .pill {
   display: inline-block;
-  padding: 3px 9px;
-  border-radius: 999px;
-  font-size: 11.5px;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: .03em;
   text-transform: uppercase;
@@ -1294,13 +1317,15 @@ table.list tr.cancelled .serial-cell { text-decoration: line-through; }
 }
 .pill.issued, .pill.approved { background: var(--ok-bg); color: var(--ok); }
 .pill.cancelled, .pill.rejected { background: var(--danger-bg); color: var(--danger); }
-.pill.pending { background: var(--warn-bg); color: var(--warn); }
+.pill.pending { background: var(--pill-warn-bg); color: var(--pill-warn); }
 .pill.disabled { background: var(--line-soft); color: var(--muted); }
 .pill.admin { background: var(--accent-soft); color: var(--accent); }
 
-.section-title {
-  font-size: 15px;
-  font-weight: 650;
+.section-title,
+.sticker-queue-head h2 {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
   margin: 28px 0 10px;
   display: flex;
   align-items: center;
@@ -1315,9 +1340,10 @@ table.list tr.cancelled .serial-cell { text-decoration: line-through; }
   height: 18px;
   padding: 0 5px;
   margin-left: 6px;
-  border-radius: 999px;
-  background: var(--warn);
-  color: #fff;
+  border-radius: 9999px;
+  /* A soft red-tinted count, not a solid badge. */
+  background: var(--count-bg);
+  color: var(--count-fg);
   font-size: 11px;
   font-weight: 700;
 }
@@ -1335,7 +1361,7 @@ table.list tr.cancelled .serial-cell { text-decoration: line-through; }
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .empty.compact { padding: 22px; }
@@ -1359,7 +1385,7 @@ table.list tr.cancelled .serial-cell { text-decoration: line-through; }
 .filters input { flex: 1; min-width: 200px; }
 .filters select { width: auto; min-width: 130px; }
 
-.muted-cell { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.muted-cell { color: var(--text-2); font-size: 13px; white-space: nowrap; }
 
 /* ------------------------------------------------------------ empty state */
 
@@ -1372,7 +1398,7 @@ table.list tr.cancelled .serial-cell { text-decoration: line-through; }
 }
 .empty-icon { font-size: 28px; }
 .empty-title { margin-top: 10px; font-weight: 600; }
-.empty-sub { margin-top: 4px; font-size: 13.5px; color: var(--muted); }
+.empty-sub { margin-top: 4px; font-size: 13.5px; color: var(--text-2); }
 .empty .button { margin-top: 18px; }
 
 @media (max-width: 640px) {
@@ -1428,7 +1454,7 @@ button[disabled] { opacity: .5; cursor: not-allowed; }
   white-space: nowrap;
 }
 
-.file-size { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.file-size { color: var(--text-2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 
 .file-state {
   flex: none;
@@ -1531,7 +1557,7 @@ button[disabled] { opacity: .5; cursor: not-allowed; }
   justify-content: space-between;
   margin-top: 6px;
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 #progress-percent { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink); }
@@ -1915,7 +1941,7 @@ table.people-table th { padding: 10px 12px !important; }
 .btn-action-sm {
   padding: 4px 8px;
   font-size: 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--card);
   color: var(--ink);
@@ -1966,7 +1992,7 @@ table.people-table th { padding: 10px 12px !important; }
   font-weight: 600;
   letter-spacing: .05em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--text-2);
 }
 .option-set .checkbox { margin: 6px 0; font-size: 13.5px; }
 
@@ -2217,7 +2243,7 @@ table.people-table th { padding: 10px 12px !important; }
 }
 .receiver-list li:hover { background: var(--head-bg); }
 .receiver-list li span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.receiver-list .receiver-empty { color: var(--muted); }
+.receiver-list .receiver-empty { color: var(--text-2); }
 .receiver-list .receiver-empty:hover { background: none; }
 
 .receiver-remove {
@@ -2717,7 +2743,7 @@ table.list.sticker-queue-table { table-layout: auto; }
   padding: 10px 24px;
   font-size: 15px;
   font-weight: 600;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.2s ease-in-out;
 }
@@ -2889,7 +2915,7 @@ table.list.sticker-queue-table { table-layout: auto; }
 .sticker-form.card,
 .sticker-queue.card {
   border: 1px solid #e2e8f0;
-  border-radius: 10px;
+  border-radius: var(--radius);
   box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
 }
 
