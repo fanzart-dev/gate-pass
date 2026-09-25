@@ -6883,9 +6883,14 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
 
     # Printing is the third way the queue empties, and the one nobody asks
     # for twice: labels that have left the printer must not still be queued.
+    after = template[template.index('window.addEventListener("afterprint"'):
+                     template.index("// Whatever was already queued")]
     check("a finished print empties the queue",
-          'window.addEventListener("afterprint"' in template
-          and "emptyQueue();" in template[template.index('"afterprint"'):])
+          'window.addEventListener("afterprint"' in template and "emptyQueue();" in after)
+    # afterprint fires on Cancel too, and no browser says which; clearing on
+    # the event alone lost the batch whenever the dialog was backed out of.
+    check("but only after asking whether it printed",
+          "window.confirm(" in after and "if (printed) emptyQueue();" in after)
     check("but only a print of the queue, not the alignment test page",
           "let clearAfterPrint = false;" in template
           and "clearAfterPrint = queue.length > 0;" in template)
