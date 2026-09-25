@@ -86,13 +86,13 @@
       <div class="field">
         <label for="vehicle_no">Vehicle No
           <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
-        <input type="text" id="vehicle_no" name="vehicle_no"
+        <input type="text" id="vehicle_no" name="vehicle_no" class="is-optional"
                value="{{ form.vehicle_no or '' }}" placeholder="e.g. KA 01 AB 1234">
       </div>
       <div class="field">
         <label for="remarks">Remarks
           <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
-        <textarea id="remarks" name="remarks" rows="2" class="multiline"
+        <textarea id="remarks" name="remarks" rows="2" class="multiline is-optional"
                   placeholder="Anything to note about this consignment">{{ form.remarks or '' }}</textarea>
       </div>
     </div>

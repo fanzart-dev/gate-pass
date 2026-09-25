@@ -507,8 +507,19 @@ CONTRAST = """(sel) => {
   };
   const el = document.querySelector(sel);
   if (!el) return null;
-  const s = getComputedStyle(el);
-  const a = lum(s.color), b = lum(s.backgroundColor);
+  // A transparent background is not black. getComputedStyle reports it as
+  // rgba(0, 0, 0, 0), and reading only the digits scored every see-through
+  // control against black -- a ghost button on a white row came out at
+  // 4.41:1 when it reads at 4.76. Walk up to what actually shows through.
+  const opaque = (node) => {
+    for (let n = node; n; n = n.parentElement) {
+      const bg = getComputedStyle(n).backgroundColor;
+      const alpha = bg.startsWith("rgba") ? parseFloat(bg.split(",")[3]) : 1;
+      if (alpha > 0) return bg;
+    }
+    return "rgb(255, 255, 255)";
+  };
+  const a = lum(getComputedStyle(el).color), b = lum(opaque(el));
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }"""
 
