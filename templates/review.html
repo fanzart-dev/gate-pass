@@ -36,12 +36,13 @@
            enough that a single-line box silently hides the end of them. Shift
            and Enter inserts a real newline, which the printed pass renders as
            a line break. #}
-        <textarea id="{{ name }}" name="{{ name }}" rows="2" class="multiline"
+        <textarea id="{{ name }}" name="{{ name }}" rows="2"
+                  class="multiline{% if not required %} is-optional{% endif %}"
                   placeholder="{{ placeholder }}"
                   {% if required %}required{% endif %}>{{ value }}</textarea>
       {% else %}
         <input type="text" id="{{ name }}" name="{{ name }}" value="{{ value }}"
-               placeholder="{{ placeholder }}" {% if required %}required{% endif %}>
+               placeholder="{{ placeholder }}" {% if required %}required{% else %}class="is-optional"{% endif %}>
       {% endif %}
     </div>
   {% endmacro %}

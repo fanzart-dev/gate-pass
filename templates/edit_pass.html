@@ -78,14 +78,14 @@
       </div>
       <div class="field">
         <label for="vehicle_no">Vehicle No <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
-        <input type="text" id="vehicle_no" name="vehicle_no"
+        <input type="text" id="vehicle_no" name="vehicle_no" class="is-optional"
                value="{{ gate_pass.vehicle_no }}" placeholder="KA 01 AB 1234">
       </div>
       <div class="field">
         <label for="remarks">Remarks <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
         {# Two rows, matching the review screen: an existing remark is often
            already two lines, and rows="1" hid the second behind a scrollbar. #}
-        <textarea id="remarks" name="remarks" rows="2" class="multiline"
+        <textarea id="remarks" name="remarks" rows="2" class="multiline is-optional"
                   placeholder="Anything to note about this consignment">{{ gate_pass.remarks }}</textarea>
       </div>
     </div>
