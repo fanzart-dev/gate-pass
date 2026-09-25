@@ -1289,16 +1289,25 @@
         window.print();
       });
 
-      // afterprint rather than a timer: it fires when the print dialog is
-      // done, however long the person spent choosing a tray.
+      // afterprint fires when the print dialog closes -- but on Cancel as
+      // well as on Print. No browser tells the page which it was, so this
+      // used to empty the queue on the assumption it had printed, and backing
+      // out of the dialog lost the whole batch. Only the person at the
+      // printer knows whether the sheets came out, so they are asked, and the
+      // queue is cleared only on their yes. Cancel keeps every row.
       //
-      // NOTE: the event fires on Cancel too -- no browser distinguishes a
-      // cancelled print from a completed one -- so backing out of the dialog
-      // empties the queue as though it had printed.
+      // Asked a moment after the event, not inside it: some browsers are
+      // still tearing the print preview down when afterprint fires, and a
+      // prompt raised then can open behind it or be swallowed.
       window.addEventListener("afterprint", function () {
         if (!clearAfterPrint) return;
         clearAfterPrint = false;
-        emptyQueue();
+        window.setTimeout(function () {
+          const printed = window.confirm(
+            "Did all stickers print successfully? Click OK to clear the printed "
+            + "items from your queue.");
+          if (printed) emptyQueue();
+        }, 0);
       });
 
       // Whatever was already queued when the page was opened or refreshed.

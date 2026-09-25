@@ -1616,13 +1616,29 @@ class TestStickerTypeface:
 
 
 class TestQueueClearsAfterPrinting:
-    """A printed batch does not survive into the next one.
+    """A printed batch does not survive into the next one -- once confirmed.
 
     The labels are gone the moment they leave the printer, so a queue that
-    stays behind is a queue somebody prints twice -- a second set of stickers
-    for boxes that already have them, which is the same failure the duplicate
-    LR check exists to stop.
+    stays behind is a queue somebody prints twice. But afterprint fires on
+    Cancel as well as on Print, and no browser says which: clearing on the
+    event alone threw the batch away whenever somebody backed out of the
+    dialog. So the page asks, and clears only on OK.
     """
+
+    def _print(self, page, answer):
+        """Press Print All and answer the "did it print?" question."""
+        asked = []
+        def respond(dialog):
+            asked.append(dialog.message)
+            dialog.accept() if answer else dialog.dismiss()
+        page.once("dialog", respond)
+        page.click("#print-stickers")
+        for _ in range(40):
+            if asked:
+                break
+            page.wait_for_timeout(50)
+        page.wait_for_timeout(200)
+        return asked
 
     def _queued(self, page, base_url, jobs=(("LR-1", "CHENNAI", "4"),
                                             ("LR-2", "MYSURU", "2"))):
@@ -1649,7 +1665,7 @@ class TestQueueClearsAfterPrinting:
         self._queued(page, base_url)
         assert self._rows(page) == 2
 
-        page.click("#print-stickers")
+        assert self._print(page, answer=True), "Print All never asked"
         page.wait_for_timeout(200)
 
         assert self._rows(page) == 0, "the queue survived the print"
@@ -1660,7 +1676,7 @@ class TestQueueClearsAfterPrinting:
 
     def test_the_empty_state_comes_back(self, page, base_url):
         self._queued(page, base_url)
-        page.click("#print-stickers")
+        assert self._print(page, answer=True), "Print All never asked"
         page.wait_for_timeout(200)
         assert page.locator("text=No stickers yet").is_visible(), \
             "the sheet did not return to its empty state"
@@ -1668,12 +1684,36 @@ class TestQueueClearsAfterPrinting:
     def test_it_stays_empty_after_a_reload(self, page, base_url):
         """Clearing the array is not enough if the browser still holds a copy."""
         self._queued(page, base_url)
-        page.click("#print-stickers")
+        assert self._print(page, answer=True), "Print All never asked"
         page.wait_for_timeout(200)
 
         page.reload()
         page.wait_for_selector("#generate")
         assert self._rows(page) == 0, "the printed queue came back on reload"
+
+    def test_cancelling_the_print_keeps_the_whole_queue(self, page, base_url):
+        """The bug: backing out of the print dialog emptied the batch."""
+        self._queued(page, base_url)
+        asked = self._print(page, answer=False)
+        assert asked and "print successfully" in asked[0], f"no question asked: {asked}"
+        assert self._rows(page) == 2, "cancelling the print threw the queue away"
+        assert page.evaluate(
+            "() => window.localStorage.getItem('sm_sticker_print_queue')") is not None, \
+            "the stored queue was dropped on cancel"
+        page.reload()
+        page.wait_for_selector("#generate")
+        assert self._rows(page) == 2, "the kept queue did not survive a reload"
+
+    def test_it_asks_only_after_the_dialog_has_closed(self, page, base_url):
+        """Nothing is asked -- or cleared -- on the click itself."""
+        self._queued(page, base_url)
+        page.evaluate("() => { window.print = () => {}; }")    # dialog never closes
+        asked = []
+        page.once("dialog", lambda d: (asked.append(1), d.dismiss()))
+        page.click("#print-stickers")
+        page.wait_for_timeout(400)
+        assert not asked, "it asked before the print dialog had closed"
+        assert self._rows(page) == 2, "the queue changed on the click itself"
 
     def test_the_alignment_test_page_leaves_the_queue_alone(self, page, base_url):
         """It also calls window.print(), and it is not a print of the batch.
@@ -1685,9 +1725,12 @@ class TestQueueClearsAfterPrinting:
         if not page.locator("#align-test").count():
             pytest.skip("no alignment test button for this user")
 
+        asked = []
+        page.on("dialog", lambda d: (asked.append(1), d.dismiss()))
         page.click("#align-test")
-        page.wait_for_timeout(200)
+        page.wait_for_timeout(400)
         assert self._rows(page) == 2, "the alignment test print wiped the queue"
+        assert not asked, "the alignment test page asked whether the batch printed"
 
     def test_an_empty_queue_printing_nothing_is_harmless(self, page, base_url):
         """Nothing queued, nothing to clear, no error."""
