@@ -1281,20 +1281,36 @@ table.items-editor tfoot strong { font-weight: 700; }
    uses. Not --ink with a literal #fff: --ink is "primary TEXT", so in dark mode
    it flips to near-white and the button became white-on-white — invisible, and
    only visible as such by looking at it in dark mode. */
-/* Ghost, not solid black: a column of black buttons outweighed the data. The
-   two states still differ at a glance -- owed is an outlined white button in
-   the dark text colour, printed is plain grey text with no box -- so the
-   register still says which passes have reached paper. */
-.actions-inner a.print-action.not-printed {
-  background: var(--card);
-  border-color: var(--field-line);
-  color: var(--ink);
+/* Unprinted: solid black, so the passes still owed their paper are the ones
+   the eye finds first. Printed stays plain grey text with no box. */
+.actions-inner a.print-action.not-printed.btn-print-register {
+  background-color: #0f172a;
+  color: #ffffff;
+  border: 1px solid #0f172a;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
   font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
 }
-.actions-inner a.print-action.not-printed:hover {
-  background: var(--paper);
-  border-color: var(--muted);
-  color: var(--ink);
+.actions-inner a.print-action.not-printed.btn-print-register:hover {
+  background-color: #1e293b;
+  border-color: #1e293b;
+  color: #ffffff;
+}
+/* On dark, #0f172a is the page itself and all but the card, so the button
+   would lose its edges; inverted there like every other solid button. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .actions-inner a.print-action.not-printed.btn-print-register {
+    background-color: var(--brand); color: var(--card); border-color: var(--brand);
+  }
+  :root:not([data-theme="light"]) .actions-inner a.print-action.not-printed.btn-print-register:hover {
+    background-color: var(--brand-hover); border-color: var(--brand-hover); color: var(--card);
+  }
+}
+:root[data-theme="dark"] .actions-inner a.print-action.not-printed.btn-print-register {
+  background-color: var(--brand); color: var(--card); border-color: var(--brand);
 }
 .actions-inner a.print-action.is-printed {
   background: transparent;
@@ -2963,6 +2979,7 @@ table.list.sticker-queue-table { table-layout: auto; }
 /* Row icons get a soft square chip on hover. Red only on the cross: the
    pencil is not destructive, and turning it the same red would make
    "correct this row" and "throw this row away" look like one action. */
+.sticker-queue-table .queue-print,
 .sticker-queue-table .queue-edit,
 .sticker-queue-table .queue-remove {
   border-radius: 4px;
@@ -3050,7 +3067,7 @@ table.list.sticker-queue-table { table-layout: auto; }
 /* Two icons, not two words, so the column narrows — but not below what two
    26px buttons and the cell's own padding need, or the table overflows its
    wrapper by a few pixels and a scrollbar appears under a table that fits. */
-.sticker-queue-table .q-act { width: 88px; }
+.sticker-queue-table .q-act { width: 120px; }   /* print, edit, delete */
 
 /* --- sticker form validation ------------------------------------------ */
 /* Above the fields and styled as a problem, not as another hint: the page is
@@ -3152,3 +3169,52 @@ textarea.is-optional { background: var(--field-optional); }
   :root:not([data-theme="light"]) .sticker-form label .req { color: #f87171; }
 }
 :root[data-theme="dark"] .sticker-form label .req { color: #f87171; }
+
+/* --- queue: ticks, row preview ----------------------------------------- */
+.sticker-queue-table .q-num { width: 64px; }
+.sticker-queue-table td.q-num,
+.sticker-queue-table th.q-num { white-space: nowrap; }
+/* The tick and the row number side by side, aligned inside an ordinary
+   cell. Not display:flex on the td -- that stops it being a table cell,
+   and the first column fell out of line with the rest of its row. */
+.sticker-queue-table td.q-num > * { vertical-align: middle; }
+.sticker-queue-table td.q-num .queue-select { margin-right: 8px; }
+.sticker-queue-table input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+
+/* Rows open their preview on click, so they say so. */
+.sticker-queue-table tbody tr { cursor: pointer; }
+.sticker-queue-table tbody tr:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+/* The row whose stickers are shown below the table. */
+.sticker-queue-table tbody tr.is-previewing,
+.sticker-queue-table tbody tr.is-previewing:hover { background: #eff6ff; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sticker-queue-table tbody tr.is-previewing,
+  :root:not([data-theme="light"]) .sticker-queue-table tbody tr.is-previewing:hover {
+    background: rgba(37, 99, 235, 0.18);
+  }
+}
+:root[data-theme="dark"] .sticker-queue-table tbody tr.is-previewing,
+:root[data-theme="dark"] .sticker-queue-table tbody tr.is-previewing:hover {
+  background: rgba(37, 99, 235, 0.18);
+}
+
+.sticker-queue-table .queue-print .icon { width: 16px; height: 16px; }
+.sticker-queue-table .queue-print:hover { background: #f1f5f9; color: #0f172a; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sticker-queue-table .queue-print:hover {
+    background: var(--head-bg); color: var(--ink);
+  }
+}
+:root[data-theme="dark"] .sticker-queue-table .queue-print:hover {
+  background: var(--head-bg); color: var(--ink);
+}
+.queue-preview-hint { margin: 10px 2px 0; }
