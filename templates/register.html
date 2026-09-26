@@ -137,7 +137,7 @@
                 {% elif gp.is_printed %}
                   {% set print_state = 'print-action is-printed' %}
                 {% else %}
-                  {% set print_state = 'print-action not-printed' %}
+                  {% set print_state = 'print-action not-printed btn-print-register' %}
                 {% endif %}
                 <a class="{{ print_state }}"
                    href="{{ url_for('print_gate_pass', gate_pass_id=gp.id) }}"

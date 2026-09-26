@@ -258,14 +258,16 @@
       </div>
       <div class="queued-header-actions no-print">
         <button type="button" id="queue-clear" class="btn-clear">{{ icon("trash-2") }}<span>Clear All</span></button>
-        <button type="button" id="print-stickers" class="btn-print" disabled>{{ icon("printer") }}<span>Print All</span></button>
+        {# "Print All" with nothing ticked, "Print Selected (n)" once rows are. #}
+        <button type="button" id="print-stickers" class="btn-print" disabled>{{ icon("printer") }}<span class="btn-label">Print All</span></button>
       </div>
     </div>
     <div class="table-wrap">
       <table class="list sticker-queue-table">
         <thead>
           <tr>
-            <th class="q-num">#</th>
+            <th class="q-num"><input type="checkbox" id="queue-select-all"
+                   aria-label="Select all queued stickers"></th>
             <th>LR Number</th>
             <th>Sender</th>
             <th>Receiver</th>
@@ -278,8 +280,12 @@
     </div>
     {# The row delete icon, rendered once here from the same icon set as the
        rest of the page and cloned by the script for each row. #}
+    {# Shown while nothing is being previewed: the sheet below appears only
+       for the row that is clicked. #}
+    <p class="hint queue-preview-hint" id="queue-preview-hint">Click a row to preview its stickers.</p>
     <template id="icon-trash">{{ icon("trash-2") }}</template>
     <template id="icon-pencil">{{ icon("pencil") }}</template>
+    <template id="icon-printer">{{ icon("printer") }}</template>
   </div>
 
   {# Filled by the script below. Left empty on load on purpose: an empty sheet
@@ -690,9 +696,27 @@
         } catch (e) { /* private window, or full; the queue still prints */ }
       }
 
+      // Which row's stickers are shown below the table, or null for none.
+      // Nothing is previewed on arrival or after an Add: the sheet appears
+      // only for the row somebody clicks.
+      let previewIndex = null;
+
+      // The ticked rows, held as the job objects themselves rather than row
+      // numbers, so deleting or correcting a row cannot shift a tick onto
+      // its neighbour. Not stored: a selection is for this sitting.
+      const selected = new Set();
+
+      function selectedJobs() {
+        return queue.filter(function (job) { return selected.has(job); });
+      }
+
+      // Only ever by hand -- Clear All, or a row's delete. Printing never
+      // empties the queue.
       function emptyQueue() {
         queue = [];
         saveQueue();
+        previewIndex = null;
+        selected.clear();
         stopEditing(true);
         renderQueue();
         renderSheet();
@@ -735,14 +759,52 @@
           // The row being corrected is marked, because the form above it is
           // showing that job's values and there is otherwise nothing to say
           // which of five rows is about to be overwritten.
-          if (index === editingIndex) tr.className = "is-editing";
+          if (index === editingIndex) tr.classList.add("is-editing");
+          // The row whose stickers are shown below the table.
+          if (index === previewIndex) tr.classList.add("is-previewing");
+          tr.tabIndex = 0;
+          tr.setAttribute("aria-label", `Preview the stickers for ${job.lr || "this job"}`);
+          const togglePreview = function () {
+            previewIndex = previewIndex === index ? null : index;
+            renderQueue();
+            renderSheet();
+            const again = queueRows.children[index];
+            if (again) again.focus();
+          };
+          // A click anywhere on the row previews it -- except on its own
+          // controls, which do their own jobs.
+          tr.addEventListener("click", function (event) {
+            if (event.target.closest("button, input, a, label")) return;
+            togglePreview();
+          });
+          tr.addEventListener("keydown", function (event) {
+            if (event.target !== tr) return;
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              togglePreview();
+            }
+          });
           const cell = (text, cls) => {
             const td = document.createElement("td");
             if (cls) td.className = cls;
             td.textContent = text;   // typed values; never innerHTML
             return td;
           };
-          tr.appendChild(cell(index + 1, "q-num muted-cell"));
+          const num = cell("", "q-num muted-cell");
+          const tick = document.createElement("input");
+          tick.type = "checkbox";
+          tick.className = "queue-select";
+          tick.checked = selected.has(job);
+          tick.setAttribute("aria-label", `Select ${job.lr || "this job"}`);
+          tick.addEventListener("change", function () {
+            if (tick.checked) { selected.add(job); } else { selected.delete(job); }
+            updateSelectionUi();
+          });
+          num.appendChild(tick);
+          const n = document.createElement("span");
+          n.textContent = index + 1;
+          num.appendChild(n);
+          tr.appendChild(num);
           tr.appendChild(cell(job.lr || "—"));
           tr.appendChild(cell(job.sender || "—"));
           tr.appendChild(cell(job.receiver || "—"));
@@ -756,6 +818,16 @@
           // chose, and on some Linux desktops is a blank box. The path
           // inherits currentColor, so it follows the theme like everything
           // else here.
+          // Print just this row.
+          const printOne = document.createElement("button");
+          printOne.type = "button";
+          printOne.className = "icon-button queue-print";
+          printOne.appendChild(templateIcon("icon-printer"));
+          printOne.title = "Print";
+          printOne.setAttribute("aria-label", `Print ${job.lr || "this job"}`);
+          printOne.addEventListener("click", function () { printJobs([job]); });
+          actions.appendChild(printOne);
+
           const edit = document.createElement("button");
           edit.type = "button";
           edit.className = "icon-button queue-edit";
@@ -775,6 +847,11 @@
           remove.addEventListener("click", function () {
             queue.splice(index, 1);
             saveQueue();
+            selected.delete(job);
+            // The preview follows its row: gone if that row went, one up if
+            // a row above it did.
+            if (previewIndex === index) previewIndex = null;
+            else if (previewIndex !== null && previewIndex > index) previewIndex--;
             // Every row after this one has just shifted up. If the form was
             // correcting one of them it is now pointed at its neighbour, so
             // the edit is abandoned rather than quietly redirected.
@@ -790,6 +867,8 @@
           queueRows.appendChild(tr);
         });
 
+        updateSelectionUi();
+
         const labels = totalStickers();
         const pages = Math.ceil(labels / PER_PAGE);
         queueBadge.textContent = queue.length
@@ -803,9 +882,11 @@
       // third LABEL, not at the end of a customer, so two boxes for one
       // customer and one for the next share a sheet instead of wasting the
       // two slots underneath the first.
-      function allLabels() {
+      function allLabels() { return labelsFor(queue); }
+
+      function labelsFor(jobs) {
         const out = [];
-        queue.forEach(function (job) {
+        jobs.forEach(function (job) {
           for (let n = 0; n < job.qty; n++) {
             out.push({
               // The count in brackets is the size of THIS consignment, so it
@@ -819,18 +900,52 @@
         return out;
       }
 
+      // The screen: counts, the empty state, the Print button, and the
+      // preview -- which shows only the clicked row's stickers, if any.
       function renderSheet() {
         const labels = allLabels();
-        sheet.textContent = "";
+        const previewHint = document.getElementById("queue-preview-hint");
 
         if (!labels.length) {
+          sheet.textContent = "";
           sheet.hidden = true;
           empty.hidden = false;
+          previewHint.hidden = true;
           setPrintReady(false);
           countHint.textContent = "";
           return;
         }
 
+        empty.hidden = true;
+        setPrintReady(true);
+        const pages = Math.ceil(labels.length / PER_PAGE);
+        countHint.textContent =
+          `${labels.length} sticker${labels.length === 1 ? "" : "s"}`
+          + ` → ${pages} sheet${pages === 1 ? "" : "s"}`;
+        if (totalStickers() >= MAX) {
+          countHint.textContent += ` — ${MAX} is the most that can print at once`;
+        }
+
+        const previewing = previewIndex !== null && queue[previewIndex];
+        previewHint.hidden = Boolean(previewing);
+        if (previewing) {
+          drawSheet([queue[previewIndex]]);
+          sheet.hidden = false;
+          // Offsets are set per page, so after the pages exist; and after
+          // unhiding, because the fit inside it measures laid-out text.
+          applyAlignment(false);
+        } else {
+          sheet.textContent = "";
+          sheet.hidden = true;
+        }
+      }
+
+      // Lay out the given jobs' stickers into the sheet: the preview on
+      // screen, or -- for the moment the print dialog is open -- exactly
+      // what is being printed.
+      function drawSheet(jobs) {
+        const labels = labelsFor(jobs);
+        sheet.textContent = "";
         let page = null;
         labels.forEach(function (label, i) {
           // Pages are built explicitly rather than letting the cards reflow
@@ -876,23 +991,37 @@
           card.appendChild(textLine("sticker-to dest-text", label.destination));
           page.appendChild(card);
         });
-
-        sheet.hidden = false;
-        empty.hidden = true;
-        setPrintReady(true);
-
-        const pages = Math.ceil(labels.length / PER_PAGE);
-        countHint.textContent =
-          `${labels.length} sticker${labels.length === 1 ? "" : "s"}`
-          + ` → ${pages} sheet${pages === 1 ? "" : "s"}`;
-        if (totalStickers() >= MAX) {
-          countHint.textContent += ` — ${MAX} is the most that can print at once`;
-        }
-
-        // Applied after the cards exist, because the offsets are set on each
-        // page element and there were none to set them on until now.
-        applyAlignment(false);
       }
+
+      // Print exactly these jobs. The sheet is swapped to them for the
+      // moment the dialog is open -- window.print() holds the page until it
+      // closes -- and then put back to whatever the preview was showing.
+      // The queue itself is never touched.
+      function printJobs(jobs, beforePrint) {
+        if (!jobs.length) return;
+        drawSheet(jobs);
+        sheet.hidden = false;
+        applyAlignment(false);
+        if (beforePrint) beforePrint();
+        window.print();
+        renderSheet();
+      }
+
+      // Ticks: the header box, and the Print button's own words.
+      function updateSelectionUi() {
+        const all = document.getElementById("queue-select-all");
+        const count = selectedJobs().length;
+        all.checked = queue.length > 0 && count === queue.length;
+        all.indeterminate = count > 0 && count < queue.length;
+        printBtn.querySelector(".btn-label").textContent =
+          count ? `Print Selected (${count})` : "Print All";
+      }
+
+      document.getElementById("queue-select-all").addEventListener("change", function () {
+        if (this.checked) { queue.forEach(function (job) { selected.add(job); }); }
+        else { selected.clear(); }
+        renderQueue();
+      });
 
       const addButton = document.getElementById("generate");
       // The word only. Setting the button's own textContent would take the
@@ -1072,7 +1201,11 @@
         const job = { lr: lr, sender: sender, receiver: to, qty: quantity };
         if (editingIndex === null) {
           queue.push(job);
+          // A new job does not open the preview; the row is there to click.
+          previewIndex = null;
         } else {
+          // A corrected job keeps its tick.
+          if (selected.delete(queue[editingIndex])) selected.add(job);
           // In place, so a corrected job keeps its position. Moving it to the
           // end would reshuffle which labels share a sheet, and somebody
           // fixing a typo has no reason to expect that.
@@ -1239,28 +1372,19 @@
       const testButton = document.getElementById("align-test");
       if (testButton) testButton.addEventListener("click", function () {
         // Something has to be on the sheet to line anything up against. An
-        // empty queue gets one throwaway label, removed again afterwards, so
-        // testing the printer never leaves a job in the queue.
-        const borrowed = queue.length === 0;
-        if (borrowed) {
-          queue.push({ lr: document.getElementById("lr").value.trim() || "00000000",
-                       sender: document.getElementById("sender").value.trim(),
-                       receiver: receiver.value.trim(), qty: 1 });
-          renderSheet();
-        }
-        const pages = [...sheet.querySelectorAll(".sticker-page")];
-        pages.slice(1).forEach(function (pg) { pg.dataset.hidden = "1"; pg.hidden = true; });
+        // empty queue gets one throwaway label, drawn for this print only and
+        // never added to the queue.
+        const jobs = queue.length ? queue.slice() : [{
+          lr: document.getElementById("lr").value.trim() || "00000000",
+          sender: document.getElementById("sender").value.trim(),
+          receiver: receiver.value.trim(), qty: 1 }];
         document.body.classList.add("is-test-print");
-        if (!sheet.hidden) fitLongNames();
-        window.print();
-        document.body.classList.remove("is-test-print");
-        pages.forEach(function (pg) {
-          if (pg.dataset.hidden) { pg.hidden = false; delete pg.dataset.hidden; }
+        printJobs(jobs, function () {
+          // One page is enough to line a printer up against.
+          [...sheet.querySelectorAll(".sticker-page")].slice(1)
+            .forEach(function (pg) { pg.hidden = true; });
         });
-        if (borrowed) {
-          queue.pop();
-          renderSheet();
-        }
+        document.body.classList.remove("is-test-print");
       });
 
       const resetButton = document.getElementById("align-reset");
@@ -1278,36 +1402,14 @@
         addToQueue();
       });
 
-      // Set only by a real print of the queue. The alignment test page also
-      // calls window.print(), and wiping somebody's batch because they
-      // checked the printer would be the opposite of helpful.
-      let clearAfterPrint = false;
-
+      // The ticked rows if any are ticked, otherwise the whole queue. Nothing
+      // is cleared afterwards: the queue changes only by Clear All or a
+      // row's delete. (It used to clear when the dialog closed -- which it
+      // also does on Cancel, and no browser says which, so a cancelled print
+      // lost the batch.)
       printBtn.addEventListener("click", function () {
-        clearAfterPrint = queue.length > 0;
-        if (!sheet.hidden) fitLongNames();
-        window.print();
-      });
-
-      // afterprint fires when the print dialog closes -- but on Cancel as
-      // well as on Print. No browser tells the page which it was, so this
-      // used to empty the queue on the assumption it had printed, and backing
-      // out of the dialog lost the whole batch. Only the person at the
-      // printer knows whether the sheets came out, so they are asked, and the
-      // queue is cleared only on their yes. Cancel keeps every row.
-      //
-      // Asked a moment after the event, not inside it: some browsers are
-      // still tearing the print preview down when afterprint fires, and a
-      // prompt raised then can open behind it or be swallowed.
-      window.addEventListener("afterprint", function () {
-        if (!clearAfterPrint) return;
-        clearAfterPrint = false;
-        window.setTimeout(function () {
-          const printed = window.confirm(
-            "Did all stickers print successfully? Click OK to clear the printed "
-            + "items from your queue.");
-          if (printed) emptyQueue();
-        }, 0);
+        const ticked = selectedJobs();
+        printJobs(ticked.length ? ticked : queue.slice());
       });
 
       // Whatever was already queued when the page was opened or refreshed.

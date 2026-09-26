@@ -573,6 +573,24 @@ class TestPrintButtonState:
             assert not same, f"both states paint the same background in {scheme}"
 
 
+class TestRegisterPrintIsSolidForUnprintedPasses:
+    """Unprinted passes carry a solid black Print, so they are found first."""
+
+    def test_the_unprinted_print_is_solid_black(self, page, base_url):
+        page.goto(f"{base_url}/register")
+        page.wait_for_selector("table.list")
+        owed = page.locator("a.print-action.not-printed").first
+        if not owed.count():
+            pytest.skip("no unprinted pass in the register")
+        style = page.evaluate("""() => { const cs = getComputedStyle(
+            document.querySelector('a.print-action.not-printed'));
+          return {bg: cs.backgroundColor, color: cs.color, cls: document.querySelector(
+            'a.print-action.not-printed').className}; }""")
+        assert "btn-print-register" in style["cls"]
+        assert style["bg"] == "rgb(15, 23, 42)", f"unprinted Print is {style['bg']}"
+        assert style["color"] == "rgb(255, 255, 255)"
+
+
 class TestDeleteDraftFromTheRow:
     def test_the_cross_removes_the_draft_and_says_so(self, page, base_url):
         """The ✕ on a draft row: confirm, remove, toast, and the list settles.
@@ -1482,6 +1500,8 @@ class TestStickerTypeface:
         page.fill("#receiver", "CHENNAI")
         page.fill("#qty", "3")
         page.click("#generate")
+        # The sheet is a preview of one row, shown when the row is clicked.
+        page.click(".sticker-queue-table tbody tr:nth-child(1) td:nth-child(2)")
         page.wait_for_selector(".sticker-card")
 
     @pytest.mark.parametrize(
@@ -1594,6 +1614,8 @@ class TestStickerTypeface:
         page.fill("#receiver", "CHENNAI (SUMANGALI)")
         page.fill("#qty", "1")
         page.click("#generate")
+        page.click(".sticker-queue-table tbody tr:nth-child(1) td:nth-child(2)")
+        page.wait_for_selector(".dest-text")
         page.wait_for_timeout(300)
         fit = page.evaluate("""() => { const e = document.querySelector('.dest-text');
           return {over: e.scrollWidth - e.clientWidth,
@@ -1615,134 +1637,192 @@ class TestStickerTypeface:
         assert weight == "700", f"the ghost labels went to {weight}"
 
 
-class TestQueueClearsAfterPrinting:
-    """A printed batch does not survive into the next one -- once confirmed.
+class TestQueueSelectionPrintingAndPreview:
+    """The queue is the operator's; printing never changes it.
 
-    The labels are gone the moment they leave the printer, so a queue that
-    stays behind is a queue somebody prints twice. But afterprint fires on
-    Cancel as well as on Print, and no browser says which: clearing on the
-    event alone threw the batch away whenever somebody backed out of the
-    dialog. So the page asks, and clears only on OK.
+    It changes only by Clear All or a row's delete. Printing sends the ticked
+    rows, or every row when none are ticked, or one row from its own print
+    icon. The sheet under the table is a preview of ONE row, shown only when
+    that row is clicked.
+
+    window.print is replaced by a recorder that notes exactly which stickers
+    are on the sheet at the moment of printing -- the sheet is swapped to the
+    rows being printed only for as long as the dialog is open.
     """
 
-    def _print(self, page, answer):
-        """Press Print All and answer the "did it print?" question."""
-        asked = []
-        def respond(dialog):
-            asked.append(dialog.message)
-            dialog.accept() if answer else dialog.dismiss()
-        page.once("dialog", respond)
-        page.click("#print-stickers")
-        for _ in range(40):
-            if asked:
-                break
-            page.wait_for_timeout(50)
-        page.wait_for_timeout(200)
-        return asked
+    RECORD = """() => { window.__printed = []; window.print = () => {
+      window.__printed.push([...document.querySelectorAll(
+        '#sticker-sheet .sticker-page:not([hidden]) .awb-text')].map((e) => e.textContent)); }; }"""
 
-    def _queued(self, page, base_url, jobs=(("LR-1", "CHENNAI", "4"),
-                                            ("LR-2", "MYSURU", "2"))):
+    def _queued(self, page, base_url, jobs=(("111", "2"), ("222", "1"), ("333", "3"))):
         page.goto(f"{base_url}/stickers")
         page.wait_for_selector("#generate")
         page.evaluate("() => localStorage.removeItem('sm_sticker_print_queue')")
         page.reload()
         page.wait_for_selector("#generate")
-        # A real window.print() opens a dialog nothing can dismiss here. The
-        # stub fires the same event the browser fires when the dialog closes,
-        # so what is under test is our handler, not Chromium's dialog.
-        page.evaluate(
-            "() => { window.print = () => window.dispatchEvent(new Event('afterprint')); }")
-        for lr, receiver, qty in jobs:
+        page.evaluate(self.RECORD)
+        # One handler for the whole test, whose answer a test can switch --
+        # a second handler would race it for the same dialog.
+        self.dialogs, self.answer = [], "dismiss"
+        def respond(dialog):
+            self.dialogs.append(dialog.message)
+            dialog.accept() if self.answer == "accept" else dialog.dismiss()
+        page.on("dialog", respond)
+        for lr, qty in jobs:
             page.fill("#lr", lr)
-            page.fill("#receiver", receiver)
+            page.fill("#receiver", "CHENNAI")
             page.fill("#qty", qty)
             page.click("#generate")
+
+    def _row(self, n):
+        return f".sticker-queue-table tbody tr:nth-child({n})"
 
     def _rows(self, page):
         return page.locator(".sticker-queue-table tbody tr").count()
 
-    def test_printing_empties_the_queue_and_the_stored_copy(self, page, base_url):
+    def _last_print(self, page):
+        return page.evaluate("() => window.__printed.slice(-1)[0] || null")
+
+    def _preview(self, page):
+        return page.evaluate("""() => document.getElementById('sticker-sheet').hidden ? null
+            : [...document.querySelectorAll('#sticker-sheet .awb-text')].map((e) => e.textContent)""")
+
+    # ---- printing never clears ------------------------------------------
+    def test_printing_leaves_the_queue_exactly_as_it_was(self, page, base_url):
         self._queued(page, base_url)
-        assert self._rows(page) == 2
-
-        assert self._print(page, answer=True), "Print All never asked"
-        page.wait_for_timeout(200)
-
-        assert self._rows(page) == 0, "the queue survived the print"
-        assert page.locator(".sticker-card").count() == 0, "the sheet still has cards"
-        assert page.evaluate(
-            "() => window.localStorage.getItem('sm_sticker_print_queue')") is None, \
-            "the stored queue was left behind"
-
-    def test_the_empty_state_comes_back(self, page, base_url):
-        self._queued(page, base_url)
-        assert self._print(page, answer=True), "Print All never asked"
-        page.wait_for_timeout(200)
-        assert page.locator("text=No stickers yet").is_visible(), \
-            "the sheet did not return to its empty state"
-
-    def test_it_stays_empty_after_a_reload(self, page, base_url):
-        """Clearing the array is not enough if the browser still holds a copy."""
-        self._queued(page, base_url)
-        assert self._print(page, answer=True), "Print All never asked"
-        page.wait_for_timeout(200)
-
-        page.reload()
-        page.wait_for_selector("#generate")
-        assert self._rows(page) == 0, "the printed queue came back on reload"
-
-    def test_cancelling_the_print_keeps_the_whole_queue(self, page, base_url):
-        """The bug: backing out of the print dialog emptied the batch."""
-        self._queued(page, base_url)
-        asked = self._print(page, answer=False)
-        assert asked and "print successfully" in asked[0], f"no question asked: {asked}"
-        assert self._rows(page) == 2, "cancelling the print threw the queue away"
-        assert page.evaluate(
-            "() => window.localStorage.getItem('sm_sticker_print_queue')") is not None, \
-            "the stored queue was dropped on cancel"
-        page.reload()
-        page.wait_for_selector("#generate")
-        assert self._rows(page) == 2, "the kept queue did not survive a reload"
-
-    def test_it_asks_only_after_the_dialog_has_closed(self, page, base_url):
-        """Nothing is asked -- or cleared -- on the click itself."""
-        self._queued(page, base_url)
-        page.evaluate("() => { window.print = () => {}; }")    # dialog never closes
-        asked = []
-        page.once("dialog", lambda d: (asked.append(1), d.dismiss()))
         page.click("#print-stickers")
-        page.wait_for_timeout(400)
-        assert not asked, "it asked before the print dialog had closed"
-        assert self._rows(page) == 2, "the queue changed on the click itself"
+        page.wait_for_timeout(300)
+        assert self._rows(page) == 3, "printing changed the queue"
+        assert not self.dialogs, f"printing asked something: {self.dialogs}"
+        assert page.evaluate(
+            "() => window.localStorage.getItem('sm_sticker_print_queue')") is not None
+        page.reload()
+        page.wait_for_selector("#generate")
+        assert self._rows(page) == 3, "the queue did not survive a reload after printing"
 
-    def test_the_alignment_test_page_leaves_the_queue_alone(self, page, base_url):
-        """It also calls window.print(), and it is not a print of the batch.
+    def test_clear_all_is_still_how_the_queue_empties(self, page, base_url):
+        self._queued(page, base_url)
+        self.answer = "accept"            # Clear All asks for confirmation
+        page.click("#queue-clear")
+        page.wait_for_timeout(200)
+        assert self._rows(page) == 0
+        assert page.locator("text=No stickers yet").is_visible()
 
-        Wiping somebody's queue because they checked the printer would be
-        the opposite of helpful.
-        """
+    # ---- what gets printed ------------------------------------------------
+    def test_print_all_sends_every_sticker_in_queue_order(self, page, base_url):
+        self._queued(page, base_url)
+        assert page.inner_text("#print-stickers").strip() == "Print All"
+        page.click("#print-stickers")
+        assert self._last_print(page) == [
+            "111 (2)", "111 (2)", "222 (1)", "333 (3)", "333 (3)", "333 (3)"]
+
+    def test_ticked_rows_print_alone(self, page, base_url):
+        self._queued(page, base_url)
+        page.check(self._row(1) + " .queue-select")
+        page.check(self._row(3) + " .queue-select")
+        assert page.inner_text("#print-stickers").strip() == "Print Selected (2)"
+        page.click("#print-stickers")
+        assert self._last_print(page) == ["111 (2)", "111 (2)", "333 (3)", "333 (3)", "333 (3)"], \
+            "unticked rows were printed"
+
+    def test_a_row_prints_on_its_own_from_its_print_icon(self, page, base_url):
+        self._queued(page, base_url)
+        page.check(self._row(1) + " .queue-select")       # a tick elsewhere must not matter
+        page.click(self._row(2) + " .queue-print")
+        assert self._last_print(page) == ["222 (1)"]
+
+    def test_select_all_ticks_every_row_and_shows_a_partial_state(self, page, base_url):
+        self._queued(page, base_url)
+        page.check(self._row(2) + " .queue-select")
+        assert page.evaluate("() => document.getElementById('queue-select-all').indeterminate")
+        page.check("#queue-select-all")
+        assert page.locator(".queue-select:checked").count() == 3
+        assert page.inner_text("#print-stickers").strip() == "Print Selected (3)"
+        page.uncheck("#queue-select-all")
+        assert page.locator(".queue-select:checked").count() == 0
+        assert page.inner_text("#print-stickers").strip() == "Print All"
+
+    def test_a_tick_stays_with_its_job_through_a_delete_and_an_edit(self, page, base_url):
+        self._queued(page, base_url)
+        page.check(self._row(3) + " .queue-select")      # 333
+        page.click(self._row(1) + " .queue-remove")      # 111 goes; 333 is now row 2
+        assert page.is_checked(self._row(2) + " .queue-select"), "the tick slid off its job"
+        assert not page.is_checked(self._row(1) + " .queue-select")
+        page.click(self._row(2) + " .queue-edit")
+        page.fill("#qty", "1")
+        page.click("#generate")
+        assert page.is_checked(self._row(2) + " .queue-select"), "editing dropped the tick"
+        page.click("#print-stickers")
+        assert self._last_print(page) == ["333 (1)"]
+
+    # ---- the preview ------------------------------------------------------
+    def test_nothing_is_previewed_until_a_row_is_clicked(self, page, base_url):
+        """Including on arrival with a saved queue -- not just after an Add,
+        which closes the preview anyway and so proved nothing on its own."""
+        self._queued(page, base_url)
+        assert self._preview(page) is None, "the sheet showed without a row being clicked"
+        page.reload()
+        page.wait_for_selector("#generate")
+        assert self._rows(page) == 3
+        assert self._preview(page) is None, "arriving with a saved queue opened a preview"
+        assert page.is_visible("#queue-preview-hint")
+
+    def test_clicking_a_row_previews_just_that_row_and_highlights_it(self, page, base_url):
+        self._queued(page, base_url)
+        page.click(self._row(3) + " td:nth-child(2)")
+        assert self._preview(page) == ["333 (3)", "333 (3)", "333 (3)"]
+        page.mouse.move(0, 0)
+        bg = page.evaluate(
+            "() => getComputedStyle(document.querySelector('.sticker-queue-table tbody tr:nth-child(3)')).backgroundColor")
+        assert bg == "rgb(239, 246, 255)", f"the previewed row is {bg}"
+        page.click(self._row(3) + " td:nth-child(2)")
+        assert self._preview(page) is None, "a second click did not close the preview"
+
+    def test_the_row_controls_do_not_open_the_preview(self, page, base_url):
+        self._queued(page, base_url)
+        page.check(self._row(1) + " .queue-select")
+        page.click(self._row(1) + " .queue-print")
+        assert self._preview(page) is None, "a click on a row control opened the preview"
+
+    def test_the_preview_follows_its_row_when_one_above_is_deleted(self, page, base_url):
+        self._queued(page, base_url)
+        page.click(self._row(3) + " td:nth-child(2)")
+        page.click(self._row(1) + " .queue-remove")
+        assert self._preview(page) == ["333 (3)", "333 (3)", "333 (3)"]
+        assert "is-previewing" in page.get_attribute(self._row(2), "class")
+
+    def test_adding_a_job_closes_the_preview(self, page, base_url):
+        self._queued(page, base_url)
+        page.click(self._row(1) + " td:nth-child(2)")
+        page.fill("#lr", "444")
+        page.fill("#receiver", "MUMBAI")
+        page.fill("#qty", "1")
+        page.click("#generate")
+        assert self._preview(page) is None
+
+    def test_a_row_opens_from_the_keyboard(self, page, base_url):
+        self._queued(page, base_url)
+        page.focus(self._row(2))
+        page.keyboard.press("Enter")
+        assert self._preview(page) == ["222 (1)"]
+
+    def test_printing_puts_the_preview_back_as_it_was(self, page, base_url):
+        self._queued(page, base_url)
+        page.click(self._row(2) + " td:nth-child(2)")
+        page.click("#print-stickers")
+        assert len(self._last_print(page)) == 6
+        assert self._preview(page) == ["222 (1)"], "the preview was not restored after printing"
+
+    # ---- the alignment test page -----------------------------------------
+    def test_the_alignment_test_page_prints_one_sheet_and_leaves_the_queue(self, page, base_url):
         self._queued(page, base_url)
         if not page.locator("#align-test").count():
             pytest.skip("no alignment test button for this user")
-
-        asked = []
-        page.on("dialog", lambda d: (asked.append(1), d.dismiss()))
         page.click("#align-test")
-        page.wait_for_timeout(400)
-        assert self._rows(page) == 2, "the alignment test print wiped the queue"
-        assert not asked, "the alignment test page asked whether the batch printed"
-
-    def test_an_empty_queue_printing_nothing_is_harmless(self, page, base_url):
-        """Nothing queued, nothing to clear, no error."""
-        errors = []
-        page.on("pageerror", lambda e: errors.append(str(e)))
-        page.goto(f"{base_url}/stickers")
-        page.wait_for_selector("#generate")
-        page.evaluate("() => { window.print = () =>"
-                      " window.dispatchEvent(new Event('afterprint')); window.print(); }")
-        page.wait_for_timeout(100)
-        assert not errors, f"afterprint on an empty queue threw: {errors}"
-
+        printed = self._last_print(page)
+        assert printed and len(printed) <= 3, f"the test page printed {printed}"
+        assert self._rows(page) == 3
+        assert not self.dialogs
 
 class TestQueueActionStyling:
     """Clear and delete are the two controls that destroy work."""

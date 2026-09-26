@@ -6583,9 +6583,14 @@ def test_a_printer_that_scales_anyway_can_be_cancelled():
 
     # One sheet, not the whole batch: lining up a printer must not cost nine
     # sheets of stationery.
-    check("a test print is one page", 'pages.slice(1)' in template)
-    check("and the rest come back afterwards",
-          "delete pg.dataset.hidden" in template)
+    check("a test print is one page",
+          '[...sheet.querySelectorAll(".sticker-page")].slice(1)' in template)
+    # The pages are only hidden on the sheet drawn for that print; once the
+    # dialog closes the sheet is redrawn from scratch, so nothing stays hidden.
+    print_fn = template[template.index("function printJobs(jobs, beforePrint)"):
+                        template.index("function updateSelectionUi()")]
+    check("and the sheet is redrawn afterwards",
+          print_fn.index("window.print();") < print_fn.index("renderSheet();"))
 
     # The correction itself.
     check("the correction is the ratio of wanted to measured",
@@ -6786,7 +6791,7 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
     check("with a plus drawn beside the word", 'class="icon icon-plus"' in add_button)
     print_button = page[page.index('id="print-stickers"'):]
     print_button = print_button[:print_button.index("</button>")]
-    check("and printing takes the whole queue", "<span>Print All</span>" in print_button)
+    check("and printing takes the whole queue", '<span class="btn-label">Print All</span>' in print_button)
     check("there is a queue table", 'id="queue-rows"' in page)
 
     # The top row builds the batch; the queue card finishes it. The count
@@ -6800,7 +6805,9 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
           0 <= header.index('id="queue-clear"') < header.index('id="print-stickers"'))
     check("and that pair is kept off the paper",
           'class="queued-header-actions no-print"' in page)
-    for column in ("#", "LR Number", "Sender", "Receiver", "Boxes"):
+    # The # heading is now the select-all box; rows carry their own ticks.
+    check("with a select-all box heading the first column", 'id="queue-select-all"' in page)
+    for column in ("LR Number", "Sender", "Receiver", "Boxes", "Actions"):
         check(f"with a {column} column", f">{column}<" in page)
     check("each row can be removed", "queue-remove" in template)
     check("and corrected", "queue-edit" in template)
@@ -6838,7 +6845,7 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
     check("editing loads the row back into the form",
           "function startEditing(index)" in template)
     check("and says which row is being corrected",
-          "if (index === editingIndex) tr.className = \"is-editing\";" in template)
+          'if (index === editingIndex) tr.classList.add("is-editing");' in template)
     # The WORD changes, in its own span. Setting the button's textContent
     # would take the plus icon with it the first time a row was edited.
     check("the button changes to match",
@@ -6881,19 +6888,23 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
     check("and redraws both the table and the sheet",
           "renderQueue();" in empty_fn and "renderSheet();" in empty_fn)
 
-    # Printing is the third way the queue empties, and the one nobody asks
-    # for twice: labels that have left the printer must not still be queued.
-    after = template[template.index('window.addEventListener("afterprint"'):
-                     template.index("// Whatever was already queued")]
-    check("a finished print empties the queue",
-          'window.addEventListener("afterprint"' in template and "emptyQueue();" in after)
-    # afterprint fires on Cancel too, and no browser says which; clearing on
-    # the event alone lost the batch whenever the dialog was backed out of.
-    check("but only after asking whether it printed",
-          "window.confirm(" in after and "if (printed) emptyQueue();" in after)
-    check("but only a print of the queue, not the alignment test page",
-          "let clearAfterPrint = false;" in template
-          and "clearAfterPrint = queue.length > 0;" in template)
+    # Printing never empties the queue: it changes only by Clear All or a
+    # row's delete. (It used to clear when the dialog closed -- which also
+    # happens on Cancel, and no browser says which.)
+    print_fn = template[template.index("function printJobs(jobs, beforePrint)"):
+                        template.index("function updateSelectionUi()")]
+    check("printing never empties the queue",
+          "afterprint" not in template and "emptyQueue" not in print_fn
+          and "queue =" not in print_fn and "saveQueue" not in print_fn)
+    check("Print prints the ticked rows, or all of them when none are ticked",
+          "printJobs(ticked.length ? ticked : queue.slice());" in template)
+    check("each row can be printed on its own", "printJobs([job]);" in template)
+    check("the button says which it will do",
+          '`Print Selected (${count})` : "Print All"' in template)
+    # The sheet on screen is a preview of ONE row, shown only when clicked.
+    check("nothing is previewed until a row is clicked",
+          "let previewIndex = null;" in template
+          and "previewIndex = previewIndex === index ? null : index;" in template)
     # An empty queue removes the key outright, so a browser that has finished
     # a batch is carrying nothing at all.
     check("an emptied queue removes the stored key rather than storing []",
@@ -6915,8 +6926,11 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
     # boxes for one customer and one for the next share a sheet.
     flattener = template[template.index("function allLabels()"):
                          template.index("function renderSheet()")]
+    # The same flattening serves every print -- the whole queue, the ticked
+    # rows or one row -- so a selection still fills its sheets continuously.
     check("every sticker in the queue becomes one flat entry",
-          "queue.forEach" in flattener and "out.push({" in flattener)
+          "return labelsFor(queue);" in flattener and "jobs.forEach" in flattener
+          and "out.push({" in flattener)
     check("for each box of each job", "n < job.qty" in flattener)
 
     render = template[template.index("function renderSheet()"):
@@ -6944,14 +6958,14 @@ def test_the_sticker_queue_fills_pages_across_customers(tmpdir):
         block = template[template.index(start):template.index(end)]
         check(f"{what} writes the queue back", "saveQueue();" in block)
 
-    # The test page borrows a label when the queue is empty and puts it back,
-    # and must NOT write that to storage — lining a printer up should not
-    # leave a job queued.
+    # An empty queue gets a throwaway label for the test page, drawn for that
+    # print only -- never pushed into the queue, never stored. Lining a
+    # printer up must not leave a job queued.
     test_block = template[template.index('getElementById("align-test")'):
                           template.index('getElementById("align-reset")')]
     check("but the borrowed test label is not saved",
           "saveQueue" not in test_block)
-    check("and it is taken back off afterwards", "queue.pop();" in test_block)
+    check("and it never enters the queue at all", "queue.push" not in test_block)
     check("and read back on load", "let queue = loadQueue();" in template)
     # It comes back from storage, which another version of this page may have
     # written, so nothing in it is trusted.
