@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE COLLATE NOCASE,
     display_name TEXT NOT NULL,
+    -- Optional. Handed to MailStream Logistics when someone signs in there
+    -- through the app chooser; nothing in Gate Pass itself reads it.
+    email TEXT NOT NULL DEFAULT '',
     password_hash TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'approved', 'rejected', 'disabled')),

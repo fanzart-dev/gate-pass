@@ -49,6 +49,7 @@ ADDED_COLUMNS = {
         ("decided_at", "TEXT"),
         ("decided_by", "TEXT"),
         ("permissions", "TEXT NOT NULL DEFAULT '{}'"),
+        ("email", "TEXT NOT NULL DEFAULT ''"),
     ],
 }
 
@@ -85,6 +86,10 @@ PERMISSIONS = {
     "can_edit_issued_pass": "Edit Issued Gate Pass",
     "can_print_stickers": "Box Stickers",
     "can_calibrate_stickers": "Sticker Alignment",
+    # Not a Gate Pass feature: whether the app chooser lets this person into
+    # MailStream Logistics, a separate app with its own database. Gate Pass
+    # only vouches for who they are and that they may go there.
+    "has_mailstream_access": "MailStream Logistics",
 }
 
 # The sentence under each tick box. Kept apart from the label so the tick list
@@ -118,6 +123,7 @@ PERMISSION_HINTS = {
     # Every edit is written to the audit log with the old value beside the new,
     # so the record of the change survives even though the value does not.
     "can_edit_issued_pass": "Correct an issued pass — quantities, cartons, customer or remarks",
+    "has_mailstream_access": "Open MailStream Logistics from the app chooser",
 }
 
 # The most a batch print can cover. A runaway request would otherwise try to
@@ -256,7 +262,7 @@ DEFAULT_SETTINGS = {
 # Bump when schema.sql or ADDED_COLUMNS changes. Stored in the file as
 # PRAGMA user_version, so a connection can tell in one cheap read whether the
 # schema script needs running at all.
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 # How long a writer waits for another writer before giving up. Four people
 # clicking Issue at the same moment are serialised in milliseconds, so this is
@@ -398,6 +404,18 @@ def _migrate_data(conn, previous_version):
                 "'$.can_review_drafts', json('true')) WHERE is_admin = 1")
         except sqlite3.OperationalError:
             pass
+
+    if previous_version and previous_version < 18:
+        # has_mailstream_access is new, and read_permissions fills a missing
+        # key with False — so without this every admin would start without it
+        # and nobody could reach MailStream until somebody ticked the box.
+        # Admins only, the pattern every added permission follows.
+        try:
+            conn.execute(
+                "UPDATE users SET permissions = json_set(permissions, "
+                "'$.has_mailstream_access', json('true')) WHERE is_admin = 1")
+        except sqlite3.OperationalError:
+            pass                     # a book from before there were accounts
 
     if previous_version and previous_version < 17:
         # can_print_stickers was added to a page that had needed nothing but a
@@ -794,8 +812,26 @@ def set_user_permissions(conn, user_id, permissions, decided_by=""):
     return wanted
 
 
+def clean_email(email):
+    """An email address as typed, or "" — refused if it plainly is not one."""
+    email = (email or "").strip()
+    if not email:
+        return ""
+    local, _, domain = email.partition("@")
+    if not local or "." not in domain or any(c.isspace() for c in email) or len(email) > 200:
+        raise ValueError(f"{email} is not an email address")
+    return email
+
+
+def set_user_email(conn, user_id, email):
+    email = clean_email(email)
+    with writing(conn):
+        conn.execute("UPDATE users SET email = ? WHERE id = ?", (email, user_id))
+    return email
+
+
 def create_user(conn, username, display_name, password, status=PENDING, is_admin=False,
-                 permissions=None):
+                 permissions=None, email=""):
     """Creates an account. Defaults to pending — an admin approves it before the
     person can sign in. The very first account is forced to an approved admin,
     since otherwise there would be nobody able to approve anyone."""
@@ -809,6 +845,7 @@ def create_user(conn, username, display_name, password, status=PENDING, is_admin
         raise ValueError("full name is required — it is printed as 'Prepared by'")
     if not password or len(password) < MIN_PASSWORD_LENGTH:
         raise ValueError(f"password must be at least {MIN_PASSWORD_LENGTH} characters")
+    email = clean_email(email)
 
     if count_users(conn) == 0:
         # Nobody exists to grant anything, so the first account gets everything.
@@ -822,10 +859,10 @@ def create_user(conn, username, display_name, password, status=PENDING, is_admin
     try:
         cur = conn.execute(
             """INSERT INTO users (username, display_name, password_hash, status, is_admin,
-                                   permissions, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                   permissions, created_at, email)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (username, display_name, generate_password_hash(password), status,
-             1 if is_admin else 0, json.dumps(permissions), _now()),
+             1 if is_admin else 0, json.dumps(permissions), _now(), email),
         )
     except sqlite3.IntegrityError as exc:
         raise ValueError(f"user {username!r} already exists") from exc

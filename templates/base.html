@@ -52,6 +52,12 @@
         </a>
       {% endif %}
       {% if current_user %}
+        <a href="{{ url_for('select_app') }}" {% if request.endpoint == 'select_app' %}class="active"{% endif %}
+           title="Switch between Gate Pass and MailStream Logistics">
+          <svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/>
+            <rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/>
+            <rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>Apps</span></a>
         <span class="nav-divider"></span>
         {# Name and Sign out in one pill: whose session this is, not two more
            nav items competing with the tabs beside them. #}

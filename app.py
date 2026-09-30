@@ -16,6 +16,7 @@ from werkzeug.utils import secure_filename
 
 import db
 import exports
+import sso
 import invoice_parser
 
 BASE_DIR = Path(__file__).parent
@@ -81,6 +82,13 @@ def create_app(db_path=None, storage_dir=None):
     app.config["INVOICES_DIR"] = invoices_dir
     app.config["DB_PATH"] = str(db_path) if db_path else str(storage_dir / "gate_pass.db")
     app.secret_key = _secret_key(storage_dir)
+
+    # MailStream Logistics: a separate app (own repository, own database) that
+    # people reach from the app chooser. All the two share is this secret,
+    # which signs the one-minute token that says who is arriving. Unset, the
+    # chooser shows MailStream as not set up and never signs anything.
+    app.config["MAILSTREAM_URL"] = (os.environ.get("GATE_PASS_MAILSTREAM_URL") or "").rstrip("/")
+    app.config["MAILSTREAM_SECRET"] = os.environ.get("GATE_PASS_MAILSTREAM_SECRET") or ""
 
     # Session cookie hardening.
     #   Lax  — the cookie is not sent on a cross-site POST, which is what stops
@@ -318,7 +326,7 @@ def register_routes(app):
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if g.get("user") is not None:
-            return redirect(url_for("upload"))
+            return redirect(url_for("select_app"))
 
         if request.method == "POST":
             username = request.form.get("username", "")
@@ -356,10 +364,12 @@ def register_routes(app):
             db.clear_login_attempts(g.db, username)
             session["user_id"] = user["id"]
             session.permanent = False
-            target = request.args.get("next") or url_for("upload")
+            # Straight after signing in, the app chooser — unless the sign-in was
+            # on the way to a particular page, which it then goes on to.
+            target = request.args.get("next") or ""
             # Only ever bounce back to a path on this site.
-            if not target.startswith("/") or target.startswith("//"):
-                target = url_for("upload")
+            if target in ("", "/") or not target.startswith("/") or target.startswith("//"):
+                target = url_for("select_app")
             return redirect(target)
 
         return render_template("login.html", username="",
@@ -397,7 +407,8 @@ def register_routes(app):
             return redirect(url_for("people"))
         try:
             db.create_user(g.db, username, display_name, password,
-                            status=db.APPROVED, permissions=permissions)
+                            status=db.APPROVED, permissions=permissions,
+                            email=request.form.get("email", ""))
         except ValueError as exc:
             flash(str(exc)[0].upper() + str(exc)[1:] + ".", "error")
             return redirect(url_for("people"))
@@ -420,6 +431,8 @@ def register_routes(app):
             flash("You cannot remove your own permission to manage people.", "error")
             return redirect(url_for("people"))
         try:
+            if "email" in request.form:
+                db.set_user_email(g.db, user_id, request.form.get("email", ""))
             db.set_user_permissions(g.db, user_id, wanted,
                                      decided_by=g.user["display_name"])
         except ValueError as exc:
@@ -493,6 +506,41 @@ def register_routes(app):
         session.clear()
         flash("Signed out.", "ok")
         return redirect(url_for("login"))
+
+    @app.route("/logout/sso")
+    def logout_sso():
+        """Where MailStream's Logout ends up, after ending its own session. A GET,
+        because MailStream is another site and this app refuses cross-site POSTs;
+        the worst a forged link can do is sign somebody out."""
+        session.clear()
+        flash("Signed out.", "ok")
+        return redirect(url_for("login", next="/"))
+
+    @app.route("/select-app")
+    @login_required
+    def select_app():
+        """Where to after signing in: Gate Pass, or MailStream Logistics for
+        those an admin has let in."""
+        return render_template(
+            "select_app.html",
+            may_use_mailstream=db.user_can(g.user, "has_mailstream_access"),
+            mailstream_ready=bool(app.config["MAILSTREAM_URL"] and app.config["MAILSTREAM_SECRET"]),
+        )
+
+    @app.route("/sso/mailstream", methods=["POST"])
+    @login_required
+    def sso_mailstream():
+        """Sign a one-minute token for the person signed in and send them to
+        MailStream with it. Checked here as well as there: without access they
+        never leave the chooser."""
+        if not db.user_can(g.user, "has_mailstream_access"):
+            flash("You do not have access to MailStream Logistics. Ask an admin.", "error")
+            return redirect(url_for("select_app"))
+        if not (app.config["MAILSTREAM_URL"] and app.config["MAILSTREAM_SECRET"]):
+            flash("MailStream Logistics is not set up on this server yet.", "error")
+            return redirect(url_for("select_app"))
+        token = sso.mailstream_token(g.user, app.config["MAILSTREAM_SECRET"], True)
+        return redirect(f"{app.config['MAILSTREAM_URL']}/auth/sso?token={token}")
 
     @app.route("/")
     @login_required

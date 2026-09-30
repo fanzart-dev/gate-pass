@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Choose an app{% endblock %}
+{% block content %}
+{# Straight after signing in. Gate Pass is always open to a signed-in person;
+   MailStream Logistics only to those an admin has ticked it for. The two apps
+   share nothing but the sign-in: separate code, separate databases. #}
+<section class="app-chooser">
+  <h1 class="chooser-title">Where would you like to go?</h1>
+  <p class="chooser-sub">Signed in as <strong>{{ current_user.display_name }}</strong>.</p>
+
+  <div class="chooser-grid">
+    <a class="app-card" href="{{ url_for('upload') }}">
+      <span class="app-icon app-icon-gatepass" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+          <path d="M14 3v5h5M9 13h6M9 17h6"/></svg></span>
+      <span class="app-name">Gate Pass</span>
+      <span class="app-desc">Issue gate passes from supplier invoices, and keep the register.</span>
+      <span class="app-go">Open Gate Pass →</span>
+    </a>
+
+    {% if may_use_mailstream and mailstream_ready %}
+      <form method="post" action="{{ url_for('sso_mailstream') }}" class="app-card-form">
+        <button type="submit" class="app-card">
+          <span class="app-icon app-icon-mailstream" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/>
+              <path d="m22 7-10 5L2 7"/></svg></span>
+          <span class="app-name">MailStream Logistics</span>
+          <span class="app-desc">Dispatch mails to customers, with the invoice and LR attached.</span>
+          <span class="app-go">Open MailStream →</span>
+        </button>
+      </form>
+    {% else %}
+      <div class="app-card is-locked" aria-disabled="true">
+        <span class="app-icon app-icon-mailstream" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/>
+            <path d="m22 7-10 5L2 7"/></svg></span>
+        <span class="app-name">MailStream Logistics
+          <span class="access-badge">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/>
+              <path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+            {{ 'Access Required' if not may_use_mailstream else 'Not set up' }}</span></span>
+        <span class="app-desc">
+          {% if not may_use_mailstream %}Ask an admin to give you MailStream access on the People page.
+          {% else %}This server has not been connected to MailStream yet.{% endif %}</span>
+      </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

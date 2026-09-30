@@ -3402,8 +3402,8 @@ def test_users_and_login(tmpdir):
           b"Wrong username or password" in resp.data)
 
     resp = client.post("/login", data={"username": "ravi", "password": "gatepass-test-pw"})
-    check("signing in with the right password works",
-          resp.status_code == 302 and "/upload" in resp.headers.get("Location", ""))
+    check("signing in with the right password works, and lands on the app chooser",
+          resp.status_code == 302 and "/select-app" in resp.headers.get("Location", ""))
     check("the signed-in name is shown in the app",
           b"Ravi Kumar" in client.get("/upload").data)
 
@@ -4924,6 +4924,94 @@ def test_full_app_flow(tmpdir):
     gp2 = db.create_gate_pass(db.connect(flask_app.config["DB_PATH"]), None, "S", "C", "I",
                                "01-01-2026", "", sample_items())
     check("discarded second draft did not burn a number", gp2["serial_no"] == "FZ-00002")
+
+
+def test_mailstream_sign_in(tmpdir):
+    """The app chooser, and the one-minute token that carries a signed-in person
+    over to MailStream Logistics — a separate app with its own database. The two
+    share only the secret; this checks what Gate Pass signs and when."""
+    import base64
+    import hashlib
+    import hmac
+    import json
+    from urllib.parse import parse_qs, urlsplit
+
+    print("\n-- MailStream sign-in --")
+    secret = "test-shared-secret-for-mailstream"
+    flask_app, admin = logged_in_app(tmpdir, "mailstream",
+                                     users=(("boss", "Dinesh Dharani"), ("ops", "Ravi Kumar")))
+    conn = db.connect(flask_app.config["DB_PATH"])
+    boss = db.get_user_by_username(conn, "boss")
+    ops = db.get_user_by_username(conn, "ops")
+    check("MailStream access is a permission on the People page",
+          "has_mailstream_access" in db.PERMISSIONS and "has_mailstream_access" in db.PERMISSION_HINTS)
+    check("the first admin holds it; a new account does not",
+          db.user_can(boss, "has_mailstream_access") and not db.user_can(ops, "has_mailstream_access"))
+
+    page = admin.get("/select-app").get_data(as_text=True)
+    check("the chooser asks where to go", "Where would you like to go?" in page)
+    check("with no secret configured, MailStream is shown as not set up",
+          "Not set up" in page and 'action="/sso/mailstream"' not in page)
+    resp = admin.post("/sso/mailstream")
+    check("and nothing is signed without the secret",
+          resp.status_code == 302 and "/select-app" in resp.headers["Location"])
+
+    flask_app.config["MAILSTREAM_URL"] = "https://mail.example.test:10000"
+    flask_app.config["MAILSTREAM_SECRET"] = secret
+    db.set_user_email(conn, boss["id"], "operator@fanzartfans.com")
+    page = admin.get("/select-app").get_data(as_text=True)
+    check("an admin with access gets the MailStream card as a button",
+          'action="/sso/mailstream"' in page and "Access Required" not in page)
+
+    resp = admin.post("/sso/mailstream")
+    location = resp.headers.get("Location", "")
+    check("choosing MailStream redirects there with a token",
+          resp.status_code == 302 and location.startswith("https://mail.example.test:10000/auth/sso?token="))
+    token = parse_qs(urlsplit(location).query)["token"][0]
+    head, body, mac = token.split(".")
+    unb64 = lambda t: base64.urlsafe_b64decode(t + "=" * (-len(t) % 4))
+    expected = hmac.new(secret.encode(), f"{head}.{body}".encode(), hashlib.sha256).digest()
+    claims = json.loads(unb64(body))
+    check("the token is signed with the shared secret", hmac.compare_digest(expected, unb64(mac)))
+    check("it names the person and their access",
+          claims["user_id"] == f"usr_{boss['id']}" and claims["name"] == "Dinesh Dharani"
+          and claims["email"] == "operator@fanzartfans.com"
+          and claims["permissions"] == {"gatepass": True, "mailstream": True})
+    check("it is for MailStream, from Gate Pass, for one minute, once",
+          claims["iss"] == "gatepass" and claims["aud"] == "mailstream"
+          and claims["exp"] - claims["iat"] == 60 and len(claims["jti"]) >= 16)
+    second = parse_qs(urlsplit(admin.post("/sso/mailstream").headers["Location"]).query)["token"][0]
+    check("every token has its own id", json.loads(unb64(second.split(".")[1]))["jti"] != claims["jti"])
+
+    staff = flask_app.test_client()
+    sign_in(staff, "ops")
+    page = staff.get("/select-app").get_data(as_text=True)
+    check("without access the card is locked, reading Access Required",
+          "Access Required" in page and 'action="/sso/mailstream"' not in page)
+    resp = staff.post("/sso/mailstream")
+    check("and posting anyway signs nothing",
+          resp.status_code == 302 and "/select-app" in resp.headers["Location"])
+
+    resp = admin.post(f"/people/{ops['id']}/permissions",
+                      data={"has_mailstream_access": "1", "email": "ravi@fanzartfans.com"})
+    ops = db.get_user(conn, ops["id"])
+    check("an admin grants access and sets the email from the Permissions dialog",
+          db.user_can(ops, "has_mailstream_access") and ops["email"] == "ravi@fanzartfans.com")
+    check("it takes effect on the next click",
+          staff.post("/sso/mailstream").headers["Location"].startswith("https://mail.example.test:10000/auth/sso?"))
+    resp = admin.post(f"/people/{ops['id']}/permissions", data={"email": "not an address"})
+    check("an email that is not one is refused",
+          db.get_user(conn, ops["id"])["email"] == "ravi@fanzartfans.com")
+
+    check("the chooser needs a sign-in",
+          flask_app.test_client().get("/select-app").status_code == 302)
+    resp = admin.get("/logout/sso")
+    check("MailStream's Logout signs out here too, landing on the login",
+          resp.status_code == 302 and "/login" in resp.headers["Location"]
+          and admin.get("/select-app").status_code == 302)
+    check("signing in again lands on the chooser",
+          "/select-app" in sign_in(admin, "boss").headers.get("Location", ""))
+    conn.close()
 
 
 def test_hosting_hardening(tmpdir):
@@ -8028,6 +8116,7 @@ def main():
         test_scanned_pdf_degrades()
         test_unreadable_invoice_is_still_typeable(tmpdir)
         test_hosting_hardening(tmpdir)
+        test_mailstream_sign_in(tmpdir)
         test_full_app_flow(tmpdir)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

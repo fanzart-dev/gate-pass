@@ -987,6 +987,39 @@ The app has no HTTPS of its own. On the office LAN that is the existing
 arrangement, but do not expose it to the internet without putting TLS in front —
 session cookies and passwords would otherwise cross the network in the clear.
 
+## The app chooser and MailStream Logistics
+
+Signing in lands on **`/select-app`** — "Where would you like to go?" — with two
+cards: Gate Pass, and **MailStream Logistics**, a separate app (its own private
+repository, its own database, nothing shared) that sends dispatch mails. A
+`next` other than `/` still wins, so a link to a particular page goes there.
+The **Apps** item in the top bar comes back to the chooser.
+
+Gate Pass is the only place accounts live. MailStream has none of its own:
+
+- **Who may go there** is the `has_mailstream_access` permission ("MailStream
+  Logistics" on the People page). Without it the card is locked, reading
+  *Access Required*, and `POST /sso/mailstream` signs nothing. Checked on every
+  request like every other permission. The `< 18` migration grants it to admins,
+  the pattern every added permission follows.
+- **The hand-over** is `POST /sso/mailstream` (`sso.py`): a JWT, HMAC-SHA256,
+  standard library only, signed with `GATE_PASS_MAILSTREAM_SECRET` and sent in
+  the redirect to `GATE_PASS_MAILSTREAM_URL/auth/sso?token=…`. It names the
+  person (`usr_<id>`, display name, email) and their access, lives **60
+  seconds**, and carries a one-off `jti` MailStream refuses to accept twice —
+  because it travels in a URL. Unset URL or secret: the card reads *Not set up*.
+- **Email** is an optional column on `users`, set when an account is created or
+  in the Permissions dialog; Gate Pass itself never reads it. It is only there
+  to be shown in MailStream.
+- **Signing out.** MailStream's Logout ends its own session and then sends the
+  browser to **`GET /logout/sso`**, which ends this one and lands on the login.
+  A GET because MailStream is another site and this app refuses cross-site
+  POSTs (`block_cross_site_writes`); the worst a forged link can do is sign
+  somebody out.
+
+Revoking access takes effect here on the next click; a MailStream session
+already open runs until it expires (12 hours) or the person logs out.
+
 ## Uploaded invoices are working material, not records
 
 An uploaded PDF lives in `storage/invoices/` only while it is still a **draft** —
