@@ -89,6 +89,15 @@ def create_app(db_path=None, storage_dir=None):
     # chooser shows MailStream as not set up and never signs anything.
     app.config["MAILSTREAM_URL"] = (os.environ.get("GATE_PASS_MAILSTREAM_URL") or "").rstrip("/")
     app.config["MAILSTREAM_SECRET"] = os.environ.get("GATE_PASS_MAILSTREAM_SECRET") or ""
+    # The office reaches this server as its LAN address, its .local name and its
+    # Tailscale name. With "{host}" in the URL, MailStream is opened on the same
+    # name this sign-in came in on (https://192.168.1.45 -> :10000 on the same
+    # address) — but only a name listed here: a Host header is the client's say-so,
+    # and the token must never be sent anywhere else on it. The first is the
+    # fallback.
+    app.config["MAILSTREAM_HOSTS"] = [h.strip().lower() for h in
+                                      (os.environ.get("GATE_PASS_MAILSTREAM_HOSTS") or "").split(",")
+                                      if h.strip()]
 
     # Session cookie hardening.
     #   Lax  — the cookie is not sent on a cross-site POST, which is what stops
@@ -543,8 +552,12 @@ def register_routes(app):
         if not (app.config["MAILSTREAM_URL"] and app.config["MAILSTREAM_SECRET"]):
             flash("MailStream Logistics is not set up on this server yet.", "error")
             return redirect(url_for("select_app"))
+        target = _mailstream_url(app)
+        if not target:
+            flash("MailStream Logistics is not set up for this address yet.", "error")
+            return redirect(url_for("select_app"))
         token = sso.mailstream_token(g.user, app.config["MAILSTREAM_SECRET"], True)
-        return redirect(f"{app.config['MAILSTREAM_URL']}/auth/sso?token={token}")
+        return redirect(f"{target}/auth/sso?token={token}")
 
     @app.route("/")
     @login_required
@@ -1513,6 +1526,23 @@ def register_routes(app):
         response = send_from_directory(cache_dir, cached.name)
         _no_store(response)
         return response
+
+
+def _mailstream_url(app):
+    """MailStream's address for this request: the configured URL, with {host}
+    filled in by the name this request came in on when that name is listed in
+    GATE_PASS_MAILSTREAM_HOSTS (else the first listed name)."""
+    url = app.config["MAILSTREAM_URL"]
+    if "{host}" not in url:
+        return url
+    listed = app.config["MAILSTREAM_HOSTS"]
+    raw = (request.host or "").lower()
+    host = raw if raw.endswith("]") else raw.rsplit(":", 1)[0]
+    if host not in listed:
+        if not listed:
+            return ""
+        host = listed[0]
+    return url.replace("{host}", host)
 
 
 def _permissions_from_form():

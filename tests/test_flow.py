@@ -5022,6 +5022,18 @@ def test_mailstream_sign_in(tmpdir):
     check("it takes effect on the next click",
           staff.post("/sso/mailstream").headers["Location"].startswith("https://mail.example.test:10000/auth/sso?"))
 
+    flask_app.config["MAILSTREAM_URL"] = "https://{host}:10000"
+    flask_app.config["MAILSTREAM_HOSTS"] = ["gatepass.example.ts.net", "192.168.1.45", "fanzart-server.local"]
+    from app import _mailstream_url
+    for came_in_on, lands in (("192.168.1.45", "https://192.168.1.45:10000"),
+                              ("fanzart-server.local:443", "https://fanzart-server.local:10000"),
+                              ("gatepass.example.ts.net", "https://gatepass.example.ts.net:10000"),
+                              ("evil.example", "https://gatepass.example.ts.net:10000")):
+        with flask_app.test_request_context("/sso/mailstream", headers={"Host": came_in_on}):
+            where = _mailstream_url(flask_app)
+        check(f"signed in on {came_in_on}, MailStream opens on {lands}", where == lands)
+    flask_app.config["MAILSTREAM_URL"] = "https://mail.example.test:10000"
+
     check("the chooser needs a sign-in",
           flask_app.test_client().get("/select-app").status_code == 302)
     resp = admin.get("/logout/sso")

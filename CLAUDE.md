@@ -1015,6 +1015,12 @@ Gate Pass is the only place accounts live. MailStream has none of its own:
   empty) and their access, lives **60 seconds**, and carries a one-off `jti`
   MailStream refuses to accept twice — because it travels in a URL. Unset URL
   or secret: the card reads *Not set up*.
+- **Same name in, same name out.** With `{host}` in `GATE_PASS_MAILSTREAM_URL`
+  (`https://{host}:10000`), MailStream opens on the name this sign-in came in
+  on — `192.168.1.45`, `fanzart-server.local` or the Tailscale name — so an
+  office PC on the LAN never goes out through Funnel. Only names in
+  `GATE_PASS_MAILSTREAM_HOSTS` are used (the first is the fallback): the Host
+  header is the client's say-so, and the token must never follow it elsewhere.
 - **Signing out.** MailStream's Logout ends its own session and then sends the
   browser to **`GET /logout/sso`**, which ends this one and lands on the login.
   A GET because MailStream is another site and this app refuses cross-site
