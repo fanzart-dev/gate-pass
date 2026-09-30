@@ -3402,7 +3402,10 @@ def test_users_and_login(tmpdir):
           b"Wrong username or password" in resp.data)
 
     resp = client.post("/login", data={"username": "ravi", "password": "gatepass-test-pw"})
-    check("signing in with the right password works, and lands on the app chooser",
+    # The first account of a fresh install is given every permission, MailStream
+    # access included, so it lands on the app chooser. (Accounts on an existing
+    # book do not have it until an admin ticks it, and land on Gate Pass.)
+    check("signing in with the right password works",
           resp.status_code == 302 and "/select-app" in resp.headers.get("Location", ""))
     check("the signed-in name is shown in the app",
           b"Ravi Kumar" in client.get("/upload").data)
@@ -3697,8 +3700,10 @@ def test_managing_permissions_from_the_people_page(tmpdir):
     conn.close()
 
     page = admin.get("/people").data
+    # Out of Gate Pass's own permissions: MailStream access belongs to another
+    # app and is left out of the count.
     check("the table shows how many permissions are held",
-          f"2 of {len(db.PERMISSIONS)}".encode() in page)
+          f"2 of {len(db.PERMISSIONS) - 1}".encode() in page)
     check("a full-access account is labelled", b"Full access" in page)
     check("there is an Edit permissions button", b"edit-perms" in page)
     check("the button carries the current permissions", b"data-perms" in page)
@@ -4945,8 +4950,7 @@ def test_mailstream_sign_in(tmpdir):
     ops = db.get_user_by_username(conn, "ops")
     check("MailStream access is a permission on the People page",
           "has_mailstream_access" in db.PERMISSIONS and "has_mailstream_access" in db.PERMISSION_HINTS)
-    check("the first admin holds it; a new account does not",
-          db.user_can(boss, "has_mailstream_access") and not db.user_can(ops, "has_mailstream_access"))
+    check("a new account does not hold it", not db.user_can(ops, "has_mailstream_access"))
 
     page = admin.get("/select-app").get_data(as_text=True)
     check("the chooser asks where to go", "Where would you like to go?" in page)
@@ -4956,9 +4960,29 @@ def test_mailstream_sign_in(tmpdir):
     check("and nothing is signed without the secret",
           resp.status_code == 302 and "/select-app" in resp.headers["Location"])
 
+    # The live book is not touched: no new column, no new schema version, and an
+    # admin from before (no key in their stored JSON) is not granted it.
+    columns = [r["name"] for r in conn.execute("PRAGMA table_info(users)")]
+    check("no column was added to users", "email" not in columns)
+    check("the schema version is unchanged", conn.execute("PRAGMA user_version").fetchone()[0] == 17)
+    stored = json.loads(conn.execute("SELECT permissions FROM users WHERE id = ?", (boss["id"],)).fetchone()[0])
+    stored.pop("has_mailstream_access", None)
+    with db.writing(conn):
+        conn.execute("UPDATE users SET permissions = ? WHERE id = ?", (json.dumps(stored), boss["id"]))
+    boss = db.get_user(conn, boss["id"])
+    check("an admin from before the chooser has no MailStream access until it is ticked",
+          not db.user_can(boss, "has_mailstream_access") and db.user_can(boss, "can_manage_people"))
+    people = admin.get("/people").get_data(as_text=True)
+    check("and still reads Full access on the People page", "Full access" in people and "of 12" not in people)
+
+
     flask_app.config["MAILSTREAM_URL"] = "https://mail.example.test:10000"
     flask_app.config["MAILSTREAM_SECRET"] = secret
-    db.set_user_email(conn, boss["id"], "operator@fanzartfans.com")
+    page = admin.get("/select-app").get_data(as_text=True)
+    check("an admin who has not been given it sees the locked card too",
+          "Access Required" in page and 'action="/sso/mailstream"' not in page)
+    admin.post(f"/people/{boss['id']}/permissions",
+               data={**{k: "1" for k in db.PERMISSIONS}})
     page = admin.get("/select-app").get_data(as_text=True)
     check("an admin with access gets the MailStream card as a button",
           'action="/sso/mailstream"' in page and "Access Required" not in page)
@@ -4975,7 +4999,7 @@ def test_mailstream_sign_in(tmpdir):
     check("the token is signed with the shared secret", hmac.compare_digest(expected, unb64(mac)))
     check("it names the person and their access",
           claims["user_id"] == f"usr_{boss['id']}" and claims["name"] == "Dinesh Dharani"
-          and claims["email"] == "operator@fanzartfans.com"
+          and claims["email"] == ""
           and claims["permissions"] == {"gatepass": True, "mailstream": True})
     check("it is for MailStream, from Gate Pass, for one minute, once",
           claims["iss"] == "gatepass" and claims["aud"] == "mailstream"
@@ -4992,16 +5016,11 @@ def test_mailstream_sign_in(tmpdir):
     check("and posting anyway signs nothing",
           resp.status_code == 302 and "/select-app" in resp.headers["Location"])
 
-    resp = admin.post(f"/people/{ops['id']}/permissions",
-                      data={"has_mailstream_access": "1", "email": "ravi@fanzartfans.com"})
+    resp = admin.post(f"/people/{ops['id']}/permissions", data={"has_mailstream_access": "1"})
     ops = db.get_user(conn, ops["id"])
-    check("an admin grants access and sets the email from the Permissions dialog",
-          db.user_can(ops, "has_mailstream_access") and ops["email"] == "ravi@fanzartfans.com")
+    check("an admin grants access from the Permissions dialog", db.user_can(ops, "has_mailstream_access"))
     check("it takes effect on the next click",
           staff.post("/sso/mailstream").headers["Location"].startswith("https://mail.example.test:10000/auth/sso?"))
-    resp = admin.post(f"/people/{ops['id']}/permissions", data={"email": "not an address"})
-    check("an email that is not one is refused",
-          db.get_user(conn, ops["id"])["email"] == "ravi@fanzartfans.com")
 
     check("the chooser needs a sign-in",
           flask_app.test_client().get("/select-app").status_code == 302)
@@ -5009,8 +5028,16 @@ def test_mailstream_sign_in(tmpdir):
     check("MailStream's Logout signs out here too, landing on the login",
           resp.status_code == 302 and "/login" in resp.headers["Location"]
           and admin.get("/select-app").status_code == 302)
-    check("signing in again lands on the chooser",
+    check("signing in again lands on the chooser, for someone with MailStream access",
           "/select-app" in sign_in(admin, "boss").headers.get("Location", ""))
+    staff2 = flask_app.test_client()
+    admin.post(f"/people/{ops['id']}/permissions", data={})
+    check("and on Gate Pass, as before, for someone without it",
+          "/upload" in sign_in(staff2, "ops").headers.get("Location", ""))
+    page = staff2.get("/upload").get_data(as_text=True)
+    check("who sees no Apps link either", "/select-app" not in page)
+    check("while someone with access does",
+          "/select-app" in admin.get("/upload").get_data(as_text=True))
     conn.close()
 
 

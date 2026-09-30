@@ -1000,17 +1000,21 @@ Gate Pass is the only place accounts live. MailStream has none of its own:
 - **Who may go there** is the `has_mailstream_access` permission ("MailStream
   Logistics" on the People page). Without it the card is locked, reading
   *Access Required*, and `POST /sso/mailstream` signs nothing. Checked on every
-  request like every other permission. The `< 18` migration grants it to admins,
-  the pattern every added permission follows.
+  request like every other permission.
+- **The live book was not touched for this — keep it that way.** No column, no
+  `SCHEMA_VERSION` bump, no `_migrate_data` step. The permission lives in the
+  existing `permissions` JSON; `read_permissions()` reads the missing key as
+  False, so nobody has it (admins included) until an admin ticks it. This is
+  the one permission deliberately *without* the admin backfill described under
+  Permissions. The People badge counts Gate Pass permissions only, so existing
+  admins still read *Full access*.
 - **The hand-over** is `POST /sso/mailstream` (`sso.py`): a JWT, HMAC-SHA256,
   standard library only, signed with `GATE_PASS_MAILSTREAM_SECRET` and sent in
   the redirect to `GATE_PASS_MAILSTREAM_URL/auth/sso?token=…`. It names the
-  person (`usr_<id>`, display name, email) and their access, lives **60
-  seconds**, and carries a one-off `jti` MailStream refuses to accept twice —
-  because it travels in a URL. Unset URL or secret: the card reads *Not set up*.
-- **Email** is an optional column on `users`, set when an account is created or
-  in the Permissions dialog; Gate Pass itself never reads it. It is only there
-  to be shown in MailStream.
+  person (`usr_<id>` and display name — Gate Pass keeps no email, so `email` is
+  empty) and their access, lives **60 seconds**, and carries a one-off `jti`
+  MailStream refuses to accept twice — because it travels in a URL. Unset URL
+  or secret: the card reads *Not set up*.
 - **Signing out.** MailStream's Logout ends its own session and then sends the
   browser to **`GET /logout/sso`**, which ends this one and lands on the login.
   A GET because MailStream is another site and this app refuses cross-site

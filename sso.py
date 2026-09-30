@@ -45,6 +45,8 @@ def mailstream_token(user, secret, may_use_mailstream, now=None):
         "jti": secrets.token_urlsafe(16),
         "user_id": f"usr_{user['id']}",
         "name": user.get("display_name") or user.get("username") or "",
-        "email": user.get("email") or "",
+        # Gate Pass keeps no email addresses (its database was not changed
+        # for this), so MailStream shows the name alone.
+        "email": "",
         "permissions": {"gatepass": True, "mailstream": bool(may_use_mailstream)},
     }, secret)

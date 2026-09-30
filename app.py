@@ -323,10 +323,16 @@ def admin_required(view):
 
 def register_routes(app):
 
+    def _landing(user):
+        """Where signing in lands: the app chooser for those who may use
+        MailStream, and Gate Pass itself — exactly as before — for everyone
+        else, who have only the one app to choose."""
+        return url_for("select_app") if db.user_can(user, "has_mailstream_access") else url_for("upload")
+
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if g.get("user") is not None:
-            return redirect(url_for("select_app"))
+            return redirect(_landing(g.user))
 
         if request.method == "POST":
             username = request.form.get("username", "")
@@ -364,12 +370,13 @@ def register_routes(app):
             db.clear_login_attempts(g.db, username)
             session["user_id"] = user["id"]
             session.permanent = False
-            # Straight after signing in, the app chooser — unless the sign-in was
-            # on the way to a particular page, which it then goes on to.
+            # Straight after signing in, the app chooser (or Gate Pass, for those
+            # without MailStream) — unless the sign-in was on the way to a
+            # particular page, which it then goes on to.
             target = request.args.get("next") or ""
             # Only ever bounce back to a path on this site.
             if target in ("", "/") or not target.startswith("/") or target.startswith("//"):
-                target = url_for("select_app")
+                target = _landing(user)
             return redirect(target)
 
         return render_template("login.html", username="",
@@ -407,8 +414,7 @@ def register_routes(app):
             return redirect(url_for("people"))
         try:
             db.create_user(g.db, username, display_name, password,
-                            status=db.APPROVED, permissions=permissions,
-                            email=request.form.get("email", ""))
+                            status=db.APPROVED, permissions=permissions)
         except ValueError as exc:
             flash(str(exc)[0].upper() + str(exc)[1:] + ".", "error")
             return redirect(url_for("people"))
@@ -431,8 +437,6 @@ def register_routes(app):
             flash("You cannot remove your own permission to manage people.", "error")
             return redirect(url_for("people"))
         try:
-            if "email" in request.form:
-                db.set_user_email(g.db, user_id, request.form.get("email", ""))
             db.set_user_permissions(g.db, user_id, wanted,
                                      decided_by=g.user["display_name"])
         except ValueError as exc:

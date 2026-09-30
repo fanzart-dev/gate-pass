@@ -73,11 +73,14 @@
             {# The badge alone. Listing every granted permission here made the
                row four lines tall and unscannable; the Permissions button is
                the one place to see or change the detail. #}
-            {% set held = u.permissions.values()|select|list|length %}
-            {% if held == permission_labels|length %}
+            {# Gate Pass permissions only: MailStream access is another app's,
+               and must not turn an existing "Full access" into "11 of 12". #}
+            {% set own = permission_labels.keys()|reject('equalto', 'has_mailstream_access')|list %}
+            {% set held = own|select('in', u.permissions|dictsort|selectattr(1)|map(attribute=0)|list)|list|length %}
+            {% if held == own|length %}
               <span class="pill admin">Full access</span>
             {% elif held %}
-              <span class="pill approved">{{ held }} of {{ permission_labels|length }}</span>
+              <span class="pill approved">{{ held }} of {{ own|length }}</span>
             {% else %}
               <span class="muted-cell">Basic access only</span>
             {% endif %}
@@ -87,7 +90,7 @@
             <div class="user-actions-cell">
             {% if u.status == 'approved' %}
               <button type="button" class="btn-action-sm edit-perms" data-id="{{ u.id }}"
-                      data-name="{{ u.display_name }}" data-email="{{ u.email or '' }}"
+                      data-name="{{ u.display_name }}"
                       data-perms="{{ u.permissions|tojson|forceescape }}">Permissions</button>
               <button type="button" class="btn-action-sm reset-pw" data-id="{{ u.id }}"
                       data-name="{{ u.display_name }}">Password</button>
@@ -121,11 +124,7 @@
           <label for="username">Username</label>
           <input type="text" id="username" name="username" autocapitalize="none" required>
         </div>
-        <div class="field">
-          <label for="email">Email <span class="hint">&mdash; optional</span></label>
-          <input type="email" id="email" name="email" autocapitalize="none"
-                 placeholder="Shown in MailStream when they sign in there">
-        </div>
+
         <div class="field">
           <label for="password">Password</label>
           <input type="password" id="password" name="password" minlength="8"
@@ -188,10 +187,7 @@
       <h2 class="section-title" style="margin-top:0">
         Permissions for <span id="perm-who"></span>
       </h2>
-      <div class="field">
-        <label for="perm-email">Email <span class="hint">&mdash; optional, shown in MailStream</span></label>
-        <input type="email" id="perm-email" name="email" autocapitalize="none">
-      </div>
+
       {# Label plus one line of what it actually does. Several of these change
          how the app behaves rather than what is merely visible — "Review
          Drafts" decides whether an upload stops for checking or is issued on
@@ -231,7 +227,6 @@
         const held = JSON.parse(button.dataset.perms);
         permForm.action = `/people/${button.dataset.id}/permissions`;
         document.getElementById("perm-who").textContent = button.dataset.name;
-        document.getElementById("perm-email").value = button.dataset.email || "";
         permForm.querySelectorAll("input[data-perm]").forEach((box) => {
           box.checked = Boolean(held[box.dataset.perm]);
         });
