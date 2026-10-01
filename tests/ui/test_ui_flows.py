@@ -1774,9 +1774,55 @@ class TestQueueSelectionPrintingAndPreview:
         page.mouse.move(0, 0)
         bg = page.evaluate(
             "() => getComputedStyle(document.querySelector('.sticker-queue-table tbody tr:nth-child(3)')).backgroundColor")
-        assert bg == "rgb(239, 246, 255)", f"the previewed row is {bg}"
+        assert bg == "rgb(219, 234, 254)", f"the previewed row is {bg}"
         page.click(self._row(3) + " td:nth-child(2)")
         assert self._preview(page) is None, "a second click did not close the preview"
+
+    def _row_state(self, page, n):
+        return page.evaluate(f"""() => {{
+          const r = document.querySelector('.sticker-queue-table tbody tr:nth-child({n})');
+          return {{bg: getComputedStyle(r).backgroundColor,
+                   bar: getComputedStyle(r.cells[0]).boxShadow}}; }}""")
+
+    def test_a_hovered_row_is_tinted_and_marked_for_scanning(self, page, base_url):
+        """Crisp enough to trace a line across five columns of a long list.
+
+        Scoped with table.list as well as the class: the site-wide
+        table.list hover rule is otherwise the more specific one, and
+        painted its fainter tint over this one.
+        """
+        self._queued(page, base_url)
+        page.mouse.move(0, 0)
+        page.wait_for_timeout(250)
+        rest = self._row_state(page, 2)
+        page.hover(self._row(2) + " td:nth-child(4)")
+        page.wait_for_timeout(250)
+        hover = self._row_state(page, 2)
+        assert hover["bg"] == "rgb(241, 245, 249)", f"hovered row is {hover['bg']}"
+        assert hover["bg"] != rest["bg"]
+        assert "inset" in hover["bar"] and "147, 197, 253" in hover["bar"], hover["bar"]
+
+    def test_the_previewed_row_stays_stronger_than_hover_even_under_the_pointer(
+            self, page, base_url):
+        """Which sticker is on display must never be in doubt.
+
+        Raising the hover rule's specificity once made it beat this one, and
+        the previewed row went slate the moment the mouse touched it.
+        """
+        self._queued(page, base_url)
+        page.click(self._row(2) + " td:nth-child(2)")
+        page.mouse.move(0, 0)
+        page.wait_for_timeout(250)
+        active = self._row_state(page, 2)
+        assert active["bg"] == "rgb(219, 234, 254)", active
+        assert "37, 99, 235" in active["bar"], f"no solid bar: {active['bar']}"
+        page.hover(self._row(2) + " td:nth-child(4)")
+        page.wait_for_timeout(250)
+        assert self._row_state(page, 2) == active, "the previewed row changed under the pointer"
+        page.hover(self._row(1) + " td:nth-child(4)")
+        page.wait_for_timeout(250)
+        assert self._row_state(page, 1)["bg"] != active["bg"], \
+            "a hovered row looks the same as the previewed one"
 
     def test_the_row_controls_do_not_open_the_preview(self, page, base_url):
         self._queued(page, base_url)
