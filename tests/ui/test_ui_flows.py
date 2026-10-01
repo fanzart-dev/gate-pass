@@ -1774,7 +1774,7 @@ class TestQueueSelectionPrintingAndPreview:
         page.mouse.move(0, 0)
         bg = page.evaluate(
             "() => getComputedStyle(document.querySelector('.sticker-queue-table tbody tr:nth-child(3)')).backgroundColor")
-        assert bg == "rgb(219, 234, 254)", f"the previewed row is {bg}"
+        assert bg == "rgb(253, 230, 138)", f"the previewed row is {bg}"
         page.click(self._row(3) + " td:nth-child(2)")
         assert self._preview(page) is None, "a second click did not close the preview"
 
@@ -1785,7 +1785,8 @@ class TestQueueSelectionPrintingAndPreview:
                    bar: getComputedStyle(r.cells[0]).boxShadow}}; }}""")
 
     def test_a_hovered_row_is_tinted_and_marked_for_scanning(self, page, base_url):
-        """Crisp enough to trace a line across five columns of a long list.
+        """Warm amber, crisp enough to trace a line across five columns of a
+        long list, with a golden-amber bar on its left edge.
 
         Scoped with table.list as well as the class: the site-wide
         table.list hover rule is otherwise the more specific one, and
@@ -1798,9 +1799,9 @@ class TestQueueSelectionPrintingAndPreview:
         page.hover(self._row(2) + " td:nth-child(4)")
         page.wait_for_timeout(250)
         hover = self._row_state(page, 2)
-        assert hover["bg"] == "rgb(241, 245, 249)", f"hovered row is {hover['bg']}"
+        assert hover["bg"] == "rgb(254, 243, 199)", f"hovered row is {hover['bg']}"
         assert hover["bg"] != rest["bg"]
-        assert "inset" in hover["bar"] and "147, 197, 253" in hover["bar"], hover["bar"]
+        assert "inset" in hover["bar"] and "217, 119, 6" in hover["bar"], hover["bar"]
 
     def test_the_previewed_row_stays_stronger_than_hover_even_under_the_pointer(
             self, page, base_url):
@@ -1814,8 +1815,8 @@ class TestQueueSelectionPrintingAndPreview:
         page.mouse.move(0, 0)
         page.wait_for_timeout(250)
         active = self._row_state(page, 2)
-        assert active["bg"] == "rgb(219, 234, 254)", active
-        assert "37, 99, 235" in active["bar"], f"no solid bar: {active['bar']}"
+        assert active["bg"] == "rgb(253, 230, 138)", active
+        assert "180, 83, 9" in active["bar"], f"no solid bar: {active['bar']}"
         page.hover(self._row(2) + " td:nth-child(4)")
         page.wait_for_timeout(250)
         assert self._row_state(page, 2) == active, "the previewed row changed under the pointer"

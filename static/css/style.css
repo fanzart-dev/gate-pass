@@ -3193,51 +3193,57 @@ textarea.is-optional { background: var(--field-optional); }
   outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
-/* Hover: a crisp tint right across the row, and a thin light-blue bar on
-   its left edge, so the eye can run from LR number to box count without
-   slipping a line on a long list. The bar sits on the first cell -- a
-   box-shadow on the row itself does not paint in every browser. */
-.sticker-queue-table tbody tr { transition: background-color .12s ease; }
-/* table.list as well as the class: the site-wide table.list hover rule is
-   otherwise the more specific one and paints its fainter tint over this. */
-table.list.sticker-queue-table tbody tr:hover { background: #f1f5f9; }
-.sticker-queue-table tbody tr:hover > td:first-child { box-shadow: inset 3px 0 0 #93c5fd; }
+/* Warm amber, for cross-verifying a long list against the paperwork: it
+   stands apart from the slate and blue of everything else on the page, so
+   the row the eye is on cannot be confused with any other marking.
 
-/* The row whose stickers are shown below the table: a firmer blue and a
-   solid royal-blue bar -- clearly stronger than hover, and unchanged under
-   the pointer, so which sticker is on display is never in doubt. */
+   Hover: soft amber right across the row and a golden-amber bar on its left
+   edge, so the eye can trace LR number to box count without slipping a
+   line. The bar sits on the first cell -- a box-shadow on the row itself
+   does not paint in every browser. Scoped with table.list as well as the
+   class: the site-wide table.list hover rule is otherwise the more
+   specific one and paints its own faint tint over this. */
+.sticker-queue-table tbody tr { transition: background-color .12s ease; }
+table.list.sticker-queue-table tbody tr:hover { background: #fef3c7; }
+.sticker-queue-table tbody tr:hover > td:first-child { box-shadow: inset 3px 0 0 #d97706; }
+
+/* The row whose stickers are shown below the table: a step deeper in amber
+   and a darker gold bar -- distinct from hover, and unchanged under the
+   pointer, so which sticker is on display is never in doubt. */
 table.list.sticker-queue-table tbody tr.is-previewing,
-table.list.sticker-queue-table tbody tr.is-previewing:hover { background: #dbeafe; }
+table.list.sticker-queue-table tbody tr.is-previewing:hover { background: #fde68a; }
 .sticker-queue-table tbody tr.is-previewing > td:first-child,
 .sticker-queue-table tbody tr.is-previewing:hover > td:first-child {
-  box-shadow: inset 3px 0 0 #2563eb;
+  box-shadow: inset 3px 0 0 #b45309;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .sticker-queue-table tbody tr:hover { background: #273449; }
+  :root:not([data-theme="light"]) .sticker-queue-table tbody tr:hover {
+    background: rgba(217, 119, 6, 0.16);
+  }
   :root:not([data-theme="light"]) .sticker-queue-table tbody tr:hover > td:first-child {
-    box-shadow: inset 3px 0 0 rgba(96, 165, 250, 0.6);
+    box-shadow: inset 3px 0 0 #f59e0b;
   }
   :root:not([data-theme="light"]) .sticker-queue-table tbody tr.is-previewing,
   :root:not([data-theme="light"]) .sticker-queue-table tbody tr.is-previewing:hover {
-    background: rgba(37, 99, 235, 0.28);
+    background: rgba(217, 119, 6, 0.30);
   }
   :root:not([data-theme="light"]) .sticker-queue-table tbody tr.is-previewing > td:first-child,
   :root:not([data-theme="light"]) .sticker-queue-table tbody tr.is-previewing:hover > td:first-child {
-    box-shadow: inset 3px 0 0 #60a5fa;
+    box-shadow: inset 3px 0 0 #fbbf24;
   }
 }
-:root[data-theme="dark"] .sticker-queue-table tbody tr:hover { background: #273449; }
+:root[data-theme="dark"] .sticker-queue-table tbody tr:hover { background: rgba(217, 119, 6, 0.16); }
 :root[data-theme="dark"] .sticker-queue-table tbody tr:hover > td:first-child {
-  box-shadow: inset 3px 0 0 rgba(96, 165, 250, 0.6);
+  box-shadow: inset 3px 0 0 #f59e0b;
 }
 :root[data-theme="dark"] .sticker-queue-table tbody tr.is-previewing,
 :root[data-theme="dark"] .sticker-queue-table tbody tr.is-previewing:hover {
-  background: rgba(37, 99, 235, 0.28);
+  background: rgba(217, 119, 6, 0.30);
 }
 :root[data-theme="dark"] .sticker-queue-table tbody tr.is-previewing > td:first-child,
 :root[data-theme="dark"] .sticker-queue-table tbody tr.is-previewing:hover > td:first-child {
-  box-shadow: inset 3px 0 0 #60a5fa;
+  box-shadow: inset 3px 0 0 #fbbf24;
 }
 
 .sticker-queue-table .queue-print .icon { width: 16px; height: 16px; }
