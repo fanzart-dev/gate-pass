@@ -2353,21 +2353,31 @@ class TestUploadTruckProgress:
     def _start(self, page, base_url, count=3):
         files = [_fake_pdf(f"truck{i}.pdf") for i in range(count)]
         held = []
-        page.route("**/upload/one", lambda route: held.append(route))
+        # Reads are held so the bar can be inspected at each step; the save
+        # that follows each read is answered straight away.
+        page.route("**/upload/read", lambda route: held.append(route))
+        saves = iter(range(1000, 2000))
+        page.route("**/upload/commit", lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body='{"ok": true, "draft_id": %d, "problem": ""}' % next(saves)))
         page.goto(f"{base_url}/upload")
         page.wait_for_selector("#invoice", state="attached")
         page.set_input_files("#invoice", files)
         page.click("#submit-btn")
-        for _ in range(100):
-            if len(held) == count:
-                break
-            page.wait_for_timeout(50)
-        assert len(held) == count, f"only {len(held)} of {count} uploads started"
+        self._next(page, held, 0)
         return held
+
+    def _next(self, page, held, n):
+        """Wait until upload number n (0-based) has been sent."""
+        for _ in range(100):
+            if len(held) > n:
+                return held[n]
+            page.wait_for_timeout(50)
+        raise AssertionError(f"upload {n + 1} was never sent")
 
     def _answer(self, route, n):
         route.fulfill(status=200, content_type="application/json",
-                      body='{"ok": true, "draft_id": %d, "problem": ""}' % (1000 + n))
+                      body='{"ok": true, "token": "t%d"}' % n)
 
     def _state(self, page):
         page.wait_for_timeout(500)      # past the 0.3s slide
@@ -2394,7 +2404,7 @@ class TestUploadTruckProgress:
             assert s["valuenow"] == expected, s
             assert s["driving"] and s["anim"] == "driving-bounce", \
                 f"the truck is not bouncing while reading: {s}"
-            self._answer(held[step], step)
+            self._answer(self._next(page, held, step), step)
 
     def test_it_parks_when_the_batch_is_done(self, page, base_url):
         """Bouncing at 100% would read as "not done yet"."""
@@ -2405,8 +2415,8 @@ class TestUploadTruckProgress:
             document.getElementById('progress-track').classList.contains('is-driving')))
             .observe(document.getElementById('progress-track'),
                      {attributes: true, attributeFilter: ['class']})""")
-        for i, route in enumerate(held):
-            self._answer(route, i)
+        for i in range(3):
+            self._answer(self._next(page, held, i), i)
         # The page moves on to the next screen once the batch is done, so the
         # recorded class changes are the evidence, not the page itself.
         for _ in range(100):
@@ -2496,3 +2506,49 @@ class TestLrNumberDigitsOnly:
             "() => document.getElementById('lr').classList.contains('is-missing')"), \
             "the LR box is not marked"
         assert page.locator(".sticker-queue-table tbody tr").count() == 0
+
+
+class TestBatchUploadKeepsItsOrder:
+    """Fast reading, and drafts in the order the files were picked.
+
+    Reading is the slow part, so several files are read at once -- and reads
+    finish in any order. Drafts are listed in the order they were SAVED, so
+    reading and saving are split: each draft is saved only once every file
+    picked before it has been. Here all reads are held and released LAST
+    picked first, the worst case.
+    """
+
+    def test_reads_run_together_and_drafts_still_follow_the_picked_list(self, page, base_url):
+        names = [f"order-{n}.pdf" for n in ("a", "b", "c", "d")]
+        files = [_fake_pdf(name) for name in names]
+        reads, saved = [], {}
+        page.route("**/upload/read", lambda route: reads.append(route))
+        def save(route):
+            reply = route.fetch()
+            body = reply.json()
+            saved[body["draft_id"]] = body["filename"]
+            route.fulfill(response=reply)
+        page.route("**/upload/commit", save)
+        page.goto(f"{base_url}/upload")
+        page.wait_for_selector("#invoice", state="attached")
+        page.set_input_files("#invoice", files)        # one bulk pick
+        page.click("#submit-btn")                      # one press of Read
+        for _ in range(100):
+            if len(reads) == len(files):
+                break
+            page.wait_for_timeout(50)
+        assert len(reads) == len(files), \
+            f"only {len(reads)} reads ran at once -- reading is meant to be parallel"
+        for route in reversed(reads):                  # finish LAST-picked first
+            route.continue_()
+            page.wait_for_timeout(300)
+            assert not saved or list(saved.values()) == names[:len(saved)], \
+                f"a draft was saved ahead of one picked before it: {list(saved.values())}"
+
+        page.wait_for_url("**/drafts**", timeout=30000)
+        page.wait_for_load_state("networkidle")
+        assert [saved[i] for i in sorted(saved)] == names, "drafts were not saved in picked order"
+        ids = [int(href.rsplit("/", 1)[1]) for href in page.eval_on_selector_all(
+            "a[href*='/review/']", "els => els.map((e) => e.getAttribute('href'))")]
+        shown = [saved[i] for i in dict.fromkeys(ids) if i in saved]
+        assert shown == names, f"Drafts lists {shown}, but they were picked as {names}"

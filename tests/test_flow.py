@@ -17,6 +17,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import unquote
@@ -8022,6 +8023,77 @@ def test_every_test_is_actually_run():
             print(f"    never run: {name}")
 
 
+def test_reading_in_parallel_and_saving_in_order(tmpdir):
+    """/upload/read parses and saves nothing; /upload/commit makes the draft.
+
+    The page reads several at once and commits in picked order, so the Drafts
+    list follows the picked list however the reads finish. The read result
+    goes through the browser, so it is signed: an edited, forged or reused
+    one is refused.
+    """
+    flask_app, client = logged_in_app(tmpdir, "read_commit")
+    conn = db.connect(flask_app.config["DB_PATH"])
+    blank_pdf = b"%PDF-1.4\n%%EOF\n"
+
+    def read(name):
+        return client.post("/upload/read", content_type="multipart/form-data",
+                           data={"invoice": (io.BytesIO(blank_pdf), name)})
+
+    def commit(token):
+        return client.post("/upload/commit", data={"token": token})
+
+    first = read("first.pdf").get_json()
+    check("a read succeeds and hands back a token", first["ok"] and first["token"])
+    check("reading alone makes no draft", db.list_drafts(conn) == [])
+    staging = Path(flask_app.config["STORAGE_DIR"]) / "staging"
+    check("the file waits in staging until it is saved", len(list(staging.iterdir())) == 1)
+
+    # Read in one order, committed in the picked order: the list follows the commits.
+    third, second = read("third.pdf").get_json(), read("second.pdf").get_json()
+    for token in (first["token"], second["token"], third["token"]):
+        resp = commit(token)
+        check("a commit makes a draft", resp.status_code == 200 and resp.get_json()["ok"])
+    files = [Path(d["invoice_pdf_path"]).name.split("_", 1)[1] for d in db.list_drafts(conn)]
+    check("drafts list in commit (picked) order", files == ["first.pdf", "second.pdf", "third.pdf"])
+    check("committed files leave staging", list(staging.iterdir()) == [])
+    check("and land in the invoices folder",
+          all((Path(flask_app.config["STORAGE_DIR"]) / d["invoice_pdf_path"]).is_file()
+              for d in db.list_drafts(conn)))
+
+    again = commit(first["token"])
+    check("a token cannot be saved twice", again.status_code == 400)
+    check("there are still three drafts", len(db.list_drafts(conn)) == 3)
+
+    fresh = read("fresh.pdf").get_json()["token"]
+    tampered = fresh[:-3] + ("AAA" if not fresh.endswith("AAA") else "BBB")
+    check("an edited token is refused", commit(tampered).status_code == 400)
+    from itsdangerous import URLSafeTimedSerializer
+    forged = URLSafeTimedSerializer("not-the-key", salt="gate-pass-upload-staging").dumps(
+        {"staged": "0" * 32 + ".pdf", "filename": "x.pdf",
+         "parsed": {"supplier_name": "", "customer_name": "FORGED", "invoice_no": "",
+                    "invoice_date": "", "items": [], "notes": []}})
+    check("a token signed with another key is refused", commit(forged).status_code == 400)
+    check("posting no token is refused", commit("").status_code == 400)
+    check("no forged draft was made",
+          not any(d["customer_name"] == "FORGED" for d in db.list_drafts(conn)))
+
+    bad = client.post("/upload/read", content_type="multipart/form-data",
+                      data={"invoice": (io.BytesIO(b"x"), "notes.txt")})
+    check("reading a non-PDF is refused", bad.status_code == 400)
+    anon = flask_app.test_client()
+    check("reading needs a login", anon.post("/upload/read", data={}).status_code == 302)
+    check("saving needs a login", anon.post("/upload/commit", data={}).status_code == 302)
+
+    # A read never committed (the browser closed mid-batch) is swept later.
+    old = staging / ("f" * 32 + ".pdf")
+    old.write_bytes(blank_pdf)
+    stale = time.time() - 7 * 3600
+    os.utime(old, (stale, stale))
+    read("sweeper.pdf")
+    check("a stale uncommitted read is swept from staging", not old.exists())
+    conn.close()
+
+
 def main():
     tmpdir = tempfile.mkdtemp(prefix="gate-pass-test-")
     try:
@@ -8035,6 +8107,7 @@ def main():
         test_serial_allocation(tmpdir)
         test_draft_never_burns_a_number(tmpdir)
         test_draft_lifecycle(tmpdir)
+        test_reading_in_parallel_and_saving_in_order(tmpdir)
         test_cancel(tmpdir)
         test_settings(tmpdir)
         test_invoice_parser()

@@ -1,7 +1,10 @@
 """Flask routes: upload -> review -> issue -> print, register, drafts, settings."""
 
 import os
+import re
 import secrets
+import time
+import uuid
 from datetime import date, datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -11,6 +14,7 @@ from flask import (
     Flask, Response, abort, flash, g, jsonify, redirect, render_template, request,
     session, send_from_directory, url_for,
 )
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from markupsafe import Markup, escape
 from werkzeug.utils import secure_filename
 
@@ -1242,6 +1246,68 @@ def register_routes(app):
         return jsonify(ok=True, filename=file.filename, draft_id=draft_id,
                         notes=notes, problem=problem)
 
+    # --- reading in parallel, saving in order --------------------------------
+    # The batch uploader reads several invoices at once (the slow part) but
+    # must create the drafts in the order the files were picked, because the
+    # Drafts list shows them in the order they were made -- and reads finish
+    # in any order. So the two are split: /upload/read parses a file and hands
+    # back the result, signed; /upload/commit turns it into a draft. The page
+    # commits strictly in picked order as each next file's read comes in. No
+    # database change: a draft is created exactly as /upload/one creates one.
+
+    @app.route("/upload/read", methods=["POST"])
+    @login_required
+    def upload_read():
+        file = request.files.get("invoice")
+        if not file or not file.filename:
+            return jsonify(ok=False, error="no file"), 400
+        if not file.filename.lower().endswith(".pdf"):
+            return jsonify(ok=False, filename=file.filename, error="not a PDF"), 400
+
+        _sweep_staging(app)
+        staged_name = f"{uuid.uuid4().hex}.pdf"
+        staged = _staging_dir(app) / staged_name
+        file.save(staged)
+        try:
+            parsed = invoice_parser.parse_invoice(staged)
+        except Exception as exc:  # noqa: BLE001 - one bad file must not stop the batch
+            parsed = {"supplier_name": "", "customer_name": "", "invoice_no": "",
+                      "invoice_date": "", "items": [], "notes": [f"could not be read: {exc}"]}
+        # Signed, because the result makes a round trip through the browser:
+        # unsigned, it could come back edited, which would let someone without
+        # can_edit_parsed_details rewrite what was read off the invoice.
+        token = _staging_serializer(app).dumps(
+            {"staged": staged_name, "filename": file.filename, "parsed": parsed})
+        return jsonify(ok=True, filename=file.filename, token=token)
+
+    @app.route("/upload/commit", methods=["POST"])
+    @login_required
+    def upload_commit():
+        try:
+            data = _staging_serializer(app).loads(
+                request.form.get("token", ""), max_age=STAGING_MAX_AGE)
+        except SignatureExpired:
+            return jsonify(ok=False, error="this upload expired -- upload the file again"), 400
+        except BadSignature:
+            return jsonify(ok=False, error="not a valid upload"), 400
+
+        staged_name = data.get("staged", "")
+        if not re.fullmatch(r"[0-9a-f]{32}\.pdf", staged_name):
+            return jsonify(ok=False, error="not a valid upload"), 400
+        dest = app.config["INVOICES_DIR"] / _timestamped_filename(data["filename"])
+        try:
+            # Moving it is also what makes a token single-use: a second commit
+            # finds nothing to move.
+            os.replace(_staging_dir(app) / staged_name, dest)
+        except FileNotFoundError:
+            return jsonify(ok=False, error="this file was already saved, or has expired"), 400
+
+        draft_id, notes = _draft_from_parsed(app, dest, data["parsed"])
+        draft = db.get_draft(g.db, draft_id)
+        problem = db.draft_problem(draft)
+        return jsonify(ok=True, filename=data["filename"], draft_id=draft_id,
+                        notes=notes, problem=problem)
+
     @app.route("/gate-passes/<int:gate_pass_id>/printed", methods=["POST"])
     @login_required
     def mark_gate_pass_printed(gate_pass_id):
@@ -1687,6 +1753,32 @@ def _discard_invoice_file(app, relpath):
         return False
     except OSError:
         return False
+
+
+# A read that is never committed -- the browser closed mid-batch -- leaves its
+# PDF in staging/. Anything older than this is swept on the next read, and a
+# token older than this is refused.
+STAGING_MAX_AGE = 6 * 3600
+
+
+def _staging_dir(app):
+    path = Path(app.config["STORAGE_DIR"]) / "staging"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _staging_serializer(app):
+    return URLSafeTimedSerializer(app.secret_key, salt="gate-pass-upload-staging")
+
+
+def _sweep_staging(app):
+    cutoff = time.time() - STAGING_MAX_AGE
+    for entry in _staging_dir(app).iterdir():
+        try:
+            if entry.is_file() and entry.stat().st_mtime < cutoff:
+                entry.unlink()
+        except OSError:
+            pass
 
 
 def _draft_from_upload(app, file):

@@ -212,15 +212,19 @@
       progressTrack.classList.add("is-driving");
       setProgress(0, chosen.length);
 
-      // Several at a time, not one after another. Each file is its own
-      // request, and the server runs three worker processes, so sending them
-      // one by one left two of the three idle while the browser waited —
-      // fifty invoices took about fifty times one invoice.
+      // Read several at once, save strictly in the picked order.
+      //
+      // Reading an invoice is the slow part; saving its draft takes
+      // milliseconds. The Drafts list shows drafts in the order they were
+      // SAVED, and reads finish in any order -- a small PDF overtakes a large
+      // one picked before it -- so reading and saving were split. Up to four
+      // files are read at a time (/upload/read, which saves nothing), and each
+      // draft is saved (/upload/commit) only once every file picked before it
+      // has been, so the list always matches the pile it was read from.
       //
       // Four, not more: past the number of server workers the extra requests
-      // only queue, and every one of them is holding an uploaded file in
-      // memory while it waits.
-      const CONCURRENT_UPLOADS = 4;
+      // only queue, each holding an uploaded file in memory while it waits.
+      const CONCURRENT_READS = 4;
       let failures = 0;
       let started = 0, finished = 0;
       // Indexed rather than appended, so the drafts stay in the order the
@@ -228,33 +232,70 @@
       // serial numbers in this order, and a gate pass book that jumps about
       // is a gate pass book nobody trusts.
       const draftIdByIndex = new Array(chosen.length).fill(null);
+      // Per file: undefined while it is being read, a signed token once read,
+      // null if it could not be read at all.
+      const readResult = new Array(chosen.length).fill(undefined);
+      let nextToSave = 0;
+      let saving = Promise.resolve();
 
-      async function uploadNext() {
+      // Save every draft that is next in line and ready, one after another.
+      // Called after each read; chained, so saves never overlap or reorder.
+      function saveInOrder() {
+        saving = saving.then(async function () {
+          while (nextToSave < chosen.length && readResult[nextToSave] !== undefined) {
+            const i = nextToSave++;
+            if (readResult[i] !== null) {
+              const body = new FormData();
+              body.append("token", readResult[i]);
+              try {
+                const res = await fetch("{{ url_for('upload_commit') }}", { method: "POST", body });
+                const data = await res.json();
+                if (!data.ok) {
+                  markRow(i, "failed", data.error || "could not be saved");
+                  failures++;
+                } else {
+                  markRow(i, data.problem ? "attention" : "done", data.problem || "");
+                  draftIdByIndex[i] = data.draft_id;
+                }
+              } catch (err) {
+                markRow(i, "failed", String(err));
+                failures++;
+              }
+            }
+            setProgress(++finished, chosen.length);
+          }
+        });
+        return saving;
+      }
+
+      async function readNext() {
         while (true) {
           const i = started++;
           if (i >= chosen.length) return;
           const body = new FormData();
           body.append("invoice", chosen[i]);
           try {
-            const res = await fetch("{{ url_for('upload_one') }}", { method: "POST", body });
+            const res = await fetch("{{ url_for('upload_read') }}", { method: "POST", body });
             const data = await res.json();
             if (!data.ok) {
               markRow(i, "failed", data.error || "could not be read");
               failures++;
+              readResult[i] = null;
             } else {
-              markRow(i, data.problem ? "attention" : "done", data.problem || "");
-              draftIdByIndex[i] = data.draft_id;
+              readResult[i] = data.token;
             }
           } catch (err) {
             markRow(i, "failed", String(err));
             failures++;
+            readResult[i] = null;
           }
-          setProgress(++finished, chosen.length);
+          saveInOrder();
         }
       }
 
       await Promise.all(
-        Array.from({ length: Math.min(CONCURRENT_UPLOADS, chosen.length) }, uploadNext));
+        Array.from({ length: Math.min(CONCURRENT_READS, chosen.length) }, readNext));
+      await saveInOrder();
       const draftIds = draftIdByIndex.filter((id) => id !== null);
 
       // Parked: the engine bounce is for work in progress, and a truck still
