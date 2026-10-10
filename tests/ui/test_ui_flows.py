@@ -2552,3 +2552,59 @@ class TestBatchUploadKeepsItsOrder:
             "a[href*='/review/']", "els => els.map((e) => e.getAttribute('href'))")]
         shown = [saved[i] for i in dict.fromkeys(ids) if i in saved]
         assert shown == names, f"Drafts lists {shown}, but they were picked as {names}"
+
+
+class TestReceiverDefaults:
+    """The built-in receivers, and how a change to them reaches every PC.
+
+    Each browser keeps its own receiver list, and the built-ins were only
+    used by a browser that had never opened the page -- so a new default
+    reached nobody who had. Each browser now takes a changed set in once:
+    dropped defaults out, new ones in at the top, typed-in names kept.
+    """
+
+    NEW = ["CHENNAI (SUMANGALI)", "PUNE (NEW INDIA)", "SURAT (MACJ SURAT)",
+           "HYDERABAD (MBS DECOR)", "MUMBAI (EXIM SEATING)"]
+
+    def _open(self, page, base_url, stored=None):
+        page.goto(f"{base_url}/stickers")
+        page.wait_for_selector("#generate")
+        page.evaluate("() => localStorage.clear()")
+        if stored is not None:
+            page.evaluate("(l) => localStorage.setItem('sticker_receivers_v2', JSON.stringify(l))",
+                          stored)
+        page.reload()
+        page.wait_for_selector("#generate")
+
+    def _menu(self, page):
+        page.click("#receiver")
+        page.wait_for_selector(".receiver-menu li")
+        names = page.eval_on_selector_all(".receiver-menu li", "els => els.map((e) => e.textContent)")
+        page.keyboard.press("Escape")
+        return names
+
+    def test_a_new_pc_starts_with_the_five_receivers(self, page, base_url):
+        self._open(page, base_url)
+        assert self._menu(page) == self.NEW
+
+    def test_a_pc_with_the_old_list_gets_the_new_one_and_keeps_its_own_names(
+            self, page, base_url):
+        self._open(page, base_url, ["CHENNAI (SUMANGALI)", "MUMBAI", "DELHI", "HYDERABAD",
+                                    "BENGALURU", "SALEM (ABC TRADERS)"])
+        assert self._menu(page) == self.NEW + ["SALEM (ABC TRADERS)"]
+
+    def test_it_happens_once_so_a_deleted_default_stays_deleted(self, page, base_url):
+        self._open(page, base_url, ["CHENNAI (SUMANGALI)", "MUMBAI", "DELHI"])
+        assert "PUNE (NEW INDIA)" in self._menu(page)
+        page.click("#receiver-manage")
+        page.wait_for_selector("#receiver-list:not([hidden])")
+        row = page.locator("#receiver-items li", has=page.locator("span", has_text="PUNE (NEW INDIA)"))
+        row.hover()
+        row.locator(".receiver-remove").click()
+        page.reload()
+        page.wait_for_selector("#generate")
+        assert "PUNE (NEW INDIA)" not in self._menu(page), "a deleted default came back"
+
+    def test_a_pc_already_on_the_five_is_left_alone(self, page, base_url):
+        self._open(page, base_url, self.NEW)
+        assert self._menu(page) == self.NEW

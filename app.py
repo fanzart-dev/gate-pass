@@ -35,10 +35,10 @@ PUBLIC_ENDPOINTS = {"login", "static"}
 # deploy. See templates/stickers.html.
 STICKER_RECEIVERS = (
     "CHENNAI (SUMANGALI)",
-    "MUMBAI",
-    "DELHI",
-    "HYDERABAD",
-    "BENGALURU",
+    "PUNE (NEW INDIA)",
+    "SURAT (MACJ SURAT)",
+    "HYDERABAD (MBS DECOR)",
+    "MUMBAI (EXIM SEATING)",
 )
 
 # Everything ships out of Bengaluru, so this is the one field worth defaulting.

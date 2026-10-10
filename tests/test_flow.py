@@ -8094,6 +8094,17 @@ def test_reading_in_parallel_and_saving_in_order(tmpdir):
     conn.close()
 
 
+def test_the_sticker_receiver_defaults():
+    """The five receivers every PC gets, in this order."""
+    import app as app_module
+    check("the sticker page's built-in receivers are the five agreed ones",
+          app_module.STICKER_RECEIVERS == (
+              "CHENNAI (SUMANGALI)", "PUNE (NEW INDIA)", "SURAT (MACJ SURAT)",
+              "HYDERABAD (MBS DECOR)", "MUMBAI (EXIM SEATING)"))
+    check("none of the replaced ones is left",
+          not {"MUMBAI", "DELHI", "HYDERABAD", "BENGALURU"} & set(app_module.STICKER_RECEIVERS))
+
+
 def main():
     tmpdir = tempfile.mkdtemp(prefix="gate-pass-test-")
     try:
@@ -8107,6 +8118,7 @@ def main():
         test_serial_allocation(tmpdir)
         test_draft_never_burns_a_number(tmpdir)
         test_draft_lifecycle(tmpdir)
+        test_the_sticker_receiver_defaults()
         test_reading_in_parallel_and_saving_in_order(tmpdir)
         test_cancel(tmpdir)
         test_settings(tmpdir)

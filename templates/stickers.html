@@ -451,7 +451,43 @@
         } catch (e) { /* out of quota, or blocked; the sticker still prints */ }
       }
 
-      let receivers = dedupe(loadReceivers());
+      // The built-in defaults change from time to time, but each browser keeps
+      // its own copy of the list -- so a browser that had used the page before
+      // would never see a new default. Each browser therefore notes which
+      // defaults it last took in, and when the server's set differs it takes
+      // the new ones in ONCE: the defaults that were dropped come out, the new
+      // ones go in at the top, and every name somebody typed themselves stays.
+      // Done once per change, so a default deleted afterwards stays deleted.
+      const DEFAULTS_SEEN_STORE = "sticker_receiver_defaults_seen";
+      // What the defaults were before this marker existed: a browser with no
+      // marker took these in, and only these are taken back out.
+      const DEFAULTS_BEFORE_MARKER = ["CHENNAI (SUMANGALI)", "MUMBAI", "DELHI",
+                                      "HYDERABAD", "BENGALURU"];
+
+      function takeInNewDefaults(list) {
+        const current = serverDefaults();
+        try {
+          const raw = window.localStorage.getItem(DEFAULTS_SEEN_STORE);
+          const seen = raw ? JSON.parse(raw) : null;
+          if (seen && JSON.stringify(seen) === JSON.stringify(current)) return list;
+          // A browser that never stored a list is starting from today's
+          // defaults already; one that did had the set before the marker.
+          const hadList = window.localStorage.getItem(RECEIVER_STORE) !== null;
+          const previous = Array.isArray(seen) ? seen : (hadList ? DEFAULTS_BEFORE_MARKER : []);
+          const key = (v) => String(v).trim().toLowerCase();
+          const keep = new Set(current.map(key));
+          const dropped = new Set(previous.map(key).filter((k) => !keep.has(k)));
+          const own = list.filter((name) => !dropped.has(key(name)));
+          const updated = dedupe(current.concat(own));
+          window.localStorage.setItem(DEFAULTS_SEEN_STORE, JSON.stringify(current));
+          window.localStorage.setItem(RECEIVER_STORE, JSON.stringify(updated));
+          return updated;
+        } catch (e) {
+          return list;
+        }
+      }
+
+      let receivers = dedupe(takeInNewDefaults(loadReceivers()));
 
       function renderReceivers() {
         renderMenu();
