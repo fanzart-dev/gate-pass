@@ -7369,8 +7369,9 @@ def test_the_public_link_has_an_office_path(tmpdir):
     check("the renewal runs --renew",
           "enable-office-link.sh --renew" in
           (ROOT / "deploy" / "gate-pass-tailnet-cert.service").read_text())
-    check("it warns against the per-PC step on a laptop that leaves the office",
-          "laptop" in office_src.lower())
+    check("the document warns against the per-PC step on a laptop that leaves",
+          "not on a laptop that leaves the office"
+          in (ROOT / "deploy" / "OFFICE-MACHINES.md").read_text())
 
     # The Windows side. Pointing the name at the server before the server
     # answers it would swap a timeout for a certificate error, so it checks
@@ -7386,7 +7387,80 @@ def test_the_public_link_has_an_office_path(tmpdir):
           '$marker       = "# Fanzart Gate Pass - $Name' in ps
           and '-notmatch "^\\s*#\\s*Fanzart Gate Pass"' not in ps)
 
+    # The name carries more than the gate pass (FanIQ on 8443, MailStream on
+    # 10000). Sending office PCs to this server for the name must not break
+    # those, so each Funnel port gets its own office-path server.
+    ports_tpl = (ROOT / "deploy" / "nginx-gate-pass-office-ports.conf").read_text()
+    for placeholder in ("__LAN_IP__", "__PORT__", "__TARGET__",
+                        "__TAILNET_NAME__", "__TAILNET_TLS_DIR__"):
+        check(f"the extra-port template fills in {placeholder}", placeholder in ports_tpl)
+    check("it keeps the port in the Host, as Funnel does",
+          "proxy_set_header Host              $http_host;" in ports_tpl)
+    # nginx gives a socket's unnamed traffic to the first server defined on
+    # it, and sites load in name order: sorting after "mailstream" keeps
+    # https://192.168.1.45:10000 on MailStream's own certificate.
+    check("the extra-port site loads after MailStream's",
+          "zz-gate-pass-office-link" > "mailstream"
+          and "/etc/nginx/sites-available/zz-gate-pass-office-link" in office_src)
+
+    # Run the script's own port reader against a real serve config.
+    reader = re.search(r"PORTS=\"\$\(tailscale serve status --json[^']*'\n(.*?)\n'\)\"",
+                       office_src, re.S)
+    check("the port reader can be found", reader)
+    if reader:
+        import subprocess
+        serve = {"Web": {f"{name}:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8091"}}},
+                         f"{name}:8443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8077"}}},
+                         f"{name}:10000": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8092"}}},
+                         f"{name}:9000": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:9001"}}},
+                         f"other.ts.net:8443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:1"}}}},
+                 "AllowFunnel": {f"{name}:443": True, f"{name}:8443": True,
+                                 f"{name}:10000": True, "other.ts.net:8443": True}}
+        out = subprocess.run([sys.executable, "-c", reader.group(1)], input=json.dumps(serve),
+                             env=dict(os.environ, NAME=name), capture_output=True,
+                             text=True, timeout=10).stdout.split("\n")
+        check("it picks up the name's other Funnel ports",
+              "10000 http://127.0.0.1:8092" in out and "8443 http://127.0.0.1:8077" in out)
+        check("but not 443, which the gate pass site already answers",
+              not any(line.startswith("443 ") for line in out))
+        # A tailnet-only port must not be opened to the LAN by this script.
+        check("and never a port that is tailnet-only",
+              not any(line.startswith("9000 ") for line in out))
+        check("nor another machine's name", "http://127.0.0.1:1" not in "\n".join(out))
+
+    for deploy_script in ("install.sh", "enable-https.sh"):
+        src = (ROOT / "deploy" / deploy_script).read_text()
+        # Its first listen is "192.168.1.45:...", which their "is the
+        # neighbour still serving" check would read as port 192.
+        check(f"{deploy_script} does not mistake the office-link site for a neighbour",
+              "! -name 'zz-gate-pass-office-link'" in src)
+
+    # The office DNS: one router setting instead of a script on every PC.
+    dns_conf = re.search(r"cat > /etc/gate-pass/office-dns.conf <<CONF\n(.*?)\nCONF\n",
+                         office_src, re.S)
+    check("the office DNS settings are written by the script", dns_conf)
+    dns = dns_conf.group(1) if dns_conf else ""
+    check("it answers the name with the LAN address", "address=/$NAME/$LAN_IP" in dns)
+    # Without local= the relay's IPv6 addresses pass straight through, and a
+    # PC with IPv6 would go back to the relay.
+    check("and is the authority for it, so no relay address leaks through",
+          "local=/$NAME/" in dns)
+    check("everything else goes to the router, as before",
+          "no-resolv" in dns and "server=$GATEWAY" in dns)
+    check("only on the LAN address", "listen-address=$LAN_IP" in dns
+          and "bind-dynamic" in dns)
+    unit = (ROOT / "deploy" / "gate-pass-office-dns.service").read_text()
+    check("the DNS service restarts itself", "Restart=always" in unit
+          and "/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/gate-pass/office-dns.conf" in unit)
+    check("it proves the name and other names both resolve before finishing",
+          '[ "$got" = "$LAN_IP" ]' in office_src and "github.com" in office_src)
+    # If the server is ever off, PCs must still have a DNS server.
+    check("the router step keeps the router as secondary DNS",
+          "Secondary DNS  $GATEWAY" in office_src)
+
     doc = (ROOT / "deploy" / "OFFICE-MACHINES.md").read_text()
+    check("the office document explains the router step",
+          "Primary DNS" in doc and "Secondary DNS" in doc)
     check("the office document explains the office path",
           "enable-office-link.sh" in doc and "-Name gatepass.tailaf7188.ts.net" in doc)
 

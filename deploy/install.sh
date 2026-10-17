@@ -234,14 +234,14 @@ done
 # out loud: a disabled site is invisible until somebody tries to use it.
 for avail in $(find /etc/nginx/sites-available -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | sort); do
     case "$avail" in
-        gate-pass|gate-pass.bak|default) continue ;;
+        gate-pass|gate-pass.bak|default|zz-gate-pass-office-link|zz-gate-pass-office-link.bak) continue ;;
     esac
     if [ ! -e "/etc/nginx/sites-enabled/$avail" ]; then
         note "NOTE: $avail exists but is not enabled (ln -s /etc/nginx/sites-available/$avail /etc/nginx/sites-enabled/)"
     fi
 done
 
-OTHERS=$(find /etc/nginx/sites-enabled -maxdepth 1 ! -name 'gate-pass' -type l -printf '%f ' 2>/dev/null || true)
+OTHERS=$(find /etc/nginx/sites-enabled -maxdepth 1 ! -name 'gate-pass' ! -name 'zz-gate-pass-office-link' -type l -printf '%f ' 2>/dev/null || true)
 if [ -n "$OTHERS" ]; then
     note "left untouched: $OTHERS"
 fi

@@ -75,33 +75,44 @@ the building reaches the public link *through* that relay.
 
 No setting on the server can repair an ISP's route, so the fix is to stop
 needing it in the building: the server answers the public name on the LAN
-too, with the same genuine certificate, and office PCs are told to go there.
+too — on every port the name carries (Gate Pass 443, FanIQ 8443, MailStream
+10000) — with the same genuine certificate, and runs the office's DNS so that
+PCs asking for the name are told "192.168.1.45".
 
-**On the server, once** (renews itself daily after that):
+**On the server, once** (the certificate renews itself daily after that):
 
 ```bash
 sudo /opt/gate-pass/deploy/enable-office-link.sh
 ```
 
-**Then point the office at it — either:**
+**Then once on the router (TP-Link, `http://192.168.1.1`) — no PC is touched:**
 
-* **the router, once, for every machine:** a local / static DNS entry
-  `gatepass.tailaf7188.ts.net → 192.168.1.45`; or
-* **each Windows PC**, from an Administrator PowerShell:
+    DHCP Server  ->  Primary DNS    192.168.1.45
+                     Secondary DNS  192.168.1.1
+    Save
 
-  ```powershell
-  Set-ExecutionPolicy -Scope Process Bypass -Force
-  irm http://192.168.1.45/fix-name-windows.ps1 -OutFile fix-name.ps1
-  .\fix-name.ps1 -Name gatepass.tailaf7188.ts.net
-  ```
+Each PC picks it up when its address lease renews; restarting it, or
+unplugging and reconnecting the network, does it at once. Every other name
+still goes to the router, exactly as before. If the server is ever off, PCs
+fall back to the secondary (the router) and everything but the link keeps
+working. A laptop that leaves the building gets its DNS from wherever it is,
+so the link works there through the relay as normal — nothing to undo.
 
-  It checks the server really presents the link's certificate before it
-  changes anything, so it cannot swap a timeout for a certificate warning.
-  `.\fix-name.ps1 -Undo -Name gatepass.tailaf7188.ts.net` reverses it.
+**Only if the router cannot be changed**, the same thing per Windows PC, from
+an Administrator PowerShell (not on a laptop that leaves the office — the
+hosts entry is only true in this building):
 
-**Not on a laptop that leaves the office.** The hosts entry says "the link
-lives at 192.168.1.45", which is only true in this building; anywhere else the
-link would stop opening on that laptop. Laptops should use Tailscale.
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+irm http://192.168.1.45/fix-name-windows.ps1 -OutFile fix-name.ps1
+.\fix-name.ps1 -Name gatepass.tailaf7188.ts.net
+```
+
+It checks the server really presents the link's certificate before it changes
+anything. `.\fix-name.ps1 -Undo -Name gatepass.tailaf7188.ts.net` reverses it.
+
+To take all of it away: set the router's DNS back, then
+`sudo /opt/gate-pass/deploy/enable-office-link.sh --off`.
 
 The link watchdog now tells this case apart: when the server's own line cannot
 even connect to the relay, it logs `CANNOT TEST FROM HERE — not a fault on this

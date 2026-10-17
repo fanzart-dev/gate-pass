@@ -1,0 +1,18 @@
+[Unit]
+# Installed by deploy/enable-office-link.sh. Do not edit the copy under
+# /etc/systemd — a re-run overwrites it. The settings are in
+# /etc/gate-pass/office-dns.conf, written by the same script.
+Description=Office DNS: the public link's name answered with this server's LAN address
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/gate-pass/office-dns.conf
+# Every office PC's name lookups come here once the router points at it, so
+# it must come back by itself. (The router also hands out itself as the
+# second DNS server, so a PC is never left with none.)
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

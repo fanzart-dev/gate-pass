@@ -216,7 +216,7 @@ if [ -n "$TS_IP" ]; then
 fi
 
 # Anything else nginx was serving must keep serving.
-for other in $(find /etc/nginx/sites-enabled -maxdepth 1 ! -name 'gate-pass' -type l -printf '%f ' 2>/dev/null); do
+for other in $(find /etc/nginx/sites-enabled -maxdepth 1 ! -name 'gate-pass' ! -name 'zz-gate-pass-office-link' -type l -printf '%f ' 2>/dev/null); do
     port=$(grep -oP 'listen\s+\K[0-9]+' "/etc/nginx/sites-enabled/$other" 2>/dev/null | head -1)
     [ -n "$port" ] || continue
     if curl -sf --max-time 5 -o /dev/null "http://127.0.0.1:$port/"; then
