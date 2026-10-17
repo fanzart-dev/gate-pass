@@ -64,6 +64,50 @@ every page behind it needs a password — but the door is now in public, so:
 When there is time, the stronger version is Cloudflare Access in front of it,
 so only a company email address reaches the sign-in page at all.
 
+## When the public link times out in the office and works everywhere else
+
+On **17-10-2026** every office PC without Tailscale got **ERR_TIMED_OUT** on
+`https://gatepass.tailaf7188.ts.net`, while the same link opened from the rest
+of the world (checked from 40 places, India included). The server was fine.
+The office internet line (ACT) had stopped connecting to Tailscale's relay at
+all — it had been dropping it for a few minutes a day all week — and a PC in
+the building reaches the public link *through* that relay.
+
+No setting on the server can repair an ISP's route, so the fix is to stop
+needing it in the building: the server answers the public name on the LAN
+too, with the same genuine certificate, and office PCs are told to go there.
+
+**On the server, once** (renews itself daily after that):
+
+```bash
+sudo /opt/gate-pass/deploy/enable-office-link.sh
+```
+
+**Then point the office at it — either:**
+
+* **the router, once, for every machine:** a local / static DNS entry
+  `gatepass.tailaf7188.ts.net → 192.168.1.45`; or
+* **each Windows PC**, from an Administrator PowerShell:
+
+  ```powershell
+  Set-ExecutionPolicy -Scope Process Bypass -Force
+  irm http://192.168.1.45/fix-name-windows.ps1 -OutFile fix-name.ps1
+  .\fix-name.ps1 -Name gatepass.tailaf7188.ts.net
+  ```
+
+  It checks the server really presents the link's certificate before it
+  changes anything, so it cannot swap a timeout for a certificate warning.
+  `.\fix-name.ps1 -Undo -Name gatepass.tailaf7188.ts.net` reverses it.
+
+**Not on a laptop that leaves the office.** The hosts entry says "the link
+lives at 192.168.1.45", which is only true in this building; anywhere else the
+link would stop opening on that laptop. Laptops should use Tailscale.
+
+The link watchdog now tells this case apart: when the server's own line cannot
+even connect to the relay, it logs `CANNOT TEST FROM HERE — not a fault on this
+server` and leaves the published config alone, instead of tearing it down and
+rebuilding it every minute while everyone outside is using it.
+
 ## In the office: `https://fanzart-server.local` or `https://192.168.1.45`
 
 The IP always works, on every machine, because nothing has to resolve it. The
@@ -125,9 +169,9 @@ given a different IP, the line becomes wrong and has to be updated — which is
 why the server has a fixed address. See "If the server's IP changes" below.
 
 Each machine still needs the certificate installed once. **If that is a
-nuisance, just use the public link above** — it works on the LAN too, needs no
-certificate, and is the right answer for a visitor or a machine nobody wants to
-set up.
+nuisance, just use the public link above** — needs no certificate, and is the
+right answer for a visitor or a machine nobody wants to set up. In the
+building it depends on the office path above being set up.
 
 Each machine needs the server's certificate installed **once**. Until it is,
 the browser says "Not secure" and staff have to click through a security

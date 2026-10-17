@@ -75,14 +75,44 @@ done
 note "HTTPS will listen on:$ADDRESSES"
 
 say "nginx"
+# The public link's name, answered on the LAN as well, once
+# enable-office-link.sh has fetched its certificate. Rendered here rather than
+# as a site of its own so that every re-run of this script — which install.sh
+# does on every update — keeps it, and so it always listens on exactly the
+# addresses the main TLS site does (two sites disagreeing over a socket's
+# options is a config nginx refuses outright).
+TAILNET_TLS_DIR=/etc/gate-pass/tailnet-tls
+TAILNET_NAME=""
+if [ -f "$TAILNET_TLS_DIR/name" ]; then
+    TAILNET_NAME="$(tr -d '[:space:]' < "$TAILNET_TLS_DIR/name")"
+    # It is pasted into the nginx config, so it must be a hostname and nothing else.
+    if ! [[ "$TAILNET_NAME" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
+        note "WARNING: $TAILNET_TLS_DIR/name does not hold a hostname — ignoring it"
+        TAILNET_NAME=""
+    elif [ -s "$TAILNET_TLS_DIR/$TAILNET_NAME.crt" ] && [ -s "$TAILNET_TLS_DIR/$TAILNET_NAME.key" ]; then
+        note "also answering as $TAILNET_NAME on the LAN"
+    else
+        note "WARNING: no certificate for $TAILNET_NAME in $TAILNET_TLS_DIR —"
+        note "         the office path is off until: sudo deploy/enable-office-link.sh"
+        TAILNET_NAME=""
+    fi
+fi
 cp -f /etc/nginx/sites-available/gate-pass /etc/nginx/sites-available/gate-pass.bak 2>/dev/null || true
-LISTEN_LINES="$LISTEN_LINES" python3 - "$APP_DIR" "$CERT_DIR" <<'PY' > /etc/nginx/sites-available/gate-pass
+LISTEN_LINES="$LISTEN_LINES" TAILNET_NAME="$TAILNET_NAME" TAILNET_TLS_DIR="$TAILNET_TLS_DIR" \
+python3 - "$APP_DIR" "$CERT_DIR" <<'PY' > /etc/nginx/sites-available/gate-pass
 import os, sys
 app_dir, cert_dir = sys.argv[1], sys.argv[2]
+listen = os.environ["LISTEN_LINES"].rstrip("\n")
 template = open(f"{app_dir}/deploy/nginx-gate-pass-ssl.conf").read()
 print(template.replace("__APP_DIR__", app_dir)
               .replace("__CERT_DIR__", cert_dir)
-              .replace("__HTTPS_LISTEN__", os.environ["LISTEN_LINES"].rstrip("\n")))
+              .replace("__HTTPS_LISTEN__", listen))
+name = os.environ.get("TAILNET_NAME", "")
+if name:
+    extra = open(f"{app_dir}/deploy/nginx-gate-pass-tailnet-name.conf").read()
+    print(extra.replace("__HTTPS_LISTEN__", listen)
+               .replace("__TAILNET_NAME__", name)
+               .replace("__TAILNET_TLS_DIR__", os.environ["TAILNET_TLS_DIR"]))
 PY
 ln -sf /etc/nginx/sites-available/gate-pass /etc/nginx/sites-enabled/gate-pass
 
@@ -142,6 +172,22 @@ for asset in /static/css/style.css /static/img/fanzart-logo.png; do
     [ "$a" = "200" ] || die "$asset returned '${a:-no response}' over HTTPS"
 done
 note "static files serve over HTTPS"
+
+# Verified, not -k: the whole point of the office path is a padlock nobody had
+# to install anything for, so a certificate the system store rejects is a fail.
+if [ -n "$TAILNET_NAME" ]; then
+    tn=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              --resolve "$TAILNET_NAME:443:$FIRST" "https://$TAILNET_NAME/login")
+    # A warning, not a stop: the main site is up and fine at this point, and
+    # failing here would make install.sh report HTTPS as broken when it is not.
+    if [ "$tn" = "200" ]; then
+        note "https://$TAILNET_NAME/login on $FIRST -> 200, genuine certificate"
+    else
+        note "WARNING: https://$TAILNET_NAME/login on $FIRST returned '${tn:-no response}'"
+        note "         office machines using that name will fail. If it is a"
+        note "         certificate error: sudo deploy/enable-office-link.sh --renew"
+    fi
+fi
 
 redirect=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 8 "http://$FIRST/login")
 note "http://$FIRST/login -> $redirect"

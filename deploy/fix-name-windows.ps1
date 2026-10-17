@@ -9,6 +9,15 @@
 #
 # To undo it later:   .\fix-name-windows.ps1 -Undo
 #
+# The public link, on an office PC whose internet line cannot reach Tailscale's
+# relay (ERR_TIMED_OUT on gatepass...ts.net in the building, fine elsewhere):
+#
+#   .\fix-name-windows.ps1 -Name gatepass.tailaf7188.ts.net
+#
+# The server must have run deploy/enable-office-link.sh first. NOT on a laptop
+# that leaves the office: away from the building 192.168.1.45 is not the
+# server, and the link would stop working for it there.
+#
 #
 # WHY THIS IS NEEDED AT ALL
 # ---------------------------------------------------------------------------
@@ -52,6 +61,18 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# The public link's name works without this script everywhere but the office,
+# so for it the mDNS diagnosis below is beside the point and the certificate
+# step at the end does not apply — its certificate is a public one.
+$IsPublicName = $Name -like "*.ts.net"
+
+# One marker per name, so entries for two names can sit side by side and
+# undoing one leaves the other alone. The old marker carried no name; it is
+# still recognised, so an entry written before this change is replaced cleanly.
+$marker       = "# Fanzart Gate Pass - $Name - added by fix-name-windows.ps1"
+$oldMarker    = "^\s*#\s*Fanzart Gate Pass - added by fix-name-windows\.ps1\s*$"
+$markerRegex  = "^\s*" + [regex]::Escape($marker) + "\s*$"
 function Say  ($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
 function Note ($m) { Write-Host "    $m" }
 function Warn ($m) { Write-Host "    $m" -ForegroundColor Yellow }
@@ -74,7 +95,8 @@ if ($Undo) {
     if (-not (Test-Path $hostsPath)) { Fail "no hosts file at $hostsPath" }
     $lines = Get-Content $hostsPath
     $kept  = $lines | Where-Object { $_ -notmatch "\s$([regex]::Escape($Name))\s*$" `
-                                     -and $_ -notmatch "^\s*#\s*Fanzart Gate Pass" }
+                                     -and $_ -notmatch $markerRegex `
+                                     -and $_ -notmatch $oldMarker }
     if ($kept.Count -eq $lines.Count) {
         Note "there was no entry to remove"
     } else {
@@ -137,6 +159,9 @@ if ($before) {
         Note "which is correct — this machine's problem is not name resolution."
         Note "If the browser still fails, it is the certificate, not the name:"
         Note "  run trust-ca-windows.ps1, and see OFFICE-MACHINES.md for Kaspersky."
+    } elseif ($IsPublicName) {
+        Note "which is Tailscale's relay on the internet — the route this office's"
+        Note "internet line is not carrying. Pointing the name at the server instead."
     } else {
         Warn "which is NOT the server — a stale entry is pointing somewhere wrong."
     }
@@ -152,6 +177,7 @@ if ($before) {
 # the same time. The others are things a hosts entry genuinely is the answer
 # to. Every check is wrapped, because this is diagnosis — it must never be the
 # reason the repair does not run.
+if (-not $IsPublicName) {
 Say "Why mDNS is not working here"
 try {
     $profiles = Get-NetConnectionProfile -ErrorAction Stop
@@ -183,13 +209,46 @@ if (Get-Service -Name "AVP*","klnagent*" -ErrorAction SilentlyContinue) {
     Warn "  arrive, and it is a common reason .local stops working on Windows."
     Warn "  The hosts entry below sidesteps it entirely."
 }
+}   # end of the mDNS diagnosis
+
+# ---------------------------------------- the public name: served here? ---
+# Pointing the public name at the server is only right once the server answers
+# it — after deploy/enable-office-link.sh. Before that the server would present
+# its office certificate for it, and this PC would trade a timeout for a
+# certificate error. So: open TLS to the server, asking for the public name,
+# and let Windows judge the certificate exactly as the browser will.
+if ($IsPublicName) {
+    Say "Checking the server answers $Name with a genuine certificate"
+    $served = $false; $why = ""
+    try {
+        $tcp = New-Object Net.Sockets.TcpClient
+        $tcp.Connect($ServerIp, 443)
+        $ssl = New-Object Net.Security.SslStream($tcp.GetStream(), $false)
+        # TLS 1.2 named outright: Windows PowerShell 5.1 can default to older
+        # protocols the server refuses, which would read as a bad certificate.
+        $ssl.AuthenticateAsClient($Name, $null,
+            [Security.Authentication.SslProtocols]::Tls12, $false)
+        $served = $ssl.IsAuthenticated
+        $ssl.Dispose(); $tcp.Close()
+    } catch { $why = $_.Exception.InnerException.Message; if (-not $why) { $why = $_.Exception.Message } }
+    if (-not $served) {
+        Fail @"
+the server at $ServerIp does not answer $Name with a valid certificate yet
+        ($why)
+
+        Nothing was changed on this PC. On the server, run once:
+            sudo /opt/gate-pass/deploy/enable-office-link.sh
+        then run this script again.
+"@
+    }
+    Good "it does — the same certificate the public link carries"
+}
 
 # ------------------------------------------------------- 3. write it down ---
 Say "Updating $hostsPath"
 Copy-Item $hostsPath "$hostsPath.bak" -Force
 Note "backed up to $hostsPath.bak"
 
-$marker = "# Fanzart Gate Pass - added by fix-name-windows.ps1"
 $lines  = @(Get-Content $hostsPath -ErrorAction SilentlyContinue)
 
 # Matched as the whole last field, not as a substring: a plain -match on the
@@ -197,7 +256,7 @@ $lines  = @(Get-Content $hostsPath -ErrorAction SilentlyContinue)
 # the machine worse off than it started.
 $escaped = [regex]::Escape($Name)
 $kept = $lines | Where-Object {
-    $_ -notmatch "\s$escaped\s*$" -and $_ -notmatch "^\s*#\s*Fanzart Gate Pass"
+    $_ -notmatch "\s$escaped\s*$" -and $_ -notmatch $markerRegex -and $_ -notmatch $oldMarker
 }
 $removed = $lines.Count - $kept.Count
 if ($removed -gt 0) { Note "replaced $removed existing line(s) for $Name" }
@@ -240,6 +299,31 @@ try {
     }
 } catch {
     Warn "the name resolves but http://$Name did not answer — check a firewall"
+}
+
+if ($IsPublicName) {
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $code = (Invoke-WebRequest -Uri "https://$Name/login" -UseBasicParsing -TimeoutSec 10).StatusCode
+        Good "https://$Name/login -> $code, padlock and all"
+    } catch {
+        Warn "https://$Name/login did not load: $($_.Exception.Message)"
+    }
+    Write-Host @"
+
+    ------------------------------------------------------------------
+    Done. Open  https://$Name
+
+    On this PC it now goes straight to the server across the office
+    network, and no longer depends on the internet line at all.
+
+    This is written down for THIS building. If this machine is ever
+    used elsewhere, undo it first, or the link will not open there:
+        .\fix-name-windows.ps1 -Undo -Name $Name
+    ------------------------------------------------------------------
+
+"@ -ForegroundColor Green
+    exit 0
 }
 
 Write-Host @"

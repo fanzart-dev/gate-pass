@@ -1,0 +1,13 @@
+[Unit]
+Description=Renew the Gate Pass office-path certificate daily
+
+[Timer]
+# Let's Encrypt certificates last 90 days and tailscaled renews well before
+# the end, so daily is plenty; Persistent catches a run missed while the
+# server was off.
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

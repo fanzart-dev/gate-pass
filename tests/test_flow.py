@@ -7287,6 +7287,186 @@ def test_the_windows_name_repair_cannot_depend_on_the_name():
           "hosts file" in doc and "wrong" in doc.lower())
 
 
+def test_the_public_link_has_an_office_path(tmpdir):
+    """The public name, answered on the LAN with its own genuine certificate.
+
+    On 17-10-2026 the office ISP stopped connecting to Tailscale's relay. The
+    link worked from everywhere else and timed out on every office PC without
+    Tailscale. enable-office-link.sh fetches the name's certificate and
+    enable-https.sh then adds a server block answering the name on the LAN
+    address, handing over to the Funnel's own front door.
+    """
+    extra = (ROOT / "deploy" / "nginx-gate-pass-tailnet-name.conf").read_text()
+    ssl_conf = (ROOT / "deploy" / "nginx-gate-pass-ssl.conf").read_text()
+    enable = (ROOT / "deploy" / "enable-https.sh").read_text()
+    office = ROOT / "deploy" / "enable-office-link.sh"
+    office_src = office.read_text()
+
+    for placeholder in ("__HTTPS_LISTEN__", "__TAILNET_NAME__", "__TAILNET_TLS_DIR__"):
+        check(f"the office-path template fills in {placeholder}", placeholder in extra)
+    # Placeholders are replaced as plain strings, so one named in a comment
+    # would be substituted there too (see the listen placeholder above).
+    check("its listen placeholder appears exactly once",
+          extra.count("__HTTPS_LISTEN__") == 1)
+    check("it hands over to the Funnel's front door, so it IS the public site",
+          "proxy_pass http://127.0.0.1:8091;" in extra
+          and "proxy_pass http://127.0.0.1:8090" not in extra)
+    check("and passes the Host through for the same-origin check",
+          "proxy_set_header Host              $host;" in extra)
+
+    # Render both the way enable-https.sh does.
+    listen = "    listen 127.0.0.1:443 ssl;\n    listen 192.168.1.45:443 ssl;"
+    name = "gatepass.tailaf7188.ts.net"
+    rendered = (ssl_conf.replace("__APP_DIR__", "/opt/gate-pass")
+                        .replace("__CERT_DIR__", "/opt/gate-pass/deploy/certs")
+                        .replace("__HTTPS_LISTEN__", listen)
+                + "\n" + extra.replace("__HTTPS_LISTEN__", listen)
+                              .replace("__TAILNET_NAME__", name)
+                              .replace("__TAILNET_TLS_DIR__", "/etc/gate-pass/tailnet-tls"))
+    depth = 0
+    for raw in rendered.split("\n"):
+        line = raw.split("#")[0].strip()
+        depth += line.count("{") - line.count("}")
+    check("the combined config's braces balance", depth == 0)
+    check("it adds one server, answering only the public name",
+          len(re.findall(r"^server \{", rendered, re.M)) == 4
+          and f"server_name {name};" in rendered)
+    # nginx gives a socket's unnamed traffic to the FIRST server on it. The
+    # LAN TLS site must stay first, or https://192.168.1.45 would start
+    # presenting the ts.net certificate and every office bookmark would warn.
+    check("the LAN site stays the default for the address",
+          rendered.index("server_name _;\n\n    ssl_certificate     /opt/gate-pass/deploy/certs")
+          < rendered.index(f"server_name {name};"))
+    check("on the very same addresses as the LAN site",
+          len(re.findall(r"listen 192\.168\.1\.45:443 ssl;", rendered)) == 2)
+    check("with the certificate tailscale cert writes",
+          f"ssl_certificate     /etc/gate-pass/tailnet-tls/{name}.crt;" in rendered)
+
+    # enable-https.sh renders it, so every update (install.sh re-runs it)
+    # keeps the office path; and only when the certificate is there.
+    check("enable-https.sh renders the office path",
+          "nginx-gate-pass-tailnet-name.conf" in enable
+          and '-s "$TAILNET_TLS_DIR/$TAILNET_NAME.crt"' in enable)
+    check("and refuses a name that is not a hostname before pasting it into nginx",
+          "does not hold a hostname" in enable)
+    check("and proves the name answers with a certificate the system trusts",
+          '--resolve "$TAILNET_NAME:443:$FIRST"' in enable
+          and not re.search(r"curl -s?k[^\n]*TAILNET_NAME", enable))
+
+    check("enable-office-link.sh is executable", os.access(office, os.X_OK))
+    check("and does not use set -e, which hides its own failures",
+          "set -uo pipefail" in office_src and "set -euo" not in office_src)
+    check("it fetches the genuine certificate from tailscaled",
+          "tailscale cert --cert-file" in office_src)
+    # A half-written key read by a reload takes the office path down; a
+    # failed fetch must leave the working pair alone.
+    check("writing it beside the live files and moving it into place",
+          '"$TLS_DIR/.new.crt"' in office_src and 'mv -f "$crt"' in office_src)
+    check("and keeps the private key private",
+          'chmod 600 "$key"' in office_src)
+    for unit in ("gate-pass-tailnet-cert.service", "gate-pass-tailnet-cert.timer"):
+        check(f"its renewal unit {unit} exists", (ROOT / "deploy" / unit).is_file())
+    check("the renewal runs --renew",
+          "enable-office-link.sh --renew" in
+          (ROOT / "deploy" / "gate-pass-tailnet-cert.service").read_text())
+    check("it warns against the per-PC step on a laptop that leaves the office",
+          "laptop" in office_src.lower())
+
+    # The Windows side. Pointing the name at the server before the server
+    # answers it would swap a timeout for a certificate error, so it checks
+    # with a real TLS handshake for the name first.
+    ps = (ROOT / "deploy" / "fix-name-windows.ps1").read_text()
+    check("the Windows script knows the public name",
+          '$IsPublicName = $Name -like "*.ts.net"' in ps)
+    check("and verifies the server presents its certificate before writing",
+          "AuthenticateAsClient($Name" in ps
+          and ps.index("AuthenticateAsClient($Name") < ps.index('Updating $hostsPath'))
+    # One marker per name: undoing one name must not strip another's marker.
+    check("each entry is marked with its own name",
+          '$marker       = "# Fanzart Gate Pass - $Name' in ps
+          and '-notmatch "^\\s*#\\s*Fanzart Gate Pass"' not in ps)
+
+    doc = (ROOT / "deploy" / "OFFICE-MACHINES.md").read_text()
+    check("the office document explains the office path",
+          "enable-office-link.sh" in doc and "-Name gatepass.tailaf7188.ts.net" in doc)
+
+
+def test_the_link_watchdog_does_not_repair_a_road(tmpdir):
+    """Run watch-public-link.sh against fake tailscale/curl/dig.
+
+    When this server's own line cannot even connect to the relay, rebuilding
+    the serve config fixes nothing and tears down the live one every minute
+    while the rest of the world is using it. That ran every minute for a
+    week. It must only repair what it can repair.
+    """
+    import subprocess
+
+    def run(scenario):
+        work = Path(tmpdir) / f"watch-{scenario}"
+        (work / "deploy").mkdir(parents=True)
+        (work / "bin").mkdir()
+        shutil.copy(ROOT / "deploy" / "watch-public-link.sh", work / "deploy")
+        calls = work / "calls.log"
+        fakes = {
+            # The real clean-tailnet-serve.sh must never run in a test.
+            "deploy/clean-tailnet-serve.sh": f'echo clean "$@" >> {calls}',
+            "bin/id": "echo 0",
+            "bin/sleep": "true",
+            "bin/systemctl": f'echo systemctl "$@" >> {calls}',
+            "bin/dig": "echo 103.84.155.153; echo 103.84.155.217",
+            "bin/tailscale": f"""
+case "$1" in
+  status) echo '{{"Self": {{"DNSName": "gatepass.example.ts.net."}}}}' ;;
+  funnel)
+    if [ "$2" = status ]; then
+      [ "$SCEN" = unpublished ] && {{ echo "No serve config"; exit 0; }}
+      echo "https://gatepass.example.ts.net (Funnel on)"
+      echo "|-- / proxy http://127.0.0.1:8091"
+    else
+      echo tailscale "$@" >> {calls}; touch {work}/repaired
+    fi ;;
+esac""",
+            "bin/curl": f"""
+for a in "$@"; do last="$a"; done
+case "$*" in
+  *--resolve*)
+    if [ -e {work}/repaired ] && [ "$SCEN" != noroute ]; then printf '200\\t0.1\\t0.5\\t0.8'
+    elif [ "$SCEN" = badgateway ]; then printf '502\\t0.1\\t0.5\\t0.8'
+    else printf '000\\t0.000000\\t0.000000\\t8.0'; exit 28; fi ;;
+  *127.0.0.1:8091*) printf 200 ;;
+  *controlplane*) printf 404 ;;
+esac""",
+        }
+        for rel, body in fakes.items():
+            path = work / rel
+            path.write_text("#!/usr/bin/env bash\n" + body + "\n")
+            path.chmod(0o755)
+        env = dict(os.environ, SCEN=scenario,
+                   PATH=f"{work / 'bin'}:{os.environ['PATH']}")
+        done = subprocess.run(["bash", str(work / "deploy" / "watch-public-link.sh")],
+                              env=env, capture_output=True, text=True, timeout=60)
+        return done.returncode, done.stdout, calls.read_text() if calls.exists() else ""
+
+    code, out, calls = run("noroute")
+    check("no connection to the relay at all: says it cannot test from here",
+          code == 2 and "CANNOT TEST FROM HERE" in out)
+    check("and repairs nothing", "repairing" not in out and calls == "")
+
+    code, out, calls = run("unpublished")
+    check("no connection AND the funnel missing: that one it does repair",
+          "repairing" in out and "tailscale funnel --bg" in calls)
+    check("and says what it found", "is not published as expected" in out)
+
+    # The relay connects but serves an error: a config fault, repaired — and
+    # the re-check must see the 200 it gets afterwards. It compared the whole
+    # code<TAB>timings line with 200, so a repair that worked was always
+    # reported as STILL DOWN.
+    code, out, calls = run("badgateway")
+    check("a relay that answers badly is repaired", "repairing" in out)
+    check("and a repair that works is reported as working",
+          code == 0 and "REPAIRED" in out and "STILL DOWN" not in out)
+
+
 def test_nginx_hands_out_the_repair_scripts_but_not_the_rest_of_deploy():
     """Same reasoning as the CA file, and the same limit on it.
 
@@ -8175,6 +8355,8 @@ def main():
         test_the_office_instructions_do_not_name_a_dead_host(tmpdir)
         test_the_windows_name_repair_cannot_depend_on_the_name()
         test_nginx_hands_out_the_repair_scripts_but_not_the_rest_of_deploy()
+        test_the_public_link_has_an_office_path(tmpdir)
+        test_the_link_watchdog_does_not_repair_a_road(tmpdir)
         test_totals_are_shown_live_and_derived_on_save(tmpdir)
         test_the_register_shows_what_has_reached_paper(tmpdir)
         test_the_printed_totals_are_bolder_than_the_rows(tmpdir)

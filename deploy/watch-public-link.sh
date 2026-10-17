@@ -77,13 +77,15 @@ if [ "$MODE" = "--report" ]; then
     printf "  %s\n\n" "------------------------------------------------------"
     awk -F'\t' '
         { n++; total += $6; if ($6 > max) { max = $6; when = $1 }
-          if ($3 !~ /^(200|301|302|401|403)$/) failed++
+          if ($3 !~ /^(200|301|302|401|403)$/) { failed++; if ($4 + 0 == 0) noroute++ }
           else if ($6 > 3) slow++
           if ($1 >= start) {} }
         END {
             if (n == 0) { print "  nothing recorded yet"; exit }
             printf "  probes            %d\n", n
             printf "  timed out         %d  (%.1f%%)\n", failed, failed * 100 / n
+            printf "    of which no connection to the relay at all  %d\n", noroute
+            printf "    (that is the route from this line, not the server)\n"
             printf "  slow, over 3s     %d  (%.1f%%)\n", slow, slow * 100 / n
             printf "  average           %.2fs\n", total / n
             printf "  worst             %.2fs  at %s\n", max, when
@@ -182,9 +184,11 @@ probe() {
 }
 
 reachable=0
+connected=0     # did ANY probe get as far as a TCP connection to the relay?
 for ip in $ADDRS; do
     IFS=$'\t' read -r code conn tls total <<< "$(probe "$ip")"
     total="${total:-0}"
+    awk "BEGIN{exit !(${conn:-0} > 0)}" 2>/dev/null && connected=1
 
     # One line per probe, kept so "it was slow again this afternoon" can be
     # answered with numbers instead of an impression.
@@ -211,6 +215,42 @@ if [ "$reachable" = "1" ]; then
     exit 0
 fi
 
+# Not one probe even connected. That is a different failure from the relay
+# answering badly, and it has a different owner: the relay is out on the
+# internet, so "cannot open a TCP connection to it" is about the road from
+# here, not about anything this machine publishes. This server sits on the
+# office line, so when the office ISP stops carrying traffic to the relay —
+# as it did on 17-10-2026, while the link worked from everywhere else in the
+# world — this check fails exactly as the office PCs do.
+#
+# Rebuilding the serve config cannot fix a road. Doing it anyway every minute
+# is worse than useless: it tears the live config down and puts it back while
+# the rest of the world is using it, and the log fills with "STILL DOWN, needs
+# a person" that sends the person after the wrong thing. So: confirm what is
+# ours is in order — the funnel is published for this name and the front door
+# answers — and if it is, say plainly where the fault is and touch nothing.
+if [ "$connected" = "0" ]; then
+    published=0
+    tailscale funnel status 2>/dev/null | grep -q "https://$NAME (Funnel on)" \
+        && tailscale funnel status 2>/dev/null | grep -q "proxy $FRONT_DOOR" \
+        && published=1
+    door="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$FRONT_DOOR/login" 2>/dev/null)"
+    internet="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://controlplane.tailscale.com/ 2>/dev/null)"
+    if [ "$published" = "1" ] && [ "$door" = "200" ] && [ "${internet:-000}" != "000" ]; then
+        log "CANNOT TEST FROM HERE — not a fault on this server, nothing repaired."
+        log "  This server's internet line cannot open a connection to Tailscale's"
+        log "  relay ($(echo $ADDRS | tr ' ' ',')), though it reaches the rest of the internet"
+        log "  and the funnel is published and answering. That is the office ISP's"
+        log "  route to the relay. The link is very likely fine for everyone else;"
+        log "  office PCs without Tailscale fail the same way, which is what"
+        log "  deploy/enable-office-link.sh is for."
+        exit 2
+    fi
+    [ "$published" = "1" ] || log "the funnel for $NAME is not published as expected"
+    [ "$door" = "200" ]    || log "the front door $FRONT_DOOR/login answered '${door:-nothing}'"
+    [ "${internet:-000}" != "000" ] || log "this server cannot reach the internet at all"
+fi
+
 log "NOT reachable from outside — every public address failed"
 [ "$MODE" = "--check" ] && { log "--check given, nothing repaired"; exit 1; }
 
@@ -226,7 +266,10 @@ tailscale funnel --bg --https=443 "$FRONT_DOOR" >/dev/null 2>&1 \
 sleep 10
 ADDRS="$(dig +short @1.1.1.1 "$NAME" A 2>/dev/null | grep -E '^[0-9.]+$' | head -4)"
 for ip in $ADDRS; do
-    code="$(probe "$ip")"
+    # probe prints code<TAB>connect<TAB>tls<TAB>total. Matching the whole line
+    # against 200 never succeeded, so a repair that worked was still reported
+    # as STILL DOWN.
+    IFS=$'\t' read -r code _ <<< "$(probe "$ip")"
     case "$code" in
         200|301|302|401|403) log "REPAIRED — $ip now answers $code"; exit 0 ;;
     esac

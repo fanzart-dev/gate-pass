@@ -1,0 +1,10 @@
+[Unit]
+# Installed by deploy/enable-office-link.sh, which fills in the path.
+# Do not edit the copy under /etc/systemd — a reinstall overwrites it.
+Description=Renew the Gate Pass public link's certificate for the office path
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=__APP_DIR__/deploy/enable-office-link.sh --renew
