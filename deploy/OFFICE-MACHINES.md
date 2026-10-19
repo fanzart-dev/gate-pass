@@ -114,6 +114,32 @@ anything. `.\fix-name.ps1 -Undo -Name gatepass.tailaf7188.ts.net` reverses it.
 To take all of it away: set the router's DNS back, then
 `sudo /opt/gate-pass/deploy/enable-office-link.sh --off`.
 
+### If it happens again
+
+The office path covers every public link on the server, not only Gate Pass:
+`gatepass.tailaf7188.ts.net` (Gate Pass, FanIQ on :8443, MailStream on
+:10000) and `fz-service.tailaf7188.ts.net` (the service app, which is its own
+Tailscale node in Docker). It finds them by looking, and the daily renewal
+looks again, so a new app or port published through Funnel is picked up by
+itself within a day (or at once: re-run the setup command).
+
+1. **One command says where the fault is:**
+
+   ```bash
+   ssh gatepass /opt/gate-pass/deploy/enable-office-link.sh --status
+   ```
+
+2. **Relay DOWN, "Inside the office" all OK** — the ISP route again. Nothing
+   to fix on the server; PCs using the server for DNS are unaffected. If a PC
+   still fails, run `nslookup gatepass.tailaf7188.ts.net` on it: it must say
+   `192.168.1.45`. If it says `103.84.x.x`, that PC is not using the server
+   for DNS — check the router's DHCP Primary DNS is still `192.168.1.45`
+   (a router reset or firmware update can clear it), then restart the PC.
+3. **Anything FAIL under "Inside the office"** — re-run the setup, which
+   repairs it: `sudo /opt/gate-pass/deploy/enable-office-link.sh`.
+4. **Nothing works and you need it now** — `https://192.168.1.45` (Gate Pass)
+   and `http://192.168.1.45:8100` (service app) never touch the internet.
+
 The link watchdog now tells this case apart: when the server's own line cannot
 even connect to the relay, it logs `CANNOT TEST FROM HERE — not a fault on this
 server` and leaves the published config alone, instead of tearing it down and

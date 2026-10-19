@@ -7287,6 +7287,68 @@ def test_the_windows_name_repair_cannot_depend_on_the_name():
           "hosts file" in doc and "wrong" in doc.lower())
 
 
+def _render_office_link(tmpdir):
+    """Run enable-office-link.sh's discover() and render() with fakes on PATH."""
+    import subprocess
+    work = Path(tmpdir) / "office-link-render"
+    (work / "bin").mkdir(parents=True)
+    tls = work / "tls"
+    tls.mkdir()
+    for host in ("gatepass.example.ts.net", "fz.example.ts.net"):
+        (tls / f"{host}.crt").write_text("cert\n")
+        (tls / f"{host}.key").write_text("key\n")
+    main_serve = {
+        "Web": {f"gatepass.example.ts.net:{p}": {"Handlers": {"/": {"Proxy": t}}}
+                for p, t in (("443", "http://127.0.0.1:8091"), ("8443", "http://127.0.0.1:8077"),
+                             ("10000", "http://127.0.0.1:8092"), ("9000", "http://127.0.0.1:9001"))},
+        "AllowFunnel": {f"gatepass.example.ts.net:{p}": True for p in ("443", "8443", "10000")}}
+    fz_serve = {
+        "Web": {"fz.example.ts.net:443": {"Handlers": {"/": {"Proxy": "http://nginx:80"}}},
+                "fz.example.ts.net:8080": {"Handlers": {"/": {"Proxy": "http://web:8000"}}}},
+        "AllowFunnel": {"fz.example.ts.net:443": True}}
+    (work / "main.json").write_text(json.dumps(main_serve))
+    (work / "fz.json").write_text(json.dumps(fz_serve))
+    fakes = {
+        "tailscale": f"""
+case "$*" in
+  "status --json") echo '{{"Self": {{"DNSName": "gatepass.example.ts.net."}}}}' ;;
+  "serve status --json") cat {work}/main.json ;;
+esac""",
+        "docker": f"""
+case "$*" in
+  *com.docker.compose.service=nginx*) echo fz-nginx-1 ;;
+  "ps --format"*) echo "fz-tailscale-1 tailscale/tailscale:stable"; echo "fz-db-1 postgres:17" ;;
+  *Config.Env*) echo "TS_HOSTNAME=fz" ;;
+  *com.docker.compose.project*) echo fz ;;
+  "exec fz-tailscale-1 tailscale --socket=/tmp/tailscaled.sock status --json")
+      echo '{{"Self": {{"DNSName": "fz.example.ts.net."}}}}' ;;
+  "exec fz-tailscale-1 tailscale --socket=/tmp/tailscaled.sock serve status --json") cat {work}/fz.json ;;
+  "port fz-nginx-1 80/tcp") echo 0.0.0.0:8100; echo "[::]:8100" ;;
+esac""",
+        "ss": "true",
+    }
+    for name, body in fakes.items():
+        path = work / "bin" / name
+        path.write_text("#!/usr/bin/env bash\n" + body + "\n")
+        path.chmod(0o755)
+    script = ROOT / "deploy" / "enable-office-link.sh"
+    harness = f"""
+set -uo pipefail
+APP_DIR={ROOT}; TLS_DIR={tls}; SITE={work}/site; DNS_CONF={work}/dns
+LAN_IP=192.168.1.45; GATEWAY=192.168.1.1
+note() {{ :; }}
+source <(sed -n '/^valid_name()/p; /^self_name()/,/^# -* certificates/p; /^render()/,/^}}/p' {script})
+NODES="$(discover)"
+render
+cat "$RENDERED_SITE" > {work}/out.site; cat "$RENDERED_DNS" > {work}/out.dns
+printf '%s' "$NAMES_PORTS" > {work}/out.np
+"""
+    subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=60,
+                   env=dict(os.environ, PATH=f"{work / 'bin'}:{os.environ['PATH']}"))
+    read = lambda name: (work / name).read_text() if (work / name).exists() else ""
+    return read("out.site"), read("out.dns"), read("out.np"), read("tls/nodes.new")
+
+
 def test_the_public_link_has_an_office_path(tmpdir):
     """The public name, answered on the LAN with its own genuine certificate.
 
@@ -7403,30 +7465,37 @@ def test_the_public_link_has_an_office_path(tmpdir):
           "zz-gate-pass-office-link" > "mailstream"
           and "/etc/nginx/sites-available/zz-gate-pass-office-link" in office_src)
 
-    # Run the script's own port reader against a real serve config.
-    reader = re.search(r"PORTS=\"\$\(tailscale serve status --json[^']*'\n(.*?)\n'\)\"",
-                       office_src, re.S)
-    check("the port reader can be found", reader)
-    if reader:
-        import subprocess
-        serve = {"Web": {f"{name}:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8091"}}},
-                         f"{name}:8443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8077"}}},
-                         f"{name}:10000": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8092"}}},
-                         f"{name}:9000": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:9001"}}},
-                         f"other.ts.net:8443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:1"}}}},
-                 "AllowFunnel": {f"{name}:443": True, f"{name}:8443": True,
-                                 f"{name}:10000": True, "other.ts.net:8443": True}}
-        out = subprocess.run([sys.executable, "-c", reader.group(1)], input=json.dumps(serve),
-                             env=dict(os.environ, NAME=name), capture_output=True,
-                             text=True, timeout=10).stdout.split("\n")
-        check("it picks up the name's other Funnel ports",
-              "10000 http://127.0.0.1:8092" in out and "8443 http://127.0.0.1:8077" in out)
-        check("but not 443, which the gate pass site already answers",
-              not any(line.startswith("443 ") for line in out))
-        # A tailnet-only port must not be opened to the LAN by this script.
-        check("and never a port that is tailnet-only",
-              not any(line.startswith("9000 ") for line in out))
-        check("nor another machine's name", "http://127.0.0.1:1" not in "\n".join(out))
+    # Run the script's own discovery and rendering against fake tailscale,
+    # docker and ss: this server's node, plus a Tailscale node in a Docker
+    # container (the FZ service app), which publishes "http://nginx:80".
+    rendered_site, rendered_dns, names_ports, nodes = _render_office_link(tmpdir)
+    main, fz = "gatepass.example.ts.net", "fz.example.ts.net"
+    blocks = {}
+    for block in re.findall(r"server \{.*?\n\}", rendered_site, re.S):
+        server = re.search(r"server_name (\S+);", block).group(1)
+        port = re.search(r"listen 192\.168\.1\.45:(\d+) ssl;", block).group(1)
+        proxy = re.search(r"proxy_pass (\S+);", block).group(1)
+        blocks[(server, port)] = proxy
+    check("it serves the server's other Funnel ports",
+          blocks.get((main, "8443")) == "http://127.0.0.1:8077"
+          and blocks.get((main, "10000")) == "http://127.0.0.1:8092")
+    check("but not its 443, which the gate pass site already answers",
+          (main, "443") not in blocks)
+    # A tailnet-only port must not be opened to the LAN by this script.
+    check("and never a port that is tailnet-only",
+          (main, "9000") not in blocks and (fz, "8080") not in blocks)
+    # The container's Funnel goes to "nginx:80" inside its compose network;
+    # the host reaches that service through its published port, which
+    # survives the container being rebuilt.
+    check("it finds the app running in a Docker container, by its own name",
+          blocks.get((fz, "443")) == "http://127.0.0.1:8100")
+    check("and only what is actually Funnel-published",
+          set(blocks) == {(main, "8443"), (main, "10000"), (fz, "443")})
+    check("every name and port is checked afterwards",
+          {f"{main} 443", f"{main} 8443", f"{main} 10000", f"{fz} 443"}
+          <= set(names_ports.split("\n")))
+    check("and the container node is remembered for the daily renewal",
+          nodes.startswith(f"{fz} fz-tailscale-1 /tmp/tailscaled.sock fz"))
 
     for deploy_script in ("install.sh", "enable-https.sh"):
         src = (ROOT / "deploy" / deploy_script).read_text()
@@ -7436,24 +7505,30 @@ def test_the_public_link_has_an_office_path(tmpdir):
               "! -name 'zz-gate-pass-office-link'" in src)
 
     # The office DNS: one router setting instead of a script on every PC.
-    dns_conf = re.search(r"cat > /etc/gate-pass/office-dns.conf <<CONF\n(.*?)\nCONF\n",
-                         office_src, re.S)
-    check("the office DNS settings are written by the script", dns_conf)
-    dns = dns_conf.group(1) if dns_conf else ""
-    check("it answers the name with the LAN address", "address=/$NAME/$LAN_IP" in dns)
-    # Without local= the relay's IPv6 addresses pass straight through, and a
-    # PC with IPv6 would go back to the relay.
-    check("and is the authority for it, so no relay address leaks through",
-          "local=/$NAME/" in dns)
+    dns = rendered_dns.split("\n")
+    for host in (main, fz):
+        check(f"office DNS answers {host} with the LAN address",
+              f"address=/{host}/192.168.1.45" in dns)
+        # Without local= the relay's IPv6 addresses pass straight through,
+        # and a PC with IPv6 would go back to the relay.
+        check(f"and is the authority for {host}, so no relay address leaks through",
+              f"local=/{host}/" in dns)
     check("everything else goes to the router, as before",
-          "no-resolv" in dns and "server=$GATEWAY" in dns)
-    check("only on the LAN address", "listen-address=$LAN_IP" in dns
-          and "bind-dynamic" in dns)
+          "no-resolv" in dns and "server=192.168.1.1" in dns)
+    check("only on the LAN address",
+          "listen-address=192.168.1.45" in dns and "bind-dynamic" in dns)
     unit = (ROOT / "deploy" / "gate-pass-office-dns.service").read_text()
     check("the DNS service restarts itself", "Restart=always" in unit
           and "/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/gate-pass/office-dns.conf" in unit)
-    check("it proves the name and other names both resolve before finishing",
-          '[ "$got" = "$LAN_IP" ]' in office_src and "github.com" in office_src)
+    check("it proves the names and other names both resolve before finishing",
+          '[ "$got" = "$LAN_IP" ]' in office_src and "github.com" in office_src
+          and "check_dns ||" in office_src)
+    # The next time the relay goes, one command says where the fault is.
+    check("it has a --status that tests both the office path and the relay",
+          "--status" in office_src and "Through Tailscale's relay" in office_src)
+    # New apps and ports are picked up by the daily run, not by memory.
+    check("the daily renewal re-discovers apps too",
+          re.search(r'MODE" = "--renew".*?render >/dev/null.*?apply', office_src, re.S))
     # If the server is ever off, PCs must still have a DNS server.
     check("the router step keeps the router as secondary DNS",
           "Secondary DNS  $GATEWAY" in office_src)
