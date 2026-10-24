@@ -521,11 +521,18 @@ def _column_bounds(edges, header_bottom, fallback):
     for x in xs:
         if not merged or x - merged[-1] > EDGE_TOLERANCE:
             merged.append(x)
+    name_word, qty_word, sl_word = fallback
+    left = round(sl_word["x0"] - 2 if sl_word else name_word["x0"] - 2, 1)
     if len(merged) >= 3:
+        # Some invoices draw no rule down the table's left side. pdfminer.six
+        # 20231228 reported zero-length "vertical" scraps of the horizontal rules
+        # there, which stood in for one; 20260107 does not. Without a left bound
+        # the S.no column falls into the first column and its number joins the
+        # item name.
+        if left < merged[0] - EDGE_TOLERANCE:
+            merged.insert(0, left)
         return merged
 
-    name_word, qty_word, sl_word = fallback
-    left = sl_word["x0"] - 2 if sl_word else name_word["x0"] - 2
     guessed = [left]
     if sl_word:
         guessed.append((sl_word["x1"] + name_word["x0"]) / 2)
